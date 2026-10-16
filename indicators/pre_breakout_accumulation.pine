@@ -1,0 +1,263 @@
+//@version=6
+indicator("Zaakiy Pre-Breakout Accumulation & Squeeze v1.0", shorttitle="Zaakiy Accumulation v1.0", overlay=true, max_labels_count=300, max_boxes_count=100, max_lines_count=100)
+
+// ============================================================================
+// INSTITUTIONAL PRE-BREAKOUT ACCUMULATION & VOLATILITY SQUEEZE INDICATOR
+// ----------------------------------------------------------------------------
+// Designed to detect explosive opportunities BEFORE expansion:
+// 1. 30-Day Consolidation Base & Launchpad Ceiling
+// 2. Fixed Range Volume Profile (POC, VAH, VAL)
+// 3. John Carter Volatility Squeeze (Bollinger Bands inside Keltner Channels)
+// 4. Volume Contraction (Wyckoff Supply Exhaustion: 7D ADV vs 14D ADV)
+// 5. Pre-Breakout Setups: COIL SPRING, VCP COMPRESSION, VALUE ABSORPTION
+// 6. Dynamic Invalidation Stop & Multi-Target Fibonacci Extensions
+// ============================================================================
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+grpBase = "30-Day Base & Range Geometry"
+baseLookbackDays = input.int(30, "Base Lookback (Days)", minval=5, maxval=90, group=grpBase)
+maxRangeHeightPct = input.float(45.0, "Max Base Range Height (%)", minval=10.0, maxval=100.0, step=5.0, group=grpBase)
+ceilingProximityPct = input.float(6.0, "Ceiling Launchpad Proximity (%)", minval=1.0, maxval=20.0, step=0.5, group=grpBase)
+
+grpSqueeze = "John Carter Volatility Squeeze"
+sqzLength = input.int(20, "Squeeze Length", minval=5, group=grpSqueeze)
+bbMult = input.float(2.0, "Bollinger StdDev Multiplier", minval=0.5, step=0.1, group=grpSqueeze)
+kcMult = input.float(1.5, "Keltner ATR Multiplier", minval=0.5, step=0.1, group=grpSqueeze)
+
+grpVolume = "Volume Profile & Contraction"
+showVolProfile = input.bool(true, "Show Volume Profile (POC / VAH / VAL)", group=grpVolume)
+vpBins = input.int(30, "Profile Price Bins", minval=10, maxval=50, group=grpVolume)
+vaPct = input.float(70.0, "Value Area Volume (%)", minval=50.0, maxval=90.0, step=5.0, group=grpVolume)
+showTable = input.bool(true, "Show Analytics HUD Table", group=grpVolume)
+
+grpBracket = "Execution Bracket (Stops & Targets)"
+showBrackets = input.bool(true, "Show Invalidation & Target Levels", group=grpBracket)
+fibT2 = input.float(0.618, "Target 2 Fib Extension", group=grpBracket)
+fibT3 = input.float(1.618, "Target 3 Fib Extension", group=grpBracket)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. BASE GEOMETRY (30-DAY LOOKBACK)
+// ─────────────────────────────────────────────────────────────────────────────
+// Approximate bars based on current chart timeframe
+timeframeMinutes = timeframe.isminutes ? timeframe.multiplier : timeframe.isdaily ? 1440 : 60
+barsInBase = math.max(20, math.round((baseLookbackDays * 1440) / timeframeMinutes))
+
+baseHigh = ta.highest(high, barsInBase)
+baseLow = ta.lowest(low, barsInBase)
+rangeSpan = baseHigh - baseLow
+rangeHeightPct = (rangeSpan / baseLow) * 100.0
+
+distToCeilingPct = ((baseHigh - close) / close) * 100.0
+isTightBase = rangeHeightPct <= maxRangeHeightPct
+isNearCeiling = distToCeilingPct >= -2.0 and distToCeilingPct <= ceilingProximityPct
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. JOHN CARTER VOLATILITY SQUEEZE (BB INSIDE KC)
+// ─────────────────────────────────────────────────────────────────────────────
+// Bollinger Bands
+basis = ta.sma(close, sqzLength)
+dev = bbMult * ta.stdev(close, sqzLength)
+bbUpper = basis + dev
+bbLower = basis - dev
+
+// Keltner Channels
+kcMa = ta.ema(close, sqzLength)
+kcAtr = ta.atr(sqzLength)
+kcUpper = kcMa + (kcMult * kcAtr)
+kcLower = kcMa - (kcMult * kcAtr)
+
+// Squeeze condition: Bollinger Bands completely inside Keltner Channels
+isSqueeze = (bbLower >= kcLower) and (bbUpper <= kcUpper)
+wasSqueeze = isSqueeze[1]
+squeezeFired = wasSqueeze and not isSqueeze
+
+// Squeeze Momentum (Linear Regression of price difference)
+momVal = ta.linreg(close - math.avg(math.avg(ta.highest(high, sqzLength), ta.lowest(low, sqzLength)), ta.sma(close, sqzLength)), sqzLength, 0)
+momColor = momVal > 0 ? (momVal > nz(momVal[1]) ? color.aqua : color.blue) : (momVal < nz(momVal[1]) ? color.red : color.maroon)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. FIXED RANGE VOLUME PROFILE APPROXIMATION (POC, VAH, VAL)
+// ─────────────────────────────────────────────────────────────────────────────
+var float pocPrice = na
+var float vahPrice = na
+var float valPrice = na
+
+if barstate.islast and showVolProfile and barsInBase > 10
+    // Price range
+    float pMin = baseLow
+    float pMax = baseHigh
+    float binSpan = (pMax - pMin) / vpBins
+    
+    // Arrays for volume accumulation
+    var float[] binVol = array.new_float(50, 0.0)
+    array.fill(binVol, 0.0)
+    
+    // Distribute volume into price bins
+    int lookback = math.min(barsInBase, bar_index)
+    for i = 0 to lookback - 1
+        float bClose = close[i]
+        float bVol = volume[i]
+        int binIdx = math.min(vpBins - 1, math.max(0, math.floor((bClose - pMin) / binSpan)))
+        array.set(binVol, binIdx, array.get(binVol, binIdx) + bVol)
+    
+    // Find POC (bin with maximum volume)
+    int maxIdx = 0
+    float maxVol = 0.0
+    float totalVol = 0.0
+    for b = 0 to vpBins - 1
+        float v = array.get(binVol, b)
+        totalVol += v
+        if v > maxVol
+            maxVol := v
+            maxIdx := b
+            
+    pocPrice := pMin + (maxIdx + 0.5) * binSpan
+    
+    // Value Area Expansion (70% total volume)
+    float targetVol = totalVol * (vaPct / 100.0)
+    float curVol = maxVol
+    int upIdx = maxIdx + 1
+    int downIdx = maxIdx - 1
+    int minVaIdx = maxIdx
+    int maxVaIdx = maxIdx
+    
+    while curVol < targetVol and (upIdx < vpBins or downIdx >= 0)
+        float upV = upIdx < vpBins ? array.get(binVol, upIdx) : -1.0
+        float downV = downIdx >= 0 ? array.get(binVol, downIdx) : -1.0
+        if upV >= downV and upIdx < vpBins
+            curVol += upV
+            maxVaIdx := upIdx
+            upIdx += 1
+        else if downIdx >= 0
+            curVol += downV
+            minVaIdx := downIdx
+            downIdx -= 1
+        else
+            break
+            
+    vahPrice := pMin + (maxVaIdx + 0.5) * binSpan
+    valPrice := pMin + (minVaIdx + 0.5) * binSpan
+
+// Persistence for realtime updates
+pocPrice := ta.valuewhen(not na(pocPrice), pocPrice, 0)
+vahPrice := ta.valuewhen(not na(vahPrice), vahPrice, 0)
+valPrice := ta.valuewhen(not na(valPrice), valPrice, 0)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. MULTI-TIMEFRAME VOLUME CONTRACTION (7D vs 14D ADV)
+// ─────────────────────────────────────────────────────────────────────────────
+bars7d = math.max(5, math.round((7 * 1440) / timeframeMinutes))
+bars14d = math.max(10, math.round((14 * 1440) / timeframeMinutes))
+
+vol7d = ta.sma(volume, bars7d)
+vol14d = ta.sma(volume, bars14d)
+volDryUpRatio = vol14d > 0 ? (vol7d / vol14d) : 1.0
+isVolDryUp = volDryUpRatio >= 0.45 and volDryUpRatio <= 0.88
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. PRE-BREAKOUT ACCUMULATION SIGNALS
+// ─────────────────────────────────────────────────────────────────────────────
+// Setup 1: Coil Spring Long (Tight squeeze coiling within launchpad proximity)
+coilSpringSignal = isTightBase and isSqueeze and isNearCeiling and close > ta.ema(close, 20)
+
+// Setup 2: Value Absorption Long (Reclaiming above 30-day POC with volume dry-up)
+valueAbsorptionSignal = isTightBase and ta.crossover(close, pocPrice) and close > ta.ema(close, 20)
+
+// Setup 3: VCP Compression (Ultra tight base < 20% with squeeze firing)
+vcpCompressionSignal = rangeHeightPct <= 22.0 and isSqueeze and close >= ta.ema(close, 50)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. DYNAMIC TARGETS & INVALIDATION BRACKET
+// ─────────────────────────────────────────────────────────────────────────────
+atr14 = ta.atr(14)
+swingLow = ta.lowest(low, math.min(30, barsInBase))
+stopLoss = math.min(close - (atr14 * 0.8), math.max(swingLow, close - (atr14 * 2.0)))
+
+target1 = math.max(baseHigh, close + (atr14 * 1.5))
+target2 = math.max(baseHigh + (rangeSpan * fibT2), close + (atr14 * 3.0))
+target3 = math.max(baseHigh + (rangeSpan * fibT3), close + (atr14 * 5.0))
+
+risk = math.max(syminfo.mintick, close - stopLoss)
+reward = target2 - close
+riskRewardRatio = reward / risk
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. CHART PLOTTING & VISUAL STYLING
+// ─────────────────────────────────────────────────────────────────────────────
+// 30-day Base Ceiling and Floor
+pCeiling = plot(baseHigh, "30d Base Ceiling (Resistance)", color=color.new(color.orange, 30), linewidth=2, style=plot.style_line)
+pFloor = plot(baseLow, "30d Base Support (Floor)", color=color.new(color.gray, 50), linewidth=1, style=plot.style_line)
+fill(pCeiling, pFloor, color=color.new(color.orange, 96), title="30-Day Accumulation Base Zone")
+
+// Volume Profile Levels
+plot(showVolProfile and not na(pocPrice) ? pocPrice : na, "Point of Control (POC)", color=color.new(color.yellow, 10), linewidth=2, style=plot.style_circles)
+plot(showVolProfile and not na(vahPrice) ? vahPrice : na, "Value Area High (VAH)", color=color.new(color.aqua, 20), linewidth=1, style=plot.style_line)
+plot(showVolProfile and not na(valPrice) ? valPrice : na, "Value Area Low (VAL)", color=color.new(color.aqua, 60), linewidth=1, style=plot.style_line)
+
+// Execution Bracket (When Coiling Active)
+plot(showBrackets and (isNearCeiling or isSqueeze) ? stopLoss : na, "Invalidation Stop", color=color.new(color.red, 20), linewidth=2, style=plot.style_linebr)
+plot(showBrackets and (isNearCeiling or isSqueeze) ? target1 : na, "Target 1 (Base High)", color=color.new(color.green, 40), linewidth=1, style=plot.style_linebr)
+plot(showBrackets and (isNearCeiling or isSqueeze) ? target2 : na, "Target 2 (1.618 Fib)", color=color.new(color.green, 10), linewidth=2, style=plot.style_linebr)
+
+// Squeeze Dots on Bar Wicks / Floor
+plotshape(isSqueeze, "Squeeze Coiling (Active)", shape.circle, location.belowbar, color=color.new(color.orange, 0), size=size.tiny)
+plotshape(squeezeFired, "Squeeze Fired (Ignition)", shape.triangleup, location.belowbar, color=color.new(color.green, 0), size=size.small)
+
+// Signal Labels
+if coilSpringSignal and not coilSpringSignal[1]
+    label.new(bar_index, low - atr14, "⚡ COIL SPRING\nLaunchpad: " + str.tostring(distToCeilingPct, "#.#") + "%\nR:R " + str.tostring(riskRewardRatio, "#.#"), color=color.new(color.teal, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
+
+if valueAbsorptionSignal and not valueAbsorptionSignal[1]
+    label.new(bar_index, low - (atr14 * 1.5), "🐋 VALUE ABSORPTION\nReclaimed 30d POC\nDry-Up: " + str.tostring(volDryUpRatio, "#.##") + "x", color=color.new(color.blue, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. ON-CHART ANALYTICS HUD TABLE
+// ─────────────────────────────────────────────────────────────────────────────
+var table hud = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 20), border_color=color.new(color.gray, 70), border_width=1)
+
+if barstate.islast and showTable
+    // Header
+    table.cell(hud, 0, 0, "ZAAKIY ACCUMULATION HUD", bgcolor=color.new(color.purple, 30), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 0, "STATUS", bgcolor=color.new(color.purple, 30), text_color=color.white, text_size=size.small)
+    
+    // 1. Squeeze State
+    string sqzText = isSqueeze ? "🔥 COILING (BB in KC)" : (squeezeFired ? "🚀 FIRED" : "NORMAL")
+    color sqzBg = isSqueeze ? color.new(color.orange, 40) : (squeezeFired ? color.new(color.green, 40) : color.new(color.gray, 60))
+    table.cell(hud, 0, 1, "Squeeze Regime", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 1, sqzText, bgcolor=sqzBg, text_color=color.white, text_size=size.small)
+    
+    // 2. Base Height
+    string baseText = str.tostring(rangeHeightPct, "#.#") + "% (" + (isTightBase ? "Tight Box" : "Wide") + ")"
+    table.cell(hud, 0, 2, "30d Base Height", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 2, baseText, text_color=isTightBase ? color.green : color.red, text_size=size.small)
+    
+    // 3. Launchpad Proximity
+    string ceilText = str.tostring(distToCeilingPct, "#.#") + "% below ceiling"
+    table.cell(hud, 0, 3, "Ceiling Proximity", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 3, ceilText, text_color=isNearCeiling ? color.aqua : color.white, text_size=size.small)
+    
+    // 4. Volume Profile (POC)
+    bool isAbovePoc = not na(pocPrice) and close >= pocPrice
+    string pocText = not na(pocPrice) ? (isAbovePoc ? "Above POC (" + str.tostring(pocPrice, "#.####") + ")" : "Below POC") : "N/A"
+    table.cell(hud, 0, 4, "30d Value POC", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 4, pocText, text_color=isAbovePoc ? color.green : color.orange, text_size=size.small)
+    
+    // 5. Volume Contraction (Dry-Up)
+    string dryText = str.tostring(volDryUpRatio, "#.##") + "x (" + (isVolDryUp ? "Supply Dry-Up" : "Normal") + ")"
+    table.cell(hud, 0, 5, "Vol Ratio (7d/14d)", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 5, dryText, text_color=isVolDryUp ? color.yellow : color.white, text_size=size.small)
+    
+    // 6. Potential R:R
+    string rrText = str.tostring(riskRewardRatio, "#.#") + ":1"
+    table.cell(hud, 0, 6, "Asymmetric R:R", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 6, rrText, text_color=color.green, text_size=size.small)

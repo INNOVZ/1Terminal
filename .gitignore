@@ -1,0 +1,69 @@
+# ==============================================================================
+# Atlas AlgoTrader & 1Terminal — Git Ignore Configuration
+# ==============================================================================
+
+# Environment and sensitive keys
+.env
+.env.*
+!.env.example
+*.env.local
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Python caches and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Testing and Type Checking
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+coverage/
+
+# Databases & Runtime State
+*.db
+*.sqlite3
+atlas_state.sqlite3
+
+# Node.js & Next.js Frontend
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+**/out/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Scratches, Temporary Dumps, and Test Outputs
+tmp/*
+!tmp/.gitkeep
+scratch/*
+!scratch/.gitkeep
+logs/*.log
+dashboard.html
+.playwright-cli/
+
+# Operating System & IDE
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace

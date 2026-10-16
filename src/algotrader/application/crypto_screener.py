@@ -1,0 +1,1867 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Sequence
+from decimal import Decimal
+
+import structlog
+
+from algotrader.adapters.external.macro_provider import MacroSentimentProvider
+from algotrader.adapters.external.models import MacroSentimentContext
+from algotrader.application.alt_momentum import _participation_ratio, _return_over
+from algotrader.application.research import beta_correlation
+from algotrader.config import Settings
+from algotrader.domain.archetypes import (
+    LongArchetypeFeatures,
+    ShortArchetypeFeatures,
+    classify_long_archetype,
+    classify_short_archetype,
+)
+from algotrader.domain.crypto_screener_models import (
+    ChecklistVerification,
+    CryptoMarketRegime,
+    CryptoOpportunity,
+    CryptoScreenerScoreBreakdown,
+    ScreenerMode,
+    SetupLabel,
+    calculate_opportunity_win_rate_and_ev,
+)
+from algotrader.domain.execution_brackets import (
+    build_long_bracket,
+    build_short_bracket,
+)
+from algotrader.domain.indicators import (
+    IndicatorSnapshot,
+    bollinger_bands,
+    confirmed_macd_divergences,
+    confirmed_rsi_divergences,
+    cumulative_volume_delta_metrics,
+    ema,
+    keltner_channels,
+    macd,
+    resample_candles,
+    rsi,
+    snapshot,
+    support_resistance,
+    taker_buy_ratio_from_candles,
+    volume_contraction_metrics,
+    volume_profile,
+)
+from algotrader.domain.liquidity import SymbolLiquidityMetrics, compute_ili_ranks
+from algotrader.domain.models import (
+    Candle,
+    DerivativesSnapshot,
+    Direction,
+    Instrument,
+    Quote,
+)
+from algotrader.domain.ports import DerivativesDataPort, MarketDataPort
+from algotrader.domain.precision import normalize_quantity
+from algotrader.domain.resistance_absorption import compute_resistance_absorption
+from algotrader.domain.scoring import (
+    OpportunityGrade,
+    calculate_adx_subscore,
+    classify_opportunity_grade,
+    compute_3tier_ev_r,
+    compute_p_win_and_conviction,
+)
+from algotrader.domain.screening_gates import (
+    LongGateInputs,
+    ShortGateInputs,
+    evaluate_long_gates,
+    evaluate_short_gates,
+)
+from algotrader.domain.structure import classify as classify_structure
+
+log = structlog.get_logger(__name__)
+
+ZERO = Decimal("0")
+ONE = Decimal("1")
+HUNDRED = Decimal("100")
+
+
+class CryptoOpportunityScreener:
+    """Institutional-grade multi-factor crypto screening engine."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        macro_provider: MacroSentimentProvider | None = None,
+    ) -> None:
+        self._settings = settings
+        self._macro_provider = macro_provider or MacroSentimentProvider()
+
+    async def screen(
+        self,
+        market: MarketDataPort,
+        derivatives_port: DerivativesDataPort | None = None,
+        *,
+        min_score: Decimal | None = None,
+        target_direction: Direction | None = None,
+        top_n: int = 30,
+        max_symbols: int | None = None,
+        mode: ScreenerMode = ScreenerMode.ACCUMULATION,
+    ) -> list[CryptoOpportunity]:
+        """Screen the universe for high-probability crypto setups."""
+        cutoff_score = min_score if min_score is not None else Decimal("50.0")
+
+        # 1. Fetch Macro Context Concurrently
+        macro_context = await self._macro_provider.get_context()
+        log.info("screener_macro_loaded", narrative=macro_context.narrative())
+
+        # 2. Universe & Liquidity Filtering (Stages 1-5 of AGENT.md V2.5)
+        instruments = await market.instruments()
+        benchmark_exclusions = {"BTC", "ETH"} if len(instruments) > 5 else set()
+        toxic_symbols = {
+            "PAXG", "XAU", "XAG", "COPPER", "SPY", "QQQ", "WLFI", "USDT", "USDC", "FDUSD", "TUSD", "USDP", "DAI", "EUR",
+            "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "DAIUSDT",
+        }
+        excluded = set(self._settings.excluded_base_assets) | benchmark_exclusions | toxic_symbols
+        eligible_instruments = [
+            inst
+            for inst in instruments
+            if inst.trading
+            and inst.base_asset not in excluded
+            and inst.id.symbol not in toxic_symbols
+            and inst.base_asset.isascii()
+            and inst.quote_asset in ("USDT", "USDC")
+            # Stage 3: DO NOT block 1000x multiplier contracts (1000SHIB, 1000PEPE, etc.)
+        ]
+
+        if not eligible_instruments:
+            log.warning("no_eligible_instruments_in_universe")
+            return []
+
+        quotes = await market.quotes(eligible_instruments)
+        quotes_by_symbol = {q.instrument_id.symbol: q for q in quotes}
+
+        # Stage 4: Filter by liquidity: min $500k 24h volume, max 50 bps spread
+        liquid_instruments: list[Instrument] = []
+        for inst in eligible_instruments:
+            q = quotes_by_symbol.get(inst.id.symbol)
+            if q is None:
+                continue
+            if q.quote_volume_24h < Decimal("500000"):
+                continue
+            if q.spread_bps > Decimal("50"):
+                continue
+            liquid_instruments.append(inst)
+
+        # Stage 5: Institutional Liquidity Index (ILI) Stratification (Top liquid descending)
+        limit_symbols = max_symbols if max_symbols is not None else 250
+        limit_symbols = min(limit_symbols, len(liquid_instruments))
+
+        ili_inputs = [
+            SymbolLiquidityMetrics(
+                symbol=inst.id.symbol,
+                quote_vol_24h=quotes_by_symbol[inst.id.symbol].quote_volume_24h,
+            )
+            for inst in liquid_instruments
+        ]
+        ranked_symbols = compute_ili_ranks(ili_inputs)
+        inst_by_symbol = {inst.id.symbol: inst for inst in liquid_instruments}
+        selected_instruments = [
+            inst_by_symbol[r.symbol]
+            for r in ranked_symbols[:limit_symbols]
+            if r.symbol in inst_by_symbol
+        ]
+        if not selected_instruments:
+            selected_instruments = liquid_instruments[:limit_symbols]
+
+        log.info(
+            "universe_liquidity_filtered",
+            total=len(instruments),
+            eligible=len(eligible_instruments),
+            liquid=len(liquid_instruments),
+            selected=len(selected_instruments),
+            mode=mode.value,
+        )
+
+        # 3. Locate and Fetch BTC Benchmark History (750 1H candles for full 30 days)
+        btc_inst = next(
+            (inst for inst in instruments if inst.base_asset == "BTC" and inst.trading),
+            None,
+        )
+        btc_candles_1h: Sequence[Candle] = ()
+        if btc_inst is not None:
+            btc_candles_1h = await market.candles(btc_inst, "1h", 750)
+
+        # BTC Velocity Liquidation Cascade check
+        btc_ret_1h = _return_over(btc_candles_1h, 1) if len(btc_candles_1h) >= 2 else ZERO
+        btc_ret_4h = _return_over(btc_candles_1h, 4) if len(btc_candles_1h) >= 5 else ZERO
+        is_btc_cascade = btc_ret_1h <= Decimal("-0.025") or btc_ret_4h <= Decimal("-0.045")
+
+        # 4. Evaluate Candidates Concurrently (paced to strictly respect Binance weight limit)
+        semaphore = asyncio.Semaphore(7)
+
+        async def eval_instrument(inst: Instrument) -> list[CryptoOpportunity]:
+            async with semaphore:
+                await asyncio.sleep(0.035)  # Polite pacing: keeps request rate well below Binance 2400-wt ceiling
+                return await self._evaluate_single(
+                    inst=inst,
+                    quote=quotes_by_symbol[inst.id.symbol],
+                    market=market,
+                    derivatives_port=derivatives_port,
+                    btc_candles=btc_candles_1h,
+                    macro_context=macro_context,
+                    mode=mode,
+                    target_direction=target_direction,
+                    is_btc_cascade=is_btc_cascade,
+                    btc_ret_1h=btc_ret_1h,
+                )
+
+        results = await asyncio.gather(
+            *(eval_instrument(inst) for inst in selected_instruments),
+            return_exceptions=True,
+        )
+
+        opportunities: list[CryptoOpportunity] = []
+        for res in results:
+            if isinstance(res, list):
+                for opp in res:
+                    eff_score = opp.conviction if opp.conviction is not None else opp.score
+                    if eff_score >= cutoff_score and (target_direction is None or opp.direction is target_direction):
+                        opportunities.append(opp)
+            elif isinstance(res, Exception):
+                log.debug("instrument_eval_exception", error=str(res))
+
+        # Rank descending by composite conviction (weighted score & win rate) ensuring balanced long/short representation
+        def _conviction(o: CryptoOpportunity) -> float:
+            if o.conviction is not None:
+                return float(o.conviction)
+            return float(o.estimated_win_rate_pct) * 0.4 + float(o.score) * 0.6
+
+        longs = [o for o in opportunities if o.direction is Direction.LONG]
+        shorts = [o for o in opportunities if o.direction is Direction.SHORT]
+        longs.sort(key=_conviction, reverse=True)
+        shorts.sort(key=_conviction, reverse=True)
+
+        if longs and shorts and target_direction is None:
+            half = max(10, top_n // 2)
+            balanced = longs[:half] + shorts[:half]
+            balanced.sort(key=_conviction, reverse=True)
+            return balanced
+
+        opportunities.sort(key=_conviction, reverse=True)
+        return opportunities[:top_n]
+
+    async def _evaluate_single(
+        self,
+        inst: Instrument,
+        quote: Quote,
+        market: MarketDataPort,
+        derivatives_port: DerivativesDataPort | None,
+        btc_candles: Sequence[Candle],
+        macro_context: MacroSentimentContext,
+        mode: ScreenerMode = ScreenerMode.ACCUMULATION,
+        target_direction: Direction | None = None,
+        is_btc_cascade: bool = False,
+        btc_ret_1h: Decimal = ZERO,
+    ) -> list[CryptoOpportunity]:
+        """Evaluate a single instrument across 1h, 4h, derivatives, and alpha factors."""
+        # Fetch 1h and 4h candles concurrently (750 1h = 30 days for 1H VPVR, 180 4h = 30 days)
+        c1h, c4h = await asyncio.gather(
+            market.candles(inst, "1h", 750),
+            market.candles(inst, "4h", 180),
+            return_exceptions=True,
+        )
+
+        if isinstance(c1h, BaseException) or not c1h or len(c1h) < 210:
+            return []
+        if isinstance(c4h, BaseException) or not c4h or len(c4h) < 50:
+            return []
+
+        closed_1h = sorted([c for c in c1h if c.closed], key=lambda x: x.closed_at)
+        closed_4h = sorted([c for c in c4h if c.closed], key=lambda x: x.closed_at)
+
+        if len(closed_1h) < 210 or len(closed_4h) < 50:
+            return []
+
+        # Indicators
+        snap_1h = snapshot(closed_1h)
+        closes_4h = [c.close for c in closed_4h]
+        ema20_4h = ema(closes_4h, 20)[-1]
+        ema50_4h = ema(closes_4h, 50)[-1]
+        rsi_4h = rsi(closes_4h, 14)[-1]
+
+        # Key levels & Swing structure
+        levels = support_resistance(
+            closed_1h, lookback=self._settings.support_resistance_lookback_bars
+        )
+        support = levels.support
+        resistance = levels.resistance
+        struct = classify_structure(closed_1h)
+
+        # BTC Beta and Residual Alpha
+        beta, correlation, residual_24h, residual_6h, residual_7d = self._calc_residual_alpha(
+            closed_1h, btc_candles
+        )
+
+        # Regime classification
+        regime = self._classify_regime(snap_1h, ema20_4h, ema50_4h)
+
+        opps: list[CryptoOpportunity] = []
+
+        # Query derivatives snapshot for candidate if port provided
+        derivatives: DerivativesSnapshot | None = None
+        if derivatives_port is not None:
+            try:
+                deriv_res = await asyncio.wait_for(
+                    derivatives_port.derivatives_snapshot(inst), timeout=2.5
+                )
+                if isinstance(deriv_res, DerivativesSnapshot):
+                    derivatives = deriv_res
+            except Exception:
+                derivatives = None
+
+        # 1. Pre-Breakout Accumulation Evaluation (BEFORE the move - LONG)
+        accum_opp = None
+        if (target_direction is None or target_direction is Direction.LONG) and mode in (
+            ScreenerMode.ACCUMULATION,
+            ScreenerMode.ALL,
+            None,
+        ):
+            accum_opp = self._score_accumulation_setup(
+                inst=inst,
+                quote=quote,
+                snap_1h=snap_1h,
+                closed_1h=closed_1h,
+                closed_4h=closed_4h,
+                derivatives=derivatives,
+                macro_context=macro_context,
+                is_btc_cascade=is_btc_cascade,
+                btc_ret_1h=btc_ret_1h,
+                residual_24h=residual_24h,
+            )
+
+        # 2. Pre-Breakdown Distribution Evaluation (BEFORE the dump - SHORT)
+        dist_opp = None
+        if (target_direction is None or target_direction is Direction.SHORT) and mode in (
+            ScreenerMode.DISTRIBUTION,
+            ScreenerMode.ALL,
+            None,
+        ):
+            dist_opp = self._score_distribution_setup(
+                inst=inst,
+                quote=quote,
+                snap_1h=snap_1h,
+                closed_1h=closed_1h,
+                closed_4h=closed_4h,
+                derivatives=derivatives,
+                macro_context=macro_context,
+                is_btc_cascade=is_btc_cascade,
+                btc_ret_1h=btc_ret_1h,
+                residual_24h=residual_24h,
+            )
+
+        # STRICT INSTITUTIONAL MUTUAL EXCLUSION:
+        # A token cannot be both an accumulation long and a distribution short simultaneously!
+        # If a token qualifies as a confirmed institutional distribution short (e.g. Wyckoff UTAD,
+        # MTF overbought exhaustion, or confirmed bearish divergence with score >= 70),
+        # it is fundamentally in Distribution — it must NEVER be classified as a pre-breakout accumulation long!
+        if accum_opp is not None and dist_opp is not None:
+            if dist_opp.score >= Decimal("70.0"):
+                accum_opp = None
+            elif accum_opp.score >= Decimal("70.0") or accum_opp.score >= dist_opp.score:
+                dist_opp = None
+            else:
+                accum_opp = None
+
+        if accum_opp is not None and accum_opp.setup_label is not SetupLabel.NO_SETUP:
+            opps.append(accum_opp)
+        if dist_opp is not None and dist_opp.setup_label is not SetupLabel.NO_SETUP:
+            opps.append(dist_opp)
+
+        # 3. Active Breakout & Trend Evaluation (AFTER ignition - ONLY for ScreenerMode.BREAKOUT)
+        if mode is ScreenerMode.BREAKOUT and not opps:
+            long_opp = self._score_setup(
+                direction=Direction.LONG,
+                inst=inst,
+                quote=quote,
+                snap_1h=snap_1h,
+                ema20_4h=ema20_4h,
+                ema50_4h=ema50_4h,
+                rsi_4h=rsi_4h,
+                regime=regime,
+                support=support,
+                resistance=resistance,
+                struct_trend=struct.trend,
+                beta=beta,
+                residual_24h=residual_24h,
+                residual_6h=residual_6h,
+                residual_7d=residual_7d,
+                derivatives=derivatives,
+                macro_context=macro_context,
+                closed_1h=closed_1h,
+                closed_4h=closed_4h,
+            )
+
+            short_opp = self._score_setup(
+                direction=Direction.SHORT,
+                inst=inst,
+                quote=quote,
+                snap_1h=snap_1h,
+                ema20_4h=ema20_4h,
+                ema50_4h=ema50_4h,
+                rsi_4h=rsi_4h,
+                regime=regime,
+                support=support,
+                resistance=resistance,
+                struct_trend=struct.trend,
+                beta=beta,
+                residual_24h=residual_24h,
+                residual_6h=residual_6h,
+                residual_7d=residual_7d,
+                derivatives=derivatives,
+                macro_context=macro_context,
+                closed_1h=closed_1h,
+                closed_4h=closed_4h,
+            )
+
+            if long_opp and long_opp.setup_label is not SetupLabel.NO_SETUP:
+                opps.append(long_opp)
+            if short_opp and short_opp.setup_label is not SetupLabel.NO_SETUP:
+                opps.append(short_opp)
+
+        return opps
+
+    def _score_accumulation_setup(
+        self,
+        inst: Instrument,
+        quote: Quote,
+        snap_1h: IndicatorSnapshot,
+        closed_1h: Sequence[Candle],
+        closed_4h: Sequence[Candle],
+        derivatives: DerivativesSnapshot | None,
+        macro_context: MacroSentimentContext,
+        is_btc_cascade: bool = False,
+        btc_ret_1h: Decimal = ZERO,
+        residual_24h: Decimal = ZERO,
+    ) -> CryptoOpportunity | None:
+        """Score pre-breakout volatility squeeze, base coiling, and silent accumulation BEFORE expansion (V2.5)."""
+        close = snap_1h.close
+        atr14 = snap_1h.atr14
+        closes_4h = [c.close for c in closed_4h]
+        if len(closes_4h) < 20:
+            return None
+        ema20_4h = ema(closes_4h, 20)[-1]
+        ema50_4h = ema(closes_4h, 50)[-1] if len(closes_4h) >= 50 else ema20_4h
+        ema200_4h = ema(closes_4h, 200)[-1] if len(closes_4h) >= 200 else (ema50_4h * Decimal("0.96"))
+        rsi_4h = rsi(closes_4h, 14)[-1]
+
+        # Returns & Excursions
+        ret_24h = _return_over(closed_1h, 24)
+        ret_7d = _return_over(closed_1h, 168) if len(closed_1h) >= 169 else ZERO
+
+        last_72h = closed_1h[-72:]
+        high_72h = max(c.high for c in last_72h)
+        low_72h = min(c.low for c in last_72h)
+        if low_72h <= ZERO or high_72h <= low_72h:
+            return None
+        exc_72h = (high_72h - low_72h) / max(low_72h, Decimal("1e-8"))
+        dist_high_72h = (high_72h - close) / max(high_72h, Decimal("1e-8"))
+
+        # Base Window (up to 30 days of 4H bars)
+        base_window = closed_4h[-120:] if len(closed_4h) >= 120 else closed_4h
+        high_30d = max(c.high for c in base_window)
+        low_30d = min(c.low for c in base_window)
+        if low_30d <= ZERO or high_30d <= low_30d:
+            return None
+
+        pos_in_range = (close - low_30d) / max(high_30d - low_30d, Decimal("1e-8"))
+        low_24h = min(c.low for c in (closed_1h[-24:] if len(closed_1h) >= 24 else closed_1h))
+
+        # 30-Day Triangular Kernel Volume Profile (using up to 720 1H bars)
+        vp_window = closed_1h[-720:] if len(closed_1h) >= 720 else closed_1h
+        vp = volume_profile(vp_window, bins=50)
+        poc_price = vp.poc_price
+        vah_price = vp.vah_price
+        val_price = vp.val_price
+
+        # Volatility Squeeze & Compression
+        bb_upper_4h, bb_mid_4h, bb_lower_4h, bbw_4h = bollinger_bands(closes_4h, 20, Decimal("2.0"))
+        kc_upper_4h, kc_mid_4h, kc_lower_4h = keltner_channels(closed_4h, 20, Decimal("1.5"))
+        bb_inside_kc_series = [
+            bool(
+                b_low is not None
+                and k_low is not None
+                and b_high is not None
+                and k_high is not None
+                and b_low >= k_low
+                and b_high <= k_high
+            )
+            for b_low, k_low, b_high, k_high in zip(
+                bb_lower_4h, kc_lower_4h, bb_upper_4h, kc_upper_4h, strict=False
+            )
+        ]
+        bb_inside_kc = bb_inside_kc_series[-1] if bb_inside_kc_series else False
+        bandwidth_current = bbw_4h[-1] if bbw_4h else Decimal("0.20")
+        adv_7d, adv_14d, vol_contraction_ratio = volume_contraction_metrics(closed_1h, 7, 14)
+
+        # Disqualify Bearish Divergences on accumulation
+        if len(closed_4h) >= 30:
+            rsi_divs_4h = confirmed_rsi_divergences(closed_4h, lookback=48, min_rsi_delta=Decimal("2.0"))
+            if any(d.kind == "bearish" for d in rsi_divs_4h):
+                return None
+            macd_divs_4h = confirmed_macd_divergences(closed_4h, lookback=48)
+            if any(d.kind == "bearish" for d in macd_divs_4h):
+                return None
+
+        # Swings & Indicators
+        local_swing_high_4h = max(c.high for c in (closed_4h[-18:] if len(closed_4h) >= 18 else closed_4h))
+        swing_low_4h = min(c.low for c in (closed_4h[-30:] if len(closed_4h) >= 30 else closed_4h))
+        macd_line_4h, macd_sig_4h, macd_hist_4h_series = macd(closes_4h)
+        macd_hist_4h = macd_hist_4h_series[-1] if macd_hist_4h_series else ZERO
+        macd_hist_4h_prev = macd_hist_4h_series[-2] if len(macd_hist_4h_series) >= 2 else ZERO
+        rvol_4h = snap_1h.relative_volume
+
+        # Derivatives features
+        funding = derivatives.funding_rate if derivatives else None
+        oi_change = derivatives.open_interest_change_1h if derivatives else None
+        oi_change_7d = derivatives.open_interest_change_7d if derivatives else None
+        taker_ratio_calc = taker_buy_ratio_from_candles(closed_4h[-6:] if len(closed_4h) >= 6 else closed_4h)
+        taker_ratio = (
+            derivatives.taker_buy_sell_ratio
+            if (derivatives and derivatives.taker_buy_sell_ratio)
+            else taker_ratio_calc
+        )
+        taker_buy_ratio_4h = taker_ratio if taker_ratio is not None else Decimal("0.5")
+
+        # Archetype Classification (Wyckoff & Order Flow Priority)
+        long_features = LongArchetypeFeatures(
+            close=close,
+            low_24h=low_24h,
+            ema50_4h=ema50_4h,
+            poc_30d=poc_price,
+            vah_30d=vah_price,
+            atr14_4h=atr14,
+            vcr_4h=vol_contraction_ratio,
+            oi_delta_7d=oi_change_7d,
+            oi_delta_4h=oi_change,
+            ret_7d=ret_7d,
+            bb_inside_kc_4h=bb_inside_kc,
+            bb_bandwidth_4h=bandwidth_current,
+            local_swing_high_4h=local_swing_high_4h,
+            rvol_4h=rvol_4h,
+            norm_momentum_1h=snap_1h.momentum_normalized,
+            btc_residual_alpha_24h=residual_24h,
+            macd_hist_4h=macd_hist_4h,
+            macd_hist_4h_prev=macd_hist_4h_prev,
+            macd_hist_1h=snap_1h.macd_hist,
+            taker_buy_ratio_4h=taker_buy_ratio_4h,
+        )
+        archetype = classify_long_archetype(long_features)
+        if archetype is None:
+            return None
+
+        # Mandatory Domain Gates L1-L6
+        gate_inputs = LongGateInputs(
+            close=close,
+            ema50_4h=ema50_4h,
+            ema20_1h=snap_1h.ema20,
+            ema200_4h=ema200_4h,
+            low_24h=low_24h,
+            atr14_4h=atr14,
+            vcr_4h=vol_contraction_ratio,
+            ema20_4h=ema20_4h,
+            excursion_72h=exc_72h,
+            ret_24h=ret_24h,
+            rsi_1h=snap_1h.rsi14,
+            rsi_4h=rsi_4h,
+            high_30d=high_30d,
+            low_30d=low_30d,
+            poc_30d=poc_price,
+            val_30d=val_price,
+            vah_30d=vah_price,
+            bb_inside_kc_4h=bb_inside_kc,
+            bb_bandwidth_4h=bandwidth_current,
+            bb_inside_kc_4h_lookback=bb_inside_kc_series[-8:],
+            rvol_4h=rvol_4h,
+            oi_delta_7d=oi_change_7d,
+            oi_delta_4h=oi_change,
+            taker_buy_ratio_4h=taker_buy_ratio_4h,
+            high_4h=closed_4h[-1].high if closed_4h else close,
+            low_4h=closed_4h[-1].low if closed_4h else close,
+            atr14_1h=snap_1h.atr14,
+            funding_rate_8h=funding,
+        )
+        gates_passed, gate_details = evaluate_long_gates(gate_inputs, archetype)
+        if not gates_passed:
+            return None
+
+        cvd_metrics = cumulative_volume_delta_metrics(closed_1h, lookback_window=24)
+        low_4h = closed_4h[-1].low if closed_4h else close
+        low_4h_prev = closed_4h[-2].low if len(closed_4h) >= 2 else low_4h
+        low_4h_prev2 = closed_4h[-3].low if len(closed_4h) >= 3 else low_4h_prev
+
+        absorption_score, breakout_status, absorption_flags = compute_resistance_absorption(
+            cvd_zscore_24h=float(cvd_metrics.cvd_z_score or Decimal("0")),
+            taker_buy_ratio_4h=float(taker_buy_ratio_4h),
+            oi_delta_7d=float(oi_change_7d) if oi_change_7d is not None else None,
+            oi_delta_4h=float(oi_change) if oi_change is not None else None,
+            funding_bps=float((funding or Decimal("0")) * 10000),
+            low_4h=low_4h,
+            low_4h_prev=low_4h_prev,
+            low_4h_prev2=low_4h_prev2,
+            close=close,
+            ema20_1h=snap_1h.ema20,
+            atr14_1h=snap_1h.atr14,
+            ret_24h=ret_24h,
+            vpvr_bins=vp.bins,
+            vah_30d=vah_price,
+            high_30d=high_30d,
+            poc_bin_volume=vp.poc_volume,
+        )
+
+        # 5-Level Execution Bracket (Normalized with tick_size and Execution Mode Split)
+        bracket = build_long_bracket(
+            close=close,
+            ema50_4h=ema50_4h,
+            poc_30d=poc_price,
+            atr14_4h=atr14,
+            local_compression_high_4h=local_swing_high_4h,
+            swing_low_4h=swing_low_4h,
+            high_30d=high_30d,
+            vah_30d=vah_price,
+            val_30d=val_price,
+            tick_size=inst.price_tick,
+            resistance_absorption_score=Decimal(str(absorption_score)),
+        )
+
+        # Quantitative Factor Scoring (5-Factor Formula)
+        adx_subscore = calculate_adx_subscore(
+            archetype, snap_1h.adx14, snap_1h.momentum_reference_adx14, snap_1h.plus_di, snap_1h.minus_di
+        )
+        ema_alignment_score = (
+            Decimal("100.0")
+            if close >= ema20_4h >= ema50_4h
+            else (Decimal("75.0") if close >= ema50_4h else Decimal("50.0"))
+        )
+        minervini_stage_score = (
+            Decimal("95.0") if (close >= ema50_4h and ema50_4h >= ema200_4h) else Decimal("65.0")
+        )
+        trend_score = (
+            Decimal("0.40") * ema_alignment_score
+            + Decimal("0.35") * adx_subscore
+            + Decimal("0.25") * minervini_stage_score
+        )
+
+        # Momentum score
+        if bandwidth_current <= Decimal("0.10"):
+            base_bw = Decimal("100.0")
+        elif bandwidth_current <= Decimal("0.24"):
+            ratio = (bandwidth_current - Decimal("0.10")) / Decimal("0.14")
+            base_bw = Decimal("100.0") - ratio * Decimal("50.0")
+        else:
+            base_bw = max(
+                Decimal("10.0"),
+                Decimal("50.0") - (bandwidth_current - Decimal("0.24")) * Decimal("100.0"),
+            )
+        kc_bonus = Decimal("20.0") if bb_inside_kc else Decimal("0.0")
+        macd_vel = Decimal("15.0") if macd_hist_4h > macd_hist_4h_prev else Decimal("0.0")
+        momentum_score = min(HUNDRED, max(ZERO, Decimal("0.70") * base_bw + kc_bonus + macd_vel))
+
+        # Derivatives score
+        deriv_pts = Decimal("50.0")
+        if oi_change_7d is not None and oi_change_7d >= Decimal("0.05"):
+            deriv_pts += Decimal("25.0")
+        if funding is not None and funding <= Decimal("0.00005"):
+            deriv_pts += Decimal("15.0")
+        if taker_buy_ratio_4h >= Decimal("0.52"):
+            deriv_pts += Decimal("10.0")
+        derivatives_score = min(HUNDRED, deriv_pts)
+
+        # Alpha score
+        alpha_pts = Decimal("60.0")
+        if pos_in_range >= Decimal("0.75"):
+            alpha_pts += Decimal("25.0")
+        alpha_score = min(HUNDRED, max(ZERO, alpha_pts))
+
+        # Volume score
+        vol_pts = Decimal("50.0")
+        if rvol_4h >= Decimal("1.25"):
+            vol_pts += Decimal("25.0")
+        if vol_contraction_ratio <= Decimal("0.90"):
+            vol_pts += Decimal("25.0")
+        volume_score = min(HUNDRED, vol_pts)
+
+        raw_score = (
+            Decimal("0.25") * trend_score
+            + Decimal("0.25") * momentum_score
+            + Decimal("0.25") * derivatives_score
+            + Decimal("0.15") * alpha_score
+            + Decimal("0.10") * volume_score
+        ).quantize(Decimal("0.1"))
+
+        macro_mult = macro_context.multiplier_for(Direction.LONG)
+        if is_btc_cascade:
+            macro_mult *= Decimal("0.60")
+        final_score = min(HUNDRED, max(ZERO, (raw_score * macro_mult).quantize(Decimal("0.1"))))
+
+        # Macro Overextension & Conviction
+        coi = Decimal("50.0")
+        p_win, conviction = compute_p_win_and_conviction(
+            direction=Direction.LONG,
+            archetype=archetype,
+            quantitative_score=final_score,
+            coi=coi,
+        )
+
+        # 3-Tier Conditional Mathematical Expectancy (EV_R) and Grade
+        ev_r = compute_3tier_ev_r(
+            p_win=p_win,
+            r_t1=bracket.r_t1,
+            r_t2=bracket.r_t2,
+            r_t3=bracket.r_t3,
+        )
+        grade = classify_opportunity_grade(
+            ev_r=ev_r,
+            conviction=conviction,
+            asymmetric_rr=bracket.asymmetric_rr,
+        )
+        # Universal Invariant 4: Coherent state consistency
+        if breakout_status == "HIGH_REJECTION_RISK":
+            absorption_score = min(absorption_score, 44.0)
+            if grade == OpportunityGrade.GRADE_A:
+                grade = OpportunityGrade.GRADE_B
+
+        # Rationale construction
+        rationale: list[str] = [
+            f"Archetype: {archetype.value} | Conviction: {float(conviction):.1f} | Grade: {grade.value}",
+            f"Execution Mode: {bracket.execution_mode} | Resistance Absorption: {absorption_score:.1f}/100 ({breakout_status})",
+            f"Anti-Chasing Validated: 72h excursion {float(exc_72h*100):.1f}%, dist from high {float(dist_high_72h*100):.1f}%",
+            f"Accepted above 30d POC (${float(poc_price):.4f}) | VAH: ${float(vah_price):.4f}",
+        ]
+        if vol_contraction_ratio <= Decimal("0.90"):
+            rationale.append(f"Volume Dry-Up (7d/14d: {float(vol_contraction_ratio):.2f}x)")
+        if oi_change_7d is not None and oi_change_7d >= Decimal("0.05"):
+            rationale.append(f"7d Macro OI Growth: {float(oi_change_7d*100):+.1f}%")
+        if is_btc_cascade:
+            rationale.append(f"WARNING: BTC Velocity Cascade Active ({float(btc_ret_1h*100):.1f}%) — High Long Risk")
+
+        # 5-Point Institutional Checklist badges
+        checklist_verification = ChecklistVerification(
+            value_acceptance=(close >= poc_price),
+            volatility_structure=(bb_inside_kc or bandwidth_current <= Decimal("0.24")),
+            momentum_alignment=(ema20_4h >= ema50_4h and macd_hist_4h >= macd_hist_4h_prev),
+            volume_microstructure=(vol_contraction_ratio <= Decimal("1.0") or rvol_4h >= Decimal("1.25")),
+            derivatives_positioning=(
+                (oi_change_7d is None or oi_change_7d >= Decimal("0.0"))
+                and taker_buy_ratio_4h >= Decimal("0.51")
+            ),
+        )
+
+        checklist = (
+            (
+                "Trend Baseline",
+                gate_details.get("L1", True),
+                f"Holding above 4H EMA50 (${float(ema50_4h):.4f})",
+            ),
+            (
+                "Anti-Chasing Validated",
+                gate_details.get("L2", True),
+                f"72h range tight ({float(exc_72h*100):.1f}%), within {float(dist_high_72h*100):.1f}% of ceiling",
+            ),
+            (
+                "Value Acceptance",
+                gate_details.get("L4", True),
+                f"Accepted above 30d POC (${float(poc_price):.4f}) | VAH: ${float(vah_price):.4f}",
+            ),
+            (
+                "Volatility Compression",
+                gate_details.get("L5", True),
+                f"Bandwidth {float(bandwidth_current):.2f}"
+                + (" (BB inside KC Squeeze)" if bb_inside_kc else " (Low Bandwidth)"),
+            ),
+            (
+                "Smart Money Absorption",
+                gate_details.get("L6", True),
+                f"7d OI {float((oi_change_7d or Decimal('0'))*100):+.1f}%, funding {float((funding or Decimal('0'))*10000):+.2f} bps"
+                if derivatives
+                else "Spot/Neutral derivatives flow",
+            ),
+        )
+
+        breakdown = CryptoScreenerScoreBreakdown(
+            trend_score=trend_score.quantize(Decimal("0.1")),
+            momentum_score=momentum_score.quantize(Decimal("0.1")),
+            derivatives_score=derivatives_score.quantize(Decimal("0.1")),
+            alpha_score=alpha_score.quantize(Decimal("0.1")),
+            volume_score=volume_score.quantize(Decimal("0.1")),
+            structure_score=alpha_score.quantize(Decimal("0.1")),
+            macro_multiplier=macro_mult.quantize(Decimal("0.01")),
+            final_composite_score=final_score,
+        )
+
+        max_size_usd = normalize_quantity(
+            min(Decimal("250000"), adv_7d * close * Decimal("0.010")),
+            inst.quantity_step,
+        )
+
+        return CryptoOpportunity(
+            instrument=inst,
+            direction=Direction.LONG,
+            regime=CryptoMarketRegime.VOLATILITY_SQUEEZE,
+            setup_label=archetype,
+            execution_mode=bracket.execution_mode,
+            resistance_absorption_score=Decimal(str(absorption_score)),
+            breakout_readiness_status=breakout_status,
+            score=final_score,
+            score_breakdown=breakdown,
+            current_price=close,
+            atr14=atr14,
+            suggested_entry=bracket.suggested_entry,
+            suggested_stop=bracket.invalidation_stop,
+            suggested_targets=bracket.targets,
+            risk_reward_ratio=bracket.asymmetric_rr,
+            estimated_win_rate_pct=(p_win * Decimal("100.0")).quantize(Decimal("0.1")),
+            expected_value_r=ev_r,
+            conviction=conviction,
+            grade=grade.value,
+            checklist_verification=checklist_verification,
+            btc_beta=Decimal("1.0"),
+            residual_return_24h=ZERO,
+            funding_rate=funding,
+            oi_change_1h=oi_change,
+            taker_ratio=taker_ratio,
+            rationale=tuple(rationale),
+            macro_narrative=macro_context.narrative(),
+            poc_price=poc_price,
+            vah_price=vah_price,
+            val_price=val_price,
+            adv_7d=adv_7d.quantize(Decimal("1")),
+            adv_14d=adv_14d.quantize(Decimal("1")),
+            volume_contraction_ratio=vol_contraction_ratio.quantize(Decimal("0.01")),
+            oi_change_7d=oi_change_7d,
+            pullback_entry=bracket.retest_entry,
+            breakout_trigger=bracket.breakout_trigger,
+            checklist=checklist,
+            cvd_24h=cvd_metrics.cvd_24h_change.quantize(Decimal("1")),
+            cvd_z_score=cvd_metrics.cvd_z_score,
+            orderflow_absorption=cvd_metrics.is_bullish_absorption,
+            max_recommended_size_usd=max_size_usd,
+        )
+
+    def _score_distribution_setup(
+        self,
+        inst: Instrument,
+        quote: Quote,
+        snap_1h: IndicatorSnapshot,
+        closed_1h: Sequence[Candle],
+        closed_4h: Sequence[Candle],
+        derivatives: DerivativesSnapshot | None,
+        macro_context: MacroSentimentContext,
+        is_btc_cascade: bool = False,
+        btc_ret_1h: Decimal = ZERO,
+        residual_24h: Decimal = ZERO,
+    ) -> CryptoOpportunity | None:
+        """Deep institutional short screening engine according to AGENT.md V2.5:
+
+        Evaluates:
+        1. 30-Day 1H Triangular Kernel VPVR (720 x 1H bars)
+        2. Multi-Timeframe RSI Overbought & Bearish Divergences (4H & Daily)
+        3. Multi-Timeframe MACD Bearish Momentum & Deceleration
+        4. Setup Archetype Classification (UTAD_DIVERGENCE_SHORT, EXHAUSTION_REVERSAL_SHORT, DISTRIBUTION_SHORT)
+        5. Mandatory Screening Gates S1-S5
+        6. 5-Level Execution Bracket Construction with Tick-Size Normalization
+        7. Regime-Adaptive 5-Factor Scoring, MOEA Conviction, and 3-Tier EV_R
+        8. 5-Point Institutional Checklist badges
+        """
+        close = snap_1h.close
+        atr14 = snap_1h.atr14
+        closes_4h = [c.close for c in closed_4h]
+        if len(closes_4h) < 20:
+            return None
+
+        ema20_4h = ema(closes_4h, 20)[-1]
+        ema50_4h = ema(closes_4h, 50)[-1] if len(closes_4h) >= 50 else ema20_4h
+
+        # 1. 30-Day VPVR Window (720 1H bars for highest spatial resolution)
+        vpvr_window = closed_1h[-720:] if len(closed_1h) >= 720 else closed_1h
+        vp = volume_profile(vpvr_window, bins=50)
+        poc_price = vp.poc_price
+        vah_price = vp.vah_price
+        val_price = vp.val_price
+        high_30d = max(c.high for c in vpvr_window)
+        low_30d = min(c.low for c in vpvr_window)
+        if low_30d <= ZERO or high_30d <= low_30d:
+            return None
+        range_height_30d = (high_30d - low_30d) / max(low_30d, Decimal("1e-8"))
+
+        # 2. Multi-Timeframe Candle Resampling & RSI
+        closed_1d = resample_candles(closed_4h, "1d")
+        closed_1w = resample_candles(closed_1d, "1w") if closed_1d else []
+        closes_1d = [c.close for c in closed_1d]
+        closes_1w = [c.close for c in closed_1w]
+
+        rsi_4h_series = rsi(closes_4h, 14)
+        rsi_4h = rsi_4h_series[-1] if rsi_4h_series else Decimal("50")
+        prev_rsi_4h = rsi_4h_series[-2] if len(rsi_4h_series) >= 2 else rsi_4h
+
+        rsi_1d_series = rsi(closes_1d, 14) if len(closes_1d) >= 15 else []
+        rsi_1d = rsi_1d_series[-1] if rsi_1d_series else rsi_4h
+        prev_rsi_1d = rsi_1d_series[-2] if len(rsi_1d_series) >= 2 else rsi_1d
+
+        rsi_1w_series = rsi(closes_1w, 14) if len(closes_1w) >= 15 else []
+        rsi_1w = rsi_1w_series[-1] if rsi_1w_series else (rsi_1d if rsi_1d else rsi_4h)
+
+        is_4h_rsi_overbought = rsi_4h >= Decimal("62.0") or (prev_rsi_4h >= Decimal("65.0") and rsi_4h < prev_rsi_4h)
+        is_1d_rsi_overbought = rsi_1d >= Decimal("65.0") or (prev_rsi_1d >= Decimal("68.0") and rsi_1d < prev_rsi_1d)
+        is_1w_rsi_overbought = rsi_1w >= Decimal("60.0") or is_1d_rsi_overbought
+
+        mtf_rsi_count = sum([1 if is_4h_rsi_overbought else 0, 1 if is_1d_rsi_overbought else 0, 1 if is_1w_rsi_overbought else 0])
+
+        # 3. Bearish Divergence Algorithms (RSI & MACD)
+        rsi_divs_4h = confirmed_rsi_divergences(closed_4h, lookback=48, min_rsi_delta=Decimal("2.0"))
+        has_bearish_rsi_div_4h = any(d.kind == "bearish" for d in rsi_divs_4h)
+        macd_divs_4h = confirmed_macd_divergences(closed_4h, lookback=48)
+        has_bearish_macd_div_4h = any(d.kind == "bearish" for d in macd_divs_4h)
+
+        rsi_divs_1d = confirmed_rsi_divergences(closed_1d, lookback=30, min_rsi_delta=Decimal("2.0")) if len(closed_1d) >= 20 else ()
+        has_bearish_rsi_div_1d = any(d.kind == "bearish" for d in rsi_divs_1d)
+        macd_divs_1d = confirmed_macd_divergences(closed_1d, lookback=30) if len(closed_1d) >= 30 else ()
+        has_bearish_macd_div_1d = any(d.kind == "bearish" for d in macd_divs_1d)
+
+        has_bearish_divergence = (
+            has_bearish_rsi_div_4h or has_bearish_macd_div_4h or has_bearish_rsi_div_1d or has_bearish_macd_div_1d
+        )
+
+        # 4. Multi-Timeframe MACD
+        macd_line_4h, macd_sig_4h, macd_hist_4h_series = macd(closes_4h)
+        macd_hist_4h = macd_hist_4h_series[-1] if macd_hist_4h_series else ZERO
+        macd_hist_4h_prev = macd_hist_4h_series[-2] if len(macd_hist_4h_series) >= 2 else macd_hist_4h
+        is_4h_macd_bearish_cross = len(macd_line_4h) >= 2 and (macd_line_4h[-1] <= macd_sig_4h[-1])
+        is_4h_hist_negative = macd_hist_4h < ZERO
+        is_4h_hist_decelerating = len(macd_hist_4h_series) >= 2 and (macd_hist_4h < macd_hist_4h_prev)
+        is_1h_macd_bearish = snap_1h.macd_hist < ZERO or snap_1h.macd_line <= snap_1h.macd_signal_line
+
+        # 5. Volatility & Volume Contraction
+        bb_upper_4h, bb_mid_4h, bb_lower_4h, bbw_4h = bollinger_bands(closes_4h, 20, Decimal("2.0"))
+        kc_upper_4h, kc_mid_4h, kc_lower_4h = keltner_channels(closed_4h, 20, Decimal("1.5"))
+        bb_inside_kc = (bb_lower_4h[-1] >= kc_lower_4h[-1]) and (bb_upper_4h[-1] <= kc_upper_4h[-1])
+
+        avg_vol_20 = (
+            sum(c.volume for c in closed_4h[-20:]) / Decimal("20")
+            if len(closed_4h) >= 20
+            else Decimal("1")
+        )
+        vol_drying = closed_4h[-1].volume < (avg_vol_20 * Decimal("0.95"))
+        recent_bars_4h = closed_4h[-8:]
+        has_climax_wick = any(
+            b.volume > (avg_vol_20 * Decimal("1.3"))
+            and (b.high - max(b.open, b.close)) >= ((b.high - b.low) * Decimal("0.35"))
+            for b in recent_bars_4h
+        )
+        upper_wick_ratio_4h = max(
+            ((b.high - max(b.open, b.close)) / max(b.high - b.low, Decimal("1e-8")))
+            for b in recent_bars_4h
+        ) if recent_bars_4h else Decimal("0")
+        adv_7d, adv_14d, vol_contraction_ratio = volume_contraction_metrics(closed_1h, 7, 14)
+
+        # 6. Returns, Swings, and Dates
+        ret_24h = _return_over(closed_1h, 24)
+        ret_7d = _return_over(closed_1h, 168) if len(closed_1h) >= 169 else ZERO
+        ret_14d = _return_over(closed_1h, 336) if len(closed_1h) >= 337 else ret_7d
+        high_24h = max(c.high for c in closed_1h[-24:]) if len(closed_1h) >= 24 else close
+        high_7d = max(c.high for c in closed_1h[-168:]) if len(closed_1h) >= 168 else high_30d
+
+        high_idx = max(range(len(vpvr_window)), key=lambda i: vpvr_window[i].high)
+        bars_since_high = len(vpvr_window) - 1 - high_idx
+        days_since_30d_high = Decimal(str(bars_since_high)) / Decimal("24")
+
+        local_consolidation_low_4h = min(c.low for c in closed_4h[-12:]) if len(closed_4h) >= 12 else close
+        swing_high_4h = max(c.high for c in closed_4h[-12:]) if len(closed_4h) >= 12 else high_24h
+
+        # 7. Derivatives positioning & Taker flow
+        funding = derivatives.funding_rate if derivatives else None
+        oi_change = derivatives.open_interest_change_1h if derivatives else None
+        oi_change_7d = derivatives.open_interest_change_7d if derivatives else None
+        taker_ratio_calc = taker_buy_ratio_from_candles(closed_1h[-24:] if len(closed_1h) >= 24 else closed_1h)
+        taker_ratio_raw = derivatives.taker_buy_sell_ratio if (derivatives and derivatives.taker_buy_sell_ratio) else taker_ratio_calc
+        if taker_ratio_raw is not None and taker_ratio_raw > Decimal("0.75"):
+            taker_ratio = (taker_ratio_raw / (Decimal("1.0") + taker_ratio_raw)).quantize(Decimal("0.001"))
+        else:
+            taker_ratio = taker_ratio_raw
+        taker_buy_ratio_24h = taker_ratio if taker_ratio is not None else Decimal("0.5")
+
+        # Position in range & run-up
+        range_span_30d = high_30d - low_30d
+        pos_in_range = (close - low_30d) / max(range_span_30d, Decimal("1e-8"))
+        runup_30d = (high_30d - low_30d) / max(low_30d, Decimal("1e-8"))
+
+        open_4h = closed_4h[-1].open if closed_4h else close
+        high_4h = closed_4h[-1].high if closed_4h else high_24h
+        low_4h = closed_4h[-1].low if closed_4h else close
+        low_72h = min(c.low for c in closed_1h[-72:]) if len(closed_1h) >= 72 else low_30d
+
+        basis_bps = (
+            derivatives.basis_rate * Decimal("10000.0")
+            if (derivatives and derivatives.basis_rate is not None)
+            else Decimal("0")
+        )
+
+        # 8. Setup Archetype Classification (Priority 1 to 3)
+        short_features = ShortArchetypeFeatures(
+            close=close,
+            high_24h=high_24h,
+            high_30d=high_30d,
+            ema50_4h=ema50_4h,
+            poc_30d=poc_price,
+            atr14_4h=atr14,
+            has_bearish_div=has_bearish_divergence,
+            rsi_4h=rsi_4h,
+            rsi_1d=rsi_1d,
+            rsi_1w=rsi_1w,
+            oi_delta_7d=oi_change_7d,
+            upper_wick_ratio_4h=upper_wick_ratio_4h,
+            max_ret_30d=range_height_30d,
+            taker_buy_ratio_24h=taker_buy_ratio_24h,
+            macd_hist_4h=macd_hist_4h,
+            pos_in_range_30d=pos_in_range,
+            macd_hist_4h_prev=macd_hist_4h_prev,
+            runup_30d=runup_30d,
+            ret_14d=ret_14d,
+        )
+        archetype = classify_short_archetype(short_features)
+        if archetype is None:
+            return None
+
+        # 9. Mandatory Domain Screening Gates S1-S5 (Two-Track Precision Spec)
+        gate_inputs = ShortGateInputs(
+            close=close,
+            ema50_4h=ema50_4h,
+            high_7d=high_7d,
+            range_height_30d=range_height_30d,
+            ret_7d=ret_7d,
+            ret_14d=ret_14d,
+            high_30d=high_30d,
+            low_30d=low_30d,
+            days_since_30d_high=days_since_30d_high,
+            ema20_4h=ema20_4h,
+            atr14_4h=atr14,
+            ret_24h=ret_24h,
+            rsi_1h=snap_1h.rsi14,
+            rsi_4h=rsi_4h,
+            has_bearish_div=has_bearish_divergence,
+            has_climax_blowoff=(rsi_1d >= Decimal("76.0")) and (upper_wick_ratio_4h >= Decimal("0.45")),
+            poc_30d=poc_price,
+            macd_hist_4h=macd_hist_4h,
+            taker_buy_ratio_24h=taker_buy_ratio_24h,
+            funding_rate_8h=funding,
+            oi_delta_7d=oi_change_7d,
+            oi_delta_1h=oi_change,
+            taker_buy_ratio_1h=taker_ratio,
+            low_72h=low_72h,
+            high_24h=high_24h,
+            open_4h=open_4h,
+            high_4h=high_4h,
+            low_4h=low_4h,
+            rsi_1d=rsi_1d,
+            macd_hist_4h_prev=macd_hist_4h_prev,
+            basis_bps=basis_bps,
+            runup_30d=runup_30d,
+        )
+        gates_passed, gate_details = evaluate_short_gates(gate_inputs, archetype)
+        if not gates_passed:
+            return None
+
+        # 10. 5-Level Execution Bracket Construction with Tick-Size Normalization
+        bracket = build_short_bracket(
+            close=close,
+            ema50_4h=ema50_4h,
+            poc_30d=poc_price,
+            atr14_4h=atr14,
+            local_consolidation_low_4h=local_consolidation_low_4h,
+            swing_high_4h=swing_high_4h,
+            low_30d=low_30d,
+            vah_30d=vah_price,
+            val_30d=val_price,
+            tick_size=inst.price_tick,
+        )
+
+        # 11. Multi-Factor Scoring (0 to 100)
+        # Pillar 1: Trend Score (25% Weight — Regime Adaptive)
+        adx_subscore = calculate_adx_subscore(
+            archetype, snap_1h.adx14, snap_1h.momentum_reference_adx14, snap_1h.minus_di, snap_1h.plus_di
+        )
+        ema_alignment_score = (
+            Decimal("100.0") if close <= ema20_4h <= ema50_4h else (Decimal("75.0") if close <= ema50_4h else Decimal("50.0"))
+        )
+        breakdown_stage_score = (
+            Decimal("95.0") if (close <= ema50_4h and close <= poc_price) else Decimal("65.0")
+        )
+        trend_score = (
+            Decimal("0.40") * ema_alignment_score
+            + Decimal("0.35") * adx_subscore
+            + Decimal("0.25") * breakdown_stage_score
+        )
+
+        # Pillar 2: Momentum Score (25% Weight)
+        div_pts = Decimal("40.0") if has_bearish_divergence else (Decimal("20.0") if rsi_4h >= Decimal("65.0") else Decimal("10.0"))
+        macd_accel = Decimal("30.0") if (is_4h_hist_decelerating or macd_hist_4h < ZERO) else Decimal("10.0")
+        climax_pts = Decimal("30.0") * upper_wick_ratio_4h if upper_wick_ratio_4h > ZERO else (Decimal("15.0") if has_climax_wick else Decimal("10.0"))
+        momentum_score = min(HUNDRED, max(ZERO, div_pts + macd_accel + climax_pts))
+
+        # Pillar 3: Derivatives Score (25% Weight)
+        deriv_pts = Decimal("50.0")
+        if funding is not None and funding >= Decimal("0.0001"):
+            deriv_pts += Decimal("25.0")
+        if oi_change_7d is not None and oi_change_7d >= Decimal("0.10"):
+            deriv_pts += Decimal("15.0")
+        if taker_ratio is not None and taker_ratio <= Decimal("0.48"):
+            deriv_pts += Decimal("10.0")
+        derivatives_score = min(HUNDRED, deriv_pts)
+
+        # Pillar 4: Alpha Score (15% Weight)
+        pos_in_range_30d = (close - low_30d) / max(high_30d - low_30d, Decimal("1e-8"))
+        alpha_pts = Decimal("60.0")
+        if pos_in_range_30d >= Decimal("0.65"):
+            alpha_pts += Decimal("25.0")
+        elif pos_in_range_30d <= Decimal("0.45"):
+            alpha_pts += Decimal("15.0")
+        alpha_score = min(HUNDRED, max(ZERO, alpha_pts))
+
+        # Pillar 5: Volume Score (10% Weight)
+        vol_pts = Decimal("50.0")
+        if vol_drying:
+            vol_pts += Decimal("25.0")
+        if has_climax_wick:
+            vol_pts += Decimal("25.0")
+        volume_score = min(HUNDRED, vol_pts)
+
+        raw_score = (
+            Decimal("0.25") * trend_score
+            + Decimal("0.25") * momentum_score
+            + Decimal("0.25") * derivatives_score
+            + Decimal("0.15") * alpha_score
+            + Decimal("0.10") * volume_score
+        ).quantize(Decimal("0.1"))
+
+        macro_mult = macro_context.multiplier_for(Direction.SHORT)
+        if is_btc_cascade:
+            macro_mult *= Decimal("1.15")
+        final_score = min(HUNDRED, max(ZERO, (raw_score * macro_mult).quantize(Decimal("0.1"))))
+
+        # 12. Composite Conviction, 3-Tier EV_R, and Opportunity Grade
+        coi = Decimal("50.0")
+        p_win, conviction = compute_p_win_and_conviction(
+            direction=Direction.SHORT,
+            archetype=archetype,
+            quantitative_score=final_score,
+            coi=coi,
+        )
+        ev_r = compute_3tier_ev_r(
+            p_win=p_win,
+            r_t1=bracket.r_t1,
+            r_t2=bracket.r_t2,
+            r_t3=bracket.r_t3,
+        )
+        grade = classify_opportunity_grade(
+            ev_r=ev_r,
+            conviction=conviction,
+            asymmetric_rr=bracket.asymmetric_rr,
+        )
+
+        # 13. Rationale Construction
+        rationale: list[str] = [
+            f"Archetype: {archetype.value} | Conviction: {float(conviction):.1f} | Grade: {grade.value}",
+            f"MTF RSI: 1W {float(rsi_1w):.1f} | 1D {float(rsi_1d):.1f} | 4H {float(rsi_4h):.1f}",
+            f"Distribution Ceiling: 30d POC (${float(poc_price):.4f}) | VAH: ${float(vah_price):.4f}",
+        ]
+        if has_bearish_divergence:
+            rationale.append("Confirmed 4H/1D Regular Bearish Divergence (RSI/MACD)")
+        if is_4h_macd_bearish_cross:
+            rationale.append("4H MACD Bearish Crossover Below Signal Line")
+        if is_btc_cascade:
+            rationale.append(f"Macro Tailwind: BTC Flash Dump Active ({float(btc_ret_1h*100):.1f}%)")
+
+        # 14. 5-Point Institutional Checklist Badges (Section 8)
+        track_a_pass = (
+            (pos_in_range >= Decimal("0.65"))
+            and (close <= high_24h - Decimal("0.50") * atr14)
+            and (
+                (rsi_1d >= Decimal("76.0") and upper_wick_ratio_4h >= Decimal("0.45"))
+                or (has_bearish_divergence and macd_hist_4h < macd_hist_4h_prev)
+            )
+        )
+        track_b_pass = (
+            (close < ema50_4h and close < poc_price)
+            and (macd_hist_4h < ZERO and macd_hist_4h <= macd_hist_4h_prev)
+            and (taker_buy_ratio_24h <= Decimal("0.47"))
+        )
+        trapped_longs_check = (
+            (funding is not None and funding >= Decimal("0.0001"))
+            or (basis_bps >= Decimal("12.0"))
+        ) and ((oi_change_7d or ZERO) >= Decimal("0.15"))
+        squeeze_flush_check = (
+            (funding is not None and funding <= Decimal("-0.0003"))
+            and ((oi_change_7d or ZERO) >= Decimal("0.25"))
+            and ((oi_change or ZERO) <= Decimal("-0.015"))
+            and (taker_buy_ratio_24h <= Decimal("0.46"))
+        )
+
+        checklist_verification = ChecklistVerification(
+            value_acceptance=(close < poc_price or close <= (high_24h - Decimal("0.50") * atr14)),
+            volatility_structure=bool(track_a_pass or track_b_pass),
+            momentum_alignment=bool(macd_hist_4h < macd_hist_4h_prev or macd_hist_4h < ZERO),
+            volume_microstructure=bool(upper_wick_ratio_4h >= Decimal("0.45") or taker_buy_ratio_24h <= Decimal("0.47")),
+            derivatives_positioning=bool(trapped_longs_check or squeeze_flush_check or (funding is None or funding >= ZERO)),
+        )
+
+        mtf_desc = "Overbought/Rollover" if mtf_rsi_count >= 1 else "Normal Range"
+        div_desc = "Confirmed 4H/1D Bearish Divergence (RSI & MACD)" if has_bearish_divergence else "Momentum decelerating into resistance"
+        macd_desc = "4H MACD crossed below signal line | Hist decelerating" if is_4h_macd_bearish_cross else "Bearish MACD momentum active"
+        vol_desc = "Effort vs Result: Volume drying on push, seller dominance" if (vol_drying or has_climax_wick) else f"Volume ratio {float(vol_contraction_ratio):.2f}"
+        deriv_desc = (
+            f"7d OI {float((oi_change_7d or Decimal('0'))*100):+.1f}%, funding {float((funding or Decimal('0'))*10000):+.2f} bps"
+            if derivatives
+            else "Derivatives positioning neutral"
+        )
+        checklist = (
+            (
+                "MTF RSI Overbought",
+                mtf_rsi_count >= 1 or rsi_4h >= Decimal("55") or close < poc_price,
+                f"1W: {float(rsi_1w):.1f} | 1D: {float(rsi_1d):.1f} | 4H: {float(rsi_4h):.1f} ({mtf_desc})" if mtf_rsi_count >= 1 else f"Value Breakdown below POC (${float(poc_price):.4f})",
+            ),
+            (
+                "Bearish Divergence",
+                has_bearish_divergence or is_4h_hist_decelerating,
+                div_desc,
+            ),
+            (
+                "MACD Bearish Crossover",
+                is_4h_macd_bearish_cross or is_4h_hist_negative or is_1h_macd_bearish,
+                macd_desc,
+            ),
+            (
+                "Volume & Momentum Exhaustion",
+                vol_drying or has_climax_wick or is_4h_hist_decelerating,
+                vol_desc,
+            ),
+            (
+                "Trapped Longs / Funding",
+                (funding is None or funding >= ZERO),
+                deriv_desc,
+            ),
+        )
+
+        breakdown = CryptoScreenerScoreBreakdown(
+            trend_score=trend_score.quantize(Decimal("0.1")),
+            momentum_score=momentum_score.quantize(Decimal("0.1")),
+            derivatives_score=derivatives_score.quantize(Decimal("0.1")),
+            alpha_score=alpha_score.quantize(Decimal("0.1")),
+            volume_score=volume_score.quantize(Decimal("0.1")),
+            structure_score=alpha_score.quantize(Decimal("0.1")),
+            macro_multiplier=macro_mult.quantize(Decimal("0.01")),
+            final_composite_score=final_score,
+        )
+
+        cvd_metrics = cumulative_volume_delta_metrics(closed_1h, lookback_window=24)
+        max_size_usd = min(Decimal("250000"), (adv_7d * close * Decimal("0.010")).quantize(Decimal("1000")))
+        if cvd_metrics.is_bearish_distribution:
+            rationale.append(f"Institutional Distribution Footprint: 24h CVD negative ({cvd_metrics.cvd_z_score:+.1f}z) with price compressed")
+
+        return CryptoOpportunity(
+            instrument=inst,
+            direction=Direction.SHORT,
+            regime=CryptoMarketRegime.VOLATILITY_SQUEEZE if bb_inside_kc else CryptoMarketRegime.MEAN_REVERTING_RANGE,
+            setup_label=archetype,
+            score=final_score,
+            score_breakdown=breakdown,
+            current_price=close,
+            atr14=atr14,
+            suggested_entry=bracket.suggested_entry,
+            suggested_stop=bracket.invalidation_stop,
+            suggested_targets=bracket.targets,
+            risk_reward_ratio=bracket.asymmetric_rr,
+            estimated_win_rate_pct=(p_win * Decimal("100.0")).quantize(Decimal("0.1")),
+            expected_value_r=ev_r,
+            conviction=conviction,
+            grade=grade.value,
+            checklist_verification=checklist_verification,
+            btc_beta=Decimal("1.0"),
+            residual_return_24h=ZERO,
+            funding_rate=funding,
+            oi_change_1h=oi_change,
+            taker_ratio=taker_ratio,
+            rationale=tuple(rationale),
+            macro_narrative=macro_context.narrative(),
+            poc_price=poc_price,
+            vah_price=vah_price,
+            val_price=val_price,
+            adv_7d=adv_7d.quantize(Decimal("1")),
+            adv_14d=adv_14d.quantize(Decimal("1")),
+            volume_contraction_ratio=vol_contraction_ratio.quantize(Decimal("0.01")),
+            oi_change_7d=oi_change_7d,
+            pullback_entry=bracket.retest_entry,
+            breakout_trigger=bracket.breakout_trigger,
+            checklist=checklist,
+            cvd_24h=cvd_metrics.cvd_24h_change.quantize(Decimal("1")),
+            cvd_z_score=cvd_metrics.cvd_z_score,
+            orderflow_absorption=cvd_metrics.is_bearish_distribution,
+            max_recommended_size_usd=max_size_usd,
+        )
+
+    def _calc_residual_alpha(
+        self,
+        asset_candles: Sequence[Candle],
+        btc_candles: Sequence[Candle],
+    ) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal]:
+        """Compute rolling 7-day beta and 6h, 24h, 7d residual returns against BTC."""
+        if len(asset_candles) < 169 or len(btc_candles) < 169:
+            return Decimal("1.0"), Decimal("0.8"), ZERO, ZERO, ZERO
+
+        beta, corr = beta_correlation(asset_candles, btc_candles, lookback=168)
+        if beta is None:
+            beta = Decimal("1.0")
+        if corr is None:
+            corr = Decimal("0.8")
+
+        ret_6h = _return_over(asset_candles, 6)
+        ret_24h = _return_over(asset_candles, 24)
+        ret_7d = _return_over(asset_candles, 168)
+
+        btc_6h = _return_over(btc_candles, 6)
+        btc_24h = _return_over(btc_candles, 24)
+        btc_7d = _return_over(btc_candles, 168)
+
+        res_6h = ret_6h - beta * btc_6h
+        res_24h = ret_24h - beta * btc_24h
+        res_7d = ret_7d - beta * btc_7d
+
+        return beta, corr, res_24h, res_6h, res_7d
+
+    def _classify_regime(
+        self,
+        snap: IndicatorSnapshot,
+        ema20_4h: Decimal,
+        ema50_4h: Decimal,
+    ) -> CryptoMarketRegime:
+        """Classify crypto market regime using multi-TF EMAs, ADX, and Choppiness."""
+        close = snap.close
+        chop = snap.choppiness
+        adx14 = snap.adx14
+
+        # 1. Squeeze / Low Volatility Compression
+        if chop >= Decimal("62") and adx14 < Decimal("20"):
+            return CryptoMarketRegime.VOLATILITY_SQUEEZE
+
+        # 2. Strong Trend Up
+        if (
+            snap.ema9 > snap.ema20 > snap.ema50 > snap.ema200
+            and close > snap.ema20
+            and adx14 >= Decimal("25")
+            and snap.plus_di > snap.minus_di
+            and chop < Decimal("50")
+            and ema20_4h > ema50_4h
+        ):
+            return CryptoMarketRegime.STRONG_TREND_UP
+
+        # 3. Strong Trend Down
+        if (
+            snap.ema9 < snap.ema20 < snap.ema50 < snap.ema200
+            and close < snap.ema20
+            and adx14 >= Decimal("25")
+            and snap.minus_di > snap.plus_di
+            and chop < Decimal("50")
+            and ema20_4h < ema50_4h
+        ):
+            return CryptoMarketRegime.STRONG_TREND_DOWN
+
+        # 4. Emerging Trend Up
+        if (
+            snap.ema20 > snap.ema50
+            and close > snap.ema20
+            and snap.plus_di > snap.minus_di
+            and (adx14 >= Decimal("18") or snap.momentum_normalized > ZERO)
+        ):
+            return CryptoMarketRegime.EMERGING_TREND_UP
+
+        # 5. Emerging Trend Down
+        if (
+            snap.ema20 < snap.ema50
+            and close < snap.ema20
+            and snap.minus_di > snap.plus_di
+            and (adx14 >= Decimal("18") or snap.momentum_normalized < ZERO)
+        ):
+            return CryptoMarketRegime.EMERGING_TREND_DOWN
+
+        # 6. Mean-Reverting Range
+        if adx14 < Decimal("20") and chop >= Decimal("55"):
+            return CryptoMarketRegime.MEAN_REVERTING_RANGE
+
+        return CryptoMarketRegime.CHOPPY_NOISE
+
+    def _score_setup(
+        self,
+        direction: Direction,
+        inst: Instrument,
+        quote: Quote,
+        snap_1h: IndicatorSnapshot,
+        ema20_4h: Decimal,
+        ema50_4h: Decimal,
+        rsi_4h: Decimal,
+        regime: CryptoMarketRegime,
+        support: Decimal | None,
+        resistance: Decimal | None,
+        struct_trend: str,
+        beta: Decimal,
+        residual_24h: Decimal,
+        residual_6h: Decimal,
+        residual_7d: Decimal,
+        derivatives: DerivativesSnapshot | None,
+        macro_context: MacroSentimentContext,
+        closed_1h: Sequence[Candle],
+        closed_4h: Sequence[Candle] = (),
+    ) -> CryptoOpportunity | None:
+        """Score a specific directional setup and identify setup label and execution bracket."""
+        is_long = direction is Direction.LONG
+        close = snap_1h.close
+        atr14 = snap_1h.atr14
+        rationale: list[str] = []
+
+        # --- Anti-Chasing & Value Acceptance Hard Gates ---
+        if is_long:
+            # 1. Reject already-exploded parabolic blow-off pumps (e.g. WUSDT +55%, GTCUSDT +73%)
+            ret_24h = _return_over(closed_1h, 24)
+            if ret_24h > Decimal("0.20") or close > (snap_1h.ema20 * Decimal("1.10")):
+                return None
+            if len(closed_1h) >= 72:
+                last_72h = closed_1h[-72:]
+                high_72h = max(c.high for c in last_72h)
+                low_72h = min(c.low for c in last_72h)
+                if low_72h > ZERO and ((high_72h - low_72h) / low_72h) > Decimal("0.30"):
+                    return None
+
+            # 2. Mandatory Value Acceptance: Price MUST be accepted at or above 30d POC
+            # Tokens trading below POC (e.g. NILUSDT) have trapped overhead supply -> reject!
+            if closed_4h:
+                base_window = closed_4h[-120:] if len(closed_4h) >= 120 else closed_4h
+                vp = volume_profile(base_window, bins=50)
+                if close < (vp.poc_price * Decimal("0.985")):
+                    return None
+        else:
+            # Short Anti-Chasing & Floor Blacklist Hard Gates:
+            # 1. Reject already dumped tokens (> 18% in 24h or > 35% excursion in 72h)
+            ret_24h = _return_over(closed_1h, 24)
+            if ret_24h < Decimal("-0.18") or close < (snap_1h.ema20 * Decimal("0.90")):
+                return None
+            if len(closed_1h) >= 72:
+                last_72h = closed_1h[-72:]
+                high_72h = max(c.high for c in last_72h)
+                low_72h = min(c.low for c in last_72h)
+                if low_72h > ZERO and ((high_72h - low_72h) / low_72h) > Decimal("0.35"):
+                    return None
+            # 2. Macro Overextension & Upper Range: Never short tokens in the lower half of range or without prior run-up
+            if closed_4h:
+                base_window = closed_4h[-120:] if len(closed_4h) >= 120 else closed_4h
+                high_30d = max(c.high for c in base_window)
+                low_30d = min(c.low for c in base_window)
+                if high_30d > low_30d:
+                    pos_in_range = (close - low_30d) / (high_30d - low_30d)
+                    range_height = (high_30d - low_30d) / low_30d
+                    if pos_in_range < Decimal("0.50"):
+                        return None
+                    if range_height < Decimal("0.18"):
+                        return None
+
+        # --- 1. Trend Score (0-100) ---
+        trend_score = ZERO
+        if is_long:
+            if close > snap_1h.ema20:
+                trend_score += Decimal("20")
+            if snap_1h.ema20 > snap_1h.ema50:
+                trend_score += Decimal("20")
+            if snap_1h.ema50 > snap_1h.ema200:
+                trend_score += Decimal("20")
+            if ema20_4h > ema50_4h:
+                trend_score += Decimal("20")
+            if snap_1h.plus_di > snap_1h.minus_di:
+                trend_score += Decimal("10")
+            if snap_1h.adx14 >= Decimal("25"):
+                trend_score += Decimal("10")
+        else:
+            if close < snap_1h.ema20:
+                trend_score += Decimal("20")
+            if snap_1h.ema20 < snap_1h.ema50:
+                trend_score += Decimal("20")
+            if snap_1h.ema50 < snap_1h.ema200:
+                trend_score += Decimal("20")
+            if ema20_4h < ema50_4h:
+                trend_score += Decimal("20")
+            if snap_1h.minus_di > snap_1h.plus_di:
+                trend_score += Decimal("10")
+            if snap_1h.adx14 >= Decimal("25"):
+                trend_score += Decimal("10")
+
+        # --- 2. Momentum Score (0-100) ---
+        mom_score = ZERO
+        if is_long:
+            if snap_1h.momentum_normalized > ZERO:
+                mom_score += Decimal("30")
+            if snap_1h.macd_hist > snap_1h.momentum_reference_macd_hist:
+                mom_score += Decimal("25")
+            if Decimal("50") <= snap_1h.rsi14 <= Decimal("68"):
+                mom_score += Decimal("25")
+            elif snap_1h.rsi14 > Decimal("68") and snap_1h.rsi14 <= Decimal("75"):
+                mom_score += Decimal("10")
+            if snap_1h.macd_line > snap_1h.macd_signal_line:
+                mom_score += Decimal("20")
+        else:
+            if snap_1h.momentum_normalized < ZERO:
+                mom_score += Decimal("30")
+            if snap_1h.macd_hist < snap_1h.momentum_reference_macd_hist:
+                mom_score += Decimal("25")
+            if Decimal("32") <= snap_1h.rsi14 <= Decimal("50"):
+                mom_score += Decimal("25")
+            elif snap_1h.rsi14 < Decimal("32") and snap_1h.rsi14 >= Decimal("25"):
+                mom_score += Decimal("10")
+            if snap_1h.macd_line < snap_1h.macd_signal_line:
+                mom_score += Decimal("20")
+
+        # --- 3. Derivatives Score (0-100) ---
+        deriv_score = Decimal("50")  # neutral baseline if no derivatives data
+        funding_rate = derivatives.funding_rate if derivatives else None
+        oi_change = derivatives.open_interest_change_1h if derivatives else None
+        taker_ratio = derivatives.taker_buy_sell_ratio if derivatives else None
+
+        if derivatives is not None:
+            deriv_score = ZERO
+            # Funding rate contrarian dynamics:
+            # Negative funding (< 0) in long = shorts paying longs, massive squeeze fuel
+            if is_long:
+                if derivatives.funding_rate < Decimal("-0.0001"):
+                    deriv_score += Decimal("35")
+                    rationale.append(f"Shorts paying longs: funding {float(derivatives.funding_rate*10000):.1f} bps (Squeeze fuel)")
+                elif derivatives.funding_rate <= Decimal("0.0001"):
+                    deriv_score += Decimal("25")
+                elif derivatives.funding_rate > Decimal("0.0005"):
+                    # Heavy long crowdedness
+                    deriv_score += Decimal("5")
+                else:
+                    deriv_score += Decimal("15")
+            else:
+                if derivatives.funding_rate > Decimal("0.0005"):
+                    deriv_score += Decimal("35")
+                    rationale.append(f"Longs paying shorts: funding {float(derivatives.funding_rate*10000):.1f} bps (Long trap)")
+                elif derivatives.funding_rate >= Decimal("0"):
+                    deriv_score += Decimal("25")
+                elif derivatives.funding_rate < Decimal("-0.0003"):
+                    deriv_score += Decimal("5")
+                else:
+                    deriv_score += Decimal("15")
+
+            # Open Interest velocity
+            if derivatives.open_interest_change_1h is not None:
+                oi_chg = derivatives.open_interest_change_1h
+                if is_long:
+                    if oi_chg > Decimal("0.02") and close > snap_1h.ema20:
+                        deriv_score += Decimal("30")
+                        rationale.append(f"OI expanding with price (+{float(oi_chg*100):.1f}% 1h)")
+                    elif oi_chg < Decimal("-0.02"):
+                        deriv_score += Decimal("15")
+                else:
+                    if oi_chg > Decimal("0.02") and close < snap_1h.ema20:
+                        deriv_score += Decimal("30")
+                        rationale.append(f"OI expanding into downtrend (+{float(oi_chg*100):.1f}% 1h)")
+                    elif oi_chg < Decimal("-0.02"):
+                        deriv_score += Decimal("15")
+
+            # Taker Buy/Sell ratio
+            if is_long:
+                if derivatives.taker_buy_sell_ratio >= Decimal("1.15"):
+                    deriv_score += Decimal("20")
+                    rationale.append(f"Taker buy aggression ({float(derivatives.taker_buy_sell_ratio):.2f})")
+                elif derivatives.taker_buy_sell_ratio >= Decimal("1.0"):
+                    deriv_score += Decimal("10")
+            else:
+                if derivatives.taker_buy_sell_ratio <= Decimal("0.85"):
+                    deriv_score += Decimal("20")
+                    rationale.append(f"Taker sell aggression ({float(derivatives.taker_buy_sell_ratio):.2f})")
+                elif derivatives.taker_buy_sell_ratio <= Decimal("1.0"):
+                    deriv_score += Decimal("10")
+
+            # Depth imbalance
+            if is_long and derivatives.depth_imbalance > Decimal("0.10") or not is_long and derivatives.depth_imbalance < Decimal("-0.10"):
+                deriv_score += Decimal("15")
+            else:
+                deriv_score += Decimal("5")
+
+        # --- 4. Alpha Score (BTC-Residual Alpha) (0-100) ---
+        alpha_score = ZERO
+        if is_long:
+            if residual_24h > Decimal("0.03"):
+                alpha_score += Decimal("40")
+                rationale.append(f"Strong 24h BTC-residual alpha (+{float(residual_24h*100):.1f}%)")
+            elif residual_24h > ZERO:
+                alpha_score += Decimal("25")
+            if residual_6h > Decimal("0.01"):
+                alpha_score += Decimal("30")
+            elif residual_6h > ZERO:
+                alpha_score += Decimal("15")
+            if residual_7d > ZERO:
+                alpha_score += Decimal("20")
+            if beta < Decimal("1.2"):
+                alpha_score += Decimal("10")
+        else:
+            if residual_24h < Decimal("-0.03"):
+                alpha_score += Decimal("40")
+                rationale.append(f"Severe 24h underperformance vs BTC ({float(residual_24h*100):.1f}%)")
+            elif residual_24h < ZERO:
+                alpha_score += Decimal("25")
+            if residual_6h < Decimal("-0.01"):
+                alpha_score += Decimal("30")
+            elif residual_6h < ZERO:
+                alpha_score += Decimal("15")
+            if residual_7d < ZERO:
+                alpha_score += Decimal("20")
+            if beta > Decimal("1.0"):
+                alpha_score += Decimal("10")
+
+        # --- 5. Volume Score (0-100) ---
+        vol_score = ZERO
+        part_ratio = _participation_ratio(closed_1h)
+        if snap_1h.relative_volume >= Decimal("1.5"):
+            vol_score += Decimal("50")
+            rationale.append(f"Volume surge ({float(snap_1h.relative_volume):.1f}x 20-bar avg)")
+        elif snap_1h.relative_volume >= Decimal("1.1"):
+            vol_score += Decimal("30")
+        if part_ratio >= Decimal("1.25"):
+            vol_score += Decimal("30")
+        if quote.quote_volume_24h > Decimal("5000000"):
+            vol_score += Decimal("20")
+
+        # --- 6. Structure Score & Key Levels (0-100) ---
+        struct_score = Decimal("50")
+        opposing_level = resistance if is_long else support
+        if opposing_level is not None and atr14 > ZERO:
+            dist_to_opposing = (
+                (opposing_level - close) if is_long else (close - opposing_level)
+            ) / atr14
+            if dist_to_opposing >= Decimal("2.5"):
+                struct_score = Decimal("90")
+                rationale.append(f"Ample room to run ({float(dist_to_opposing):.1f} ATR to opposing level)")
+            elif dist_to_opposing >= Decimal("1.5"):
+                struct_score = Decimal("70")
+            else:
+                struct_score = Decimal("30")
+
+        # --- Setup Label Identification ---
+        setup = SetupLabel.NO_SETUP
+        if is_long:
+            # 1. Squeeze Long
+            if (
+                funding_rate is not None
+                and funding_rate < Decimal("-0.0001")
+                and oi_change is not None
+                and oi_change > Decimal("0.01")
+                and close > snap_1h.ema20
+            ):
+                setup = SetupLabel.SQUEEZE_LONG
+                rationale.append("High-probability Short Squeeze Setup")
+            # 2. Breakout Long
+            elif (
+                regime in (CryptoMarketRegime.STRONG_TREND_UP, CryptoMarketRegime.VOLATILITY_SQUEEZE)
+                and close > snap_1h.ema9
+                and snap_1h.relative_volume >= Decimal("1.25")
+                and snap_1h.momentum_normalized > ZERO
+            ):
+                setup = SetupLabel.BREAKOUT_LONG
+                rationale.append("Trend Breakout with volume expansion")
+            # 3. Continuation Long
+            elif (
+                regime is CryptoMarketRegime.STRONG_TREND_UP
+                and close >= snap_1h.ema20
+                and snap_1h.rsi14 >= Decimal("48")
+                and residual_24h > ZERO
+            ):
+                setup = SetupLabel.CONTINUATION_LONG
+                rationale.append("Trend Continuation on EMA20 pullback")
+            # 4. Momentum Emerging Long
+            elif (
+                regime is CryptoMarketRegime.EMERGING_TREND_UP
+                and snap_1h.momentum_normalized > ZERO
+                and snap_1h.macd_hist > ZERO
+            ):
+                setup = SetupLabel.MOMENTUM_EMERGING_LONG
+                rationale.append("Early phase momentum transition")
+            # 5. Range Fade Long
+            elif (
+                regime is CryptoMarketRegime.MEAN_REVERTING_RANGE
+                and snap_1h.rsi14 <= Decimal("35")
+                and support is not None
+                and abs(close - support) <= Decimal("0.8") * atr14
+            ):
+                setup = SetupLabel.RANGE_FADE_LONG
+                rationale.append("Mean-reversion bounce off key support")
+        else:
+            # Short setups
+            if (
+                funding_rate is not None
+                and funding_rate > Decimal("0.0005")
+                and oi_change is not None
+                and oi_change > Decimal("0.01")
+                and close < snap_1h.ema20
+            ):
+                setup = SetupLabel.SQUEEZE_SHORT
+                rationale.append("High-probability Long Liquidation Flush Setup")
+            elif (
+                regime in (CryptoMarketRegime.STRONG_TREND_DOWN, CryptoMarketRegime.VOLATILITY_SQUEEZE)
+                and close < snap_1h.ema9
+                and snap_1h.relative_volume >= Decimal("1.25")
+                and snap_1h.momentum_normalized < ZERO
+            ):
+                setup = SetupLabel.BREAKOUT_SHORT
+                rationale.append("Downtrend Breakdown with volume expansion")
+            elif (
+                regime is CryptoMarketRegime.STRONG_TREND_DOWN
+                and close <= snap_1h.ema20
+                and snap_1h.rsi14 <= Decimal("52")
+                and residual_24h < ZERO
+            ):
+                setup = SetupLabel.CONTINUATION_SHORT
+                rationale.append("Downtrend Continuation on EMA20 rally")
+            elif (
+                regime is CryptoMarketRegime.EMERGING_TREND_DOWN
+                and snap_1h.momentum_normalized < ZERO
+                and snap_1h.macd_hist < ZERO
+            ):
+                setup = SetupLabel.MOMENTUM_EMERGING_SHORT
+                rationale.append("Early phase bearish acceleration")
+            elif (
+                regime is CryptoMarketRegime.MEAN_REVERTING_RANGE
+                and snap_1h.rsi14 >= Decimal("65")
+                and resistance is not None
+                and abs(resistance - close) <= Decimal("0.8") * atr14
+            ):
+                setup = SetupLabel.RANGE_FADE_SHORT
+                rationale.append("Mean-reversion rejection at key resistance")
+
+        if setup is SetupLabel.NO_SETUP:
+            return None
+
+        # --- Composite Scoring (0-100) ---
+        raw_score = (
+            trend_score * Decimal("0.25")
+            + mom_score * Decimal("0.20")
+            + deriv_score * Decimal("0.20")
+            + alpha_score * Decimal("0.20")
+            + vol_score * Decimal("0.10")
+            + struct_score * Decimal("0.05")
+        )
+
+        macro_multiplier = macro_context.multiplier_for(direction)
+        composite_score = raw_score * macro_multiplier
+        if composite_score > HUNDRED:
+            composite_score = HUNDRED
+        if composite_score < ZERO:
+            composite_score = ZERO
+
+        composite_score = composite_score.quantize(Decimal("0.1"))
+
+        # --- Invalidation Stop & Targets Calculation ---
+        stop_dist = atr14 * Decimal("1.5")
+        if is_long:
+            suggested_stop = close - stop_dist
+            if support is not None and support < close and (close - support) < (Decimal("2.0") * atr14):
+                suggested_stop = min(suggested_stop, support - (Decimal("0.2") * atr14))
+            target_1r = close + stop_dist
+            target_2r = close + stop_dist * Decimal("2.0")
+            target_3r = close + stop_dist * Decimal("3.0")
+            targets = (target_1r.quantize(close), target_2r.quantize(close), target_3r.quantize(close))
+        else:
+            suggested_stop = close + stop_dist
+            if resistance is not None and resistance > close and (resistance - close) < (Decimal("2.0") * atr14):
+                suggested_stop = max(suggested_stop, resistance + (Decimal("0.2") * atr14))
+            target_1r = max(close * Decimal("0.70"), close - stop_dist)
+            target_2r = max(close * Decimal("0.50"), min(target_1r * Decimal("0.95"), close - stop_dist * Decimal("2.0")))
+            target_3r = max(close * Decimal("0.30"), min(target_2r * Decimal("0.90"), close - stop_dist * Decimal("3.0")))
+            targets = (target_1r.quantize(close), target_2r.quantize(close), target_3r.quantize(close))
+
+        suggested_stop = suggested_stop.quantize(close)
+        risk = max(Decimal("0.0001"), abs(close - suggested_stop))
+        reward = abs(targets[1] - close)
+        rr = max(Decimal("2.5"), (reward / risk).quantize(Decimal("0.1")))
+
+        breakdown = CryptoScreenerScoreBreakdown(
+            trend_score=trend_score.quantize(Decimal("0.1")),
+            momentum_score=mom_score.quantize(Decimal("0.1")),
+            derivatives_score=deriv_score.quantize(Decimal("0.1")),
+            alpha_score=alpha_score.quantize(Decimal("0.1")),
+            volume_score=vol_score.quantize(Decimal("0.1")),
+            structure_score=struct_score.quantize(Decimal("0.1")),
+            macro_multiplier=macro_multiplier.quantize(Decimal("0.01")),
+            final_composite_score=composite_score,
+        )
+
+        adv_7d, adv_14d, vol_contraction_ratio = volume_contraction_metrics(closed_1h, 7, 14)
+        vp_window = closed_4h[-60:] if len(closed_4h) >= 60 else closed_4h
+        vp = volume_profile(vp_window, bins=50)
+        oi_change_7d = derivatives.open_interest_change_7d if derivatives else None
+
+        if is_long:
+            pullback_entry = (close - (atr14 * Decimal("0.4"))).quantize(close)
+            breakout_trigger = (close + (atr14 * Decimal("0.2"))).quantize(close)
+        else:
+            pullback_entry = (close + (atr14 * Decimal("0.4"))).quantize(close)
+            breakout_trigger = (close - (atr14 * Decimal("0.2"))).quantize(close)
+
+        breakout_checklist = (
+            ("Trend Baseline", trend_score >= Decimal("50"), f"Trend Score {trend_score:.0f}/100"),
+            ("Momentum Impulse", mom_score >= Decimal("50"), f"Momentum Score {mom_score:.0f}/100"),
+            ("Value Acceptance", close >= vp.poc_price if is_long else close <= vp.poc_price, f"POC: ${float(vp.poc_price):.4f}"),
+            ("Volume Expansion", vol_score >= Decimal("50"), f"Volume Score {vol_score:.0f}/100"),
+            ("Derivatives Flow", deriv_score >= Decimal("40"), f"Derivatives Score {deriv_score:.0f}/100"),
+        )
+
+        pass_count = sum(1 for item in breakout_checklist if item[1])
+        cvd_metrics = cumulative_volume_delta_metrics(closed_1h, lookback_window=24)
+        max_size_usd = min(Decimal("250000"), (adv_7d * close * Decimal("0.010")).quantize(Decimal("1000")))
+
+        win_rate, ev_r = calculate_opportunity_win_rate_and_ev(
+            setup_label=setup,
+            score=composite_score,
+            checklist_passed=pass_count,
+            checklist_total=len(breakout_checklist),
+            risk_reward_ratio=rr,
+            taker_ratio=taker_ratio,
+            macro_multiplier=macro_multiplier,
+        )
+
+        return CryptoOpportunity(
+            instrument=inst,
+            direction=direction,
+            regime=regime,
+            setup_label=setup,
+            score=composite_score,
+            score_breakdown=breakdown,
+            current_price=close,
+            atr14=atr14,
+            suggested_entry=close,
+            suggested_stop=suggested_stop,
+            suggested_targets=targets,
+            risk_reward_ratio=rr,
+            estimated_win_rate_pct=win_rate,
+            expected_value_r=ev_r,
+            btc_beta=beta.quantize(Decimal("0.01")),
+            residual_return_24h=residual_24h.quantize(Decimal("0.0001")),
+            funding_rate=funding_rate,
+            oi_change_1h=oi_change,
+            taker_ratio=taker_ratio,
+            rationale=tuple(rationale),
+            macro_narrative=macro_context.narrative(),
+            poc_price=vp.poc_price,
+            vah_price=vp.vah_price,
+            val_price=vp.val_price,
+            adv_7d=adv_7d.quantize(Decimal("1")),
+            adv_14d=adv_14d.quantize(Decimal("1")),
+            volume_contraction_ratio=vol_contraction_ratio.quantize(Decimal("0.01")),
+            oi_change_7d=oi_change_7d,
+            pullback_entry=pullback_entry,
+            breakout_trigger=breakout_trigger,
+            checklist=breakout_checklist,
+            cvd_24h=cvd_metrics.cvd_24h_change.quantize(Decimal("1")),
+            cvd_z_score=cvd_metrics.cvd_z_score,
+            orderflow_absorption=cvd_metrics.is_bullish_absorption if direction is Direction.LONG else cvd_metrics.is_bearish_distribution,
+            max_recommended_size_usd=max_size_usd,
+        )

@@ -1,0 +1,497 @@
+//@version=6
+strategy("Zaakiy Institutional Momentum & Flow Strategy v15.4", shorttitle="Zaakiy Strategy v15.4", overlay=true, calc_on_every_tick=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=25, commission_type=strategy.commission.percent, commission_value=0.05, max_boxes_count=100, max_labels_count=300, max_lines_count=100)
+
+// ============================================================================
+// ZAAKIY INSTITUTIONAL MOMENTUM & FLOW STRATEGY v15.4 (TREND HEALTH & STRUCTURE)
+// ----------------------------------------------------------------------------
+// Institutional Multi-Factor Architecture:
+// 1. STRUCTURAL TREND RIBBON   : Fast 21 EMA vs Slow 50 EMA
+// 2. VOLATILITY ENVELOPE       : Supertrend (2.4x ATR / 10 Length)
+// 3. MOMENTUM SHIFT ENGINE     : MACD (12/26/9) Line Cross + Histogram Acceleration
+// 4. MOMENTUM FLOW & BOUNDS    : RSI (14) Multi-Zone Flow (48-76 Long, 24-52 Short)
+// 5. VOLUME EXPANSION & CMF    : Relative Volume (RVOL) + Chaikin Money Flow (CMF)
+// 6. VALUATION & CANDLE ACTION : Dynamic Discount/Premium Zones + Initiative Candle
+// 7. ROBUST TELEMETRY TABLE    : 100% Native Proven Pine Script Table Architecture
+// ============================================================================
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUT PARAMETERS
+// ─────────────────────────────────────────────────────────────────────────────
+groupTrend = "1. Institutional Trend & Volatility Envelope"
+emaFastLen   = input.int(21, "Fast Ribbon EMA", minval=5, maxval=50, group=groupTrend)
+emaSlowLen   = input.int(50, "Slow Ribbon EMA", minval=10, maxval=100, group=groupTrend)
+stFactor     = input.float(2.4, "Supertrend ATR Multiplier", minval=1.0, step=0.1, group=groupTrend)
+stLen        = input.int(10, "Supertrend ATR Length", minval=3, group=groupTrend)
+useMacro200  = input.bool(false, "Enforce Hard 200 EMA Baseline", group=groupTrend)
+emaMacroLen  = input.int(200, "Macro 200 EMA Length", minval=50, maxval=400, group=groupTrend)
+
+groupMom = "2. Momentum Engines (MACD & RSI)"
+rsiLen       = input.int(14, "RSI Length", minval=2, group=groupMom)
+minRsiBull   = input.float(48.0, "Min RSI for Bullish Flip", minval=40.0, maxval=55.0, group=groupMom)
+maxRsiBear   = input.float(52.0, "Max RSI for Bearish Flip", minval=45.0, maxval=60.0, group=groupMom)
+macdFastLen  = input.int(12, "MACD Fast Length", group=groupMom)
+macdSlowLen  = input.int(26, "MACD Slow Length", group=groupMom)
+macdSigLen   = input.int(9, "MACD Signal Length", group=groupMom)
+
+groupVol = "3. Volume & Money Flow"
+volSmaLen    = input.int(20, "Volume SMA Length", group=groupVol)
+cmfLen       = input.int(20, "CMF Length", group=groupVol)
+
+groupVal = "4. Institutional Valuation Zones (Discount / Premium)"
+showValZones = input.bool(true, "Show Institutional Buy & Sell Areas", group=groupVal)
+valLookback  = input.int(40, "Valuation Range Lookback", minval=15, maxval=100, group=groupVal)
+zoneDepthPct = input.float(25.0, "Zone Depth (% of Range)", minval=15.0, maxval=40.0, step=5.0, group=groupVal)
+
+groupRisk = "5. Asymmetric Execution & Confluence Scoring"
+minScoreReq  = input.int(5, "Min Confluence Score Required (Out of 7)", minval=4, maxval=7, group=groupRisk)
+minFlipBars  = input.int(6, "Min Bars Between Trend Flips (Anti-Chop)", minval=2, maxval=30, group=groupRisk)
+atrLen       = input.int(14, "ATR Length", group=groupRisk)
+slAtrMult    = input.float(1.8, "Stop-Loss ATR Multiplier", minval=0.8, maxval=3.5, step=0.1, group=groupRisk)
+targetRR     = input.float(2.5, "Take-Profit Target (R:R)", minval=1.5, maxval=5.0, step=0.2, group=groupRisk)
+useBreakeven = input.bool(true, "Move Stop to Breakeven at +1.0R Profit", group=groupRisk)
+lblSizeInput = input.string("Small", "Signal Label Size", options=["Small", "Tiny", "Normal"], group=groupRisk)
+
+groupHUD     = "6. Institutional Telemetry Dashboard"
+showHUD      = input.bool(true, "Display HUD Table", group=groupHUD)
+hudPos       = input.string("Top Right (Below Header)", "HUD Position", options=["Top Right (Below Header)", "Middle Right", "Bottom Right"], group=groupHUD)
+topOffsetPct = input.float(5.5, "Top Offset Distance (%)", minval=1.0, maxval=20.0, step=0.5, group=groupHUD)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. CALCULATIONS: 7 INSTITUTIONAL PILLARS
+// ─────────────────────────────────────────────────────────────────────────────
+// Pillar 1: Trend Ribbon
+emaFast  = ta.ema(close, emaFastLen)
+emaSlow  = ta.ema(close, emaSlowLen)
+emaMacro = ta.ema(close, emaMacroLen)
+atrVal   = ta.atr(atrLen)
+
+bool ribbonBull = emaFast > emaSlow
+bool ribbonBear = emaFast < emaSlow
+bool macroPassBull = not useMacro200 or (close > emaMacro)
+bool macroPassBear = not useMacro200 or (close < emaMacro)
+
+// Pillar 2: Supertrend Volatility Envelope
+[stLine, stDir] = ta.supertrend(stFactor, stLen)
+bool stBull = stDir < 0
+bool stBear = stDir > 0
+
+// Pillar 3: MACD Momentum Cycle & Acceleration
+[macdLine, signalLine, histLine] = ta.macd(close, macdFastLen, macdSlowLen, macdSigLen)
+bool macdHistGrowing = histLine >= nz(histLine[1])
+bool macdHistShrink  = histLine <= nz(histLine[1])
+bool macdMomBull = (macdLine >= signalLine or histLine >= 0) and macdHistGrowing
+bool macdMomBear = (macdLine <= signalLine or histLine <= 0) and macdHistShrink
+
+// Pillar 4: RSI Momentum Flow & Safe Boundaries
+rsiVal = ta.rsi(close, rsiLen)
+bool rsiBull = (rsiVal >= minRsiBull) and (rsiVal <= 78.0)
+bool rsiBear = (rsiVal <= maxRsiBear) and (rsiVal >= 22.0)
+
+// Pillar 5: Volume Expansion & Chaikin Money Flow (CMF)
+volSma = ta.sma(volume, volSmaLen)
+rvol   = volume / math.max(volSma, 1e-8)
+
+candleSpread = math.max(high - low, 1e-8)
+mfMultiplier = ((close - low) - (high - close)) / candleSpread
+mfVolume     = mfMultiplier * volume
+cmfVal       = math.sum(mfVolume, cmfLen) / math.max(math.sum(volume, cmfLen), 1e-8)
+
+bool volExpBull = (volume >= volSma * 0.90 or volume > volume[1]) and (cmfVal >= -0.02)
+bool volExpBear = (volume >= volSma * 0.90 or volume > volume[1]) and (cmfVal <= 0.02)
+
+// Pillar 6: Valuation Zones
+rangeHigh = ta.highest(high, valLookback)
+rangeLow  = ta.lowest(low, valLookback)
+rangeSpan = rangeHigh - rangeLow
+zoneDepth = rangeSpan * (zoneDepthPct / 100.0)
+
+buyAreaTop     = rangeLow + zoneDepth
+buyAreaBottom  = rangeLow
+sellAreaBottom = rangeHigh - zoneDepth
+sellAreaTop    = rangeHigh
+
+bool inDiscount = close <= buyAreaTop or low <= buyAreaTop
+bool inPremium  = close >= sellAreaBottom or high >= sellAreaBottom
+
+// Pillar 7: Price Action & Initiative Bar
+bool priceActionBull = (close > open) or inDiscount
+bool priceActionBear = (close < open) or inPremium
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1B. QUANTITATIVE TREND HEALTH & PULLBACK VS REVERSAL CLASSIFICATION
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. Average Directional Index (ADX) Trend Conviction
+[plusDI, minusDI, adxVal] = ta.dmi(14, 14)
+
+// 2. Momentum Divergences (Trend Weakening / Exhaustion Signatures)
+bool momDivBear = (high >= ta.highest(high[1], 10)) and (rsiVal < ta.highest(rsiVal[1], 10))
+bool momDivBull = (low <= ta.lowest(low[1], 10)) and (rsiVal > ta.lowest(rsiVal[1], 10))
+bool adxExhaustion = (adxVal > 35.0) and (adxVal < adxVal[1]) and (adxVal[1] < adxVal[2])
+bool volExhaustionBull = (close > close[1]) and (rvol < 0.75) and (cmfVal < 0)
+bool volExhaustionBear = (close < close[1]) and (rvol < 0.75) and (cmfVal > 0)
+
+// Trend Health State
+bool isWeakeningBull  = ribbonBull and (momDivBear or adxExhaustion or volExhaustionBull)
+bool isWeakeningBear  = ribbonBear and (momDivBull or adxExhaustion or volExhaustionBear)
+bool isTrendWeakening = isWeakeningBull or isWeakeningBear
+bool isTrendStrong    = (adxVal >= 25.0) and (adxVal >= adxVal[1]) and not isTrendWeakening
+bool isTrendChop      = (adxVal < 20.0)
+
+string trendHealthText = isTrendStrong ? "STRONG (Acc)" : (isTrendWeakening ? "WEAKENING" : (isTrendChop ? "CONSOLIDATING" : "STEADY"))
+color  trendHealthBg   = isTrendStrong ? color.new(#238636, 10) : (isTrendWeakening ? color.new(#D29922, 20) : (isTrendChop ? color.new(#30363D, 20) : color.new(#1F6FEB, 20)))
+color  trendHealthTxt  = isTrendStrong ? #3FB950 : (isTrendWeakening ? #D29922 : (isTrendChop ? #8B949E : #58A6FF))
+
+// 3. Healthy Pullback vs Macro Reversal Quantitative Classification
+// In Bull: Dip into 21 EMA holding 50 EMA on low volume (Absence of institutional dumping)
+bool isPullingBackBull    = ribbonBull and (close < emaFast)
+bool isHoldingSupportBull = (close >= emaSlow * 0.985) and (not useMacro200 or close > emaMacro)
+bool isLowVolDipBull      = (rvol < 1.15) and (cmfVal >= -0.05)
+bool isHealthyPullbackBull = isPullingBackBull and isHoldingSupportBull and isLowVolDipBull
+
+// In Bull: Macro Breakdown (Reversal) - breaks below 50 EMA with heavy volume or capital flight
+bool isMacroReversalBear  = ribbonBull and (close < emaSlow) and (rvol >= 1.2 or cmfVal < -0.05 or (useMacro200 and close < emaMacro))
+
+// In Bear: Relief bounce into 21 EMA holding below 50 EMA on low volume
+bool isPullingBackBear    = ribbonBear and (close > emaFast)
+bool isHoldingResistanceBear = (close <= emaSlow * 1.015) and (not useMacro200 or close < emaMacro)
+bool isLowVolBounceBear   = (rvol < 1.15) and (cmfVal <= 0.05)
+bool isHealthyPullbackBear = isPullingBackBear and isHoldingResistanceBear and isLowVolBounceBear
+
+// In Bear: Macro Breakout (Reversal) - breaks above 50 EMA with heavy volume and positive capital inflow
+bool isMacroReversalBull  = ribbonBear and (close > emaSlow) and (rvol >= 1.2 or cmfVal > 0.05 or (useMacro200 and close > emaMacro))
+
+// Structure Text & Color
+string structText = isHealthyPullbackBull ? "DIP PULLBACK" : (isHealthyPullbackBear ? "RELIEF BOUNCE" : (isMacroReversalBear ? "MACRO REVERSAL" : (isMacroReversalBull ? "MACRO REVERSAL" : (ribbonBull ? "TRENDING (Bull)" : "TRENDING (Bear)"))))
+color  structBg   = isHealthyPullbackBull ? color.new(#1F6FEB, 20) : (isHealthyPullbackBear ? color.new(#D29922, 20) : (isMacroReversalBear ? color.new(#DA3633, 10) : (isMacroReversalBull ? color.new(#238636, 10) : color.new(#0D1117, 10))))
+color  structTxt  = isHealthyPullbackBull ? #58A6FF : (isHealthyPullbackBear ? #D29922 : (isMacroReversalBear ? #F85149 : (isMacroReversalBull ? #3FB950 : (ribbonBull ? #3FB950 : #F85149))))
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. MULTI-FACTOR WEIGHTED CONFLUENCE SCORING (OUT OF 7)
+// ─────────────────────────────────────────────────────────────────────────────
+int bullScore = 0
+int bearScore = 0
+
+if ribbonBull and macroPassBull
+    bullScore += 1
+if ribbonBear and macroPassBear
+    bearScore += 1
+
+if stBull
+    bullScore += 1
+if stBear
+    bearScore += 1
+
+if macdMomBull
+    bullScore += 1
+if macdMomBear
+    bearScore += 1
+
+if rsiBull
+    bullScore += 1
+if rsiBear
+    bearScore += 1
+
+if volExpBull
+    bullScore += 1
+if volExpBear
+    bearScore += 1
+
+if inDiscount
+    bullScore += 1
+if inPremium
+    bearScore += 1
+
+if (close > open)
+    bullScore += 1
+if (close < open)
+    bearScore += 1
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. ZERO-NOISE STATE-MACHINE SIGNAL GENERATION (ANTI-WHIPSAW PROTECTED)
+// ─────────────────────────────────────────────────────────────────────────────
+var int trendState  = 0 // 1 = in confirmed Bull, -1 = in confirmed Bear
+var int lastFlipBar = -999
+
+bool flipCooldownOk = (bar_index - lastFlipBar) >= minFlipBars
+
+// Prevent shorting into healthy bull pullbacks, and prevent buying dead-cat bear bounces
+bool bullTrigger = (bullScore >= minScoreReq) and ribbonBull and stBull and (close > open) and not isHealthyPullbackBear
+bool bearTrigger = (bearScore >= minScoreReq) and ribbonBear and stBear and (close < open) and not isHealthyPullbackBull
+
+bool buySignal  = (trendState != 1) and bullTrigger and flipCooldownOk and barstate.isconfirmed
+bool sellSignal = (trendState != -1) and bearTrigger and flipCooldownOk and barstate.isconfirmed
+
+if buySignal
+    trendState  := 1
+    lastFlipBar := bar_index
+
+if sellSignal
+    trendState  := -1
+    lastFlipBar := bar_index
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3B. QUANTITATIVE 6-PHASE ACTION DIRECTIVE ENGINE (PREDICTIVE & REALISTIC)
+// ─────────────────────────────────────────────────────────────────────────────
+// John Carter Volatility Squeeze (Bollinger Bands inside Keltner Channels)
+basisSqz = ta.sma(close, 20)
+devSqz   = 2.0 * ta.stdev(close, 20)
+bbUpper  = basisSqz + devSqz
+bbLower  = basisSqz - devSqz
+
+kcMa     = ta.ema(close, 20)
+kcAtr    = ta.atr(20)
+kcUpper  = kcMa + (1.5 * kcAtr)
+kcLower  = kcMa - (1.5 * kcAtr)
+
+bool isVolatilitySqueeze = (bbLower >= kcLower) and (bbUpper <= kcUpper)
+
+// 1. Active High-Volume Expansion Breakout (Shattering Ceiling with High Volume)
+bool isExpansionBreakout  = (close >= sellAreaBottom or high > sellAreaTop) and (rvol >= 1.0) and (bullScore >= 6) and (trendState == 1) and (close > open)
+bool isExpansionBreakdown = (close <= buyAreaTop or low < buyAreaBottom) and (rvol >= 1.0) and (bearScore >= 6) and (trendState == -1) and (close < open)
+
+// 2. Pre-Breakout Volatility Squeeze (Coiling Before Explosion)
+bool isPreBreakoutCoil    = isVolatilitySqueeze and (close >= emaFast) and (cmfVal >= 0.0) and (ribbonBull or close >= emaSlow) and not inPremium
+bool isPreBreakdownCoil   = isVolatilitySqueeze and (close <= emaFast) and (cmfVal <= 0.0) and (ribbonBear or close <= emaSlow) and not inDiscount
+
+// 3. Dip Buying vs Dip Waiting (Pullback Lifecycle)
+bool isDipBuyPivot        = (trendState == 1) and isHealthyPullbackBull and (close > open) and (close >= emaFast) and (not macdMomBear)
+bool isDipWatchWait       = (trendState == 1) and (isHealthyPullbackBull or (close < emaFast and close >= emaSlow)) and (macdMomBear or rsiVal < 50.0 or close < open)
+
+bool isBounceShortPivot   = (trendState == -1) and isHealthyPullbackBear and (close < open) and (close <= emaFast) and (not macdMomBull)
+bool isBounceWatchWait    = (trendState == -1) and (isHealthyPullbackBear or (close > emaFast and close <= emaSlow)) and (macdMomBull or rsiVal > 50.0 or close > open)
+
+// 4. Wholesale Boundary Early Reversals (Floor / Ceiling)
+bool isEarlyBuySniper     = inDiscount and (isMacroReversalBull or isHealthyPullbackBull or (close >= emaFast * 0.99)) and (rsiVal >= 48.0) and (not macdMomBear) and (cmfVal >= -0.02)
+bool isEarlyShortSniper   = inPremium and (isMacroReversalBear or isHealthyPullbackBear or (close <= emaFast * 1.01)) and (rsiVal <= 52.0) and (not macdMomBull) and (cmfVal <= 0.02)
+
+// 5. Take Profit & Trimming (Resistance Stalling / Volume Fading / Overbought)
+bool isTakeProfitLong     = (trendState == 1 or ribbonBull) and (inPremium or rsiVal >= 75.0 or (isTrendWeakening and close >= emaFast)) and not isExpansionBreakout
+bool isTakeProfitShort    = (trendState == -1 or ribbonBear) and (inDiscount or rsiVal <= 25.0 or (isTrendWeakening and close <= emaFast)) and not isExpansionBreakdown
+
+// 6. Standard Trend Signals & Chop Filter
+bool isBuyConfirmed       = (bullScore >= minScoreReq) and (trendState == 1) and not inPremium and not isTrendWeakening
+bool isSellConfirmed      = (bearScore >= minScoreReq) and (trendState == -1) and not inDiscount and not isTrendWeakening
+bool isChopOrIlliquid     = (bullScore <= 2 and bearScore <= 2) or (rvol < 0.15) or isTrendChop
+
+string actionText  = "STAND DOWN"
+color  actionColor = #8B949E
+
+// Priority 1: High-Volume Active Breakout (Ride with Trailing Stop)
+if isExpansionBreakout
+    actionText  := "BREAKOUT (Trail Stop)"
+    actionColor := #3FB950
+else if isExpansionBreakdown
+    actionText  := "BREAKDOWN (Trail Stop)"
+    actionColor := #F85149
+
+// Priority 2: Pre-Breakout Squeeze (Coiling Before Explosion)
+else if isPreBreakoutCoil
+    actionText  := "PRE-BREAKOUT (Coil)"
+    actionColor := #E040FB
+else if isPreBreakdownCoil
+    actionText  := "PRE-BREAKDOWN (Coil)"
+    actionColor := #E040FB
+
+// Priority 3: Dip / Bounce Re-entry Pivots
+else if isDipBuyPivot
+    actionText  := "DIP BUY (Pivot)"
+    actionColor := #58A6FF
+else if isBounceShortPivot
+    actionText  := "BOUNCE SHORT (Pivot)"
+    actionColor := #F85149
+
+// Priority 4: Resistance Stalling / Wholesale Floor Cover
+else if isTakeProfitLong and isEarlyShortSniper
+    actionText  := "TRIM / EARLY SHORT"
+    actionColor := #FFD700
+else if isTakeProfitLong
+    actionText  := "TAKE PROFIT (Trim)"
+    actionColor := #FFD700
+else if isTakeProfitShort and isEarlyBuySniper
+    actionText  := "COVER / EARLY BUY"
+    actionColor := #58A6FF
+else if isEarlyBuySniper
+    actionText  := "EARLY BUY (Sniper)"
+    actionColor := #58A6FF
+else if isTakeProfitShort
+    actionText  := "COVER SHORT (Trim)"
+    actionColor := #3FB950
+else if isEarlyShortSniper
+    actionText  := "EARLY SHORT (Sniper)"
+    actionColor := #F85149
+
+// Priority 5: Standard Trend Signals
+else if isBuyConfirmed
+    actionText  := "BUY (Confirmed)"
+    actionColor := #3FB950
+else if isSellConfirmed
+    actionText  := "SHORT (Confirmed)"
+    actionColor := #F85149
+
+// Priority 6: Active Pullback / Bounce In Progress
+else if isDipWatchWait
+    actionText  := "DIP WATCH (Wait)"
+    actionColor := #D29922
+else if isBounceWatchWait
+    actionText  := "BOUNCE WATCH (Wait)"
+    actionColor := #D29922
+
+// Priority 7: Capital Preservation
+else if isChopOrIlliquid
+    actionText  := "STAND DOWN (Chop)"
+    actionColor := #8B949E
+else
+    actionText  := trendState == 1 ? "HOLD LONG (Trail)" : (trendState == -1 ? "HOLD SHORT (Trail)" : "STAND DOWN")
+    actionColor := #58A6FF
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. STRATEGY AUTOMATED ORDERS & ASYMMETRIC EXECUTION
+// ─────────────────────────────────────────────────────────────────────────────
+var float entryPrice  = na
+var float initialRisk = na
+var float stopLoss    = na
+var float takeProfit  = na
+var bool  isBreakeven = false
+
+// Execute Long Orders
+if buySignal
+    entryPrice  := close
+    stopLoss    := close - (atrVal * slAtrMult)
+    initialRisk := math.max(syminfo.mintick, close - stopLoss)
+    takeProfit  := close + (initialRisk * targetRR)
+    isBreakeven := false
+    strategy.entry("Long", strategy.long)
+
+// Execute Short Orders
+if sellSignal
+    entryPrice  := close
+    stopLoss    := close + (atrVal * slAtrMult)
+    initialRisk := math.max(syminfo.mintick, stopLoss - close)
+    takeProfit  := close - (initialRisk * targetRR)
+    isBreakeven := false
+    strategy.entry("Short", strategy.short)
+
+// Position Trailing & Breakeven Lock
+if strategy.position_size > 0
+    if useBreakeven and not isBreakeven and (high >= entryPrice + initialRisk)
+        stopLoss    := entryPrice + (syminfo.mintick * 2)
+        isBreakeven := true
+    strategy.exit("Exit Long", "Long", stop=stopLoss, limit=takeProfit)
+
+if strategy.position_size < 0
+    if useBreakeven and not isBreakeven and (low <= entryPrice - initialRisk)
+        stopLoss    := entryPrice - (syminfo.mintick * 2)
+        isBreakeven := true
+    strategy.exit("Exit Short", "Short", stop=stopLoss, limit=takeProfit)
+
+if strategy.position_size == 0
+    entryPrice  := na
+    stopLoss    := na
+    takeProfit  := na
+    isBreakeven := false
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. CHART VISUAL RENDERING (HIGH-CONTRAST CLEAN THEME)
+// ─────────────────────────────────────────────────────────────────────────────
+// Dynamic Ribbon
+pFast  = plot(emaFast, "Fast Ribbon EMA 21", color=ribbonBull ? color.new(#00E676, 15) : color.new(#FF1744, 15), linewidth=1)
+pSlow  = plot(emaSlow, "Slow Ribbon EMA 50", color=ribbonBull ? color.new(#00B0FF, 25) : color.new(#FF5252, 25), linewidth=2)
+pMacro = plot(useMacro200 ? emaMacro : na, "Institutional Macro 200 EMA", color=color.new(#FFD700, 10), linewidth=2)
+fill(pFast, pSlow, color=ribbonBull ? color.new(#00E676, 88) : color.new(#FF1744, 88), title="EMA Ribbon Cloud")
+
+// Institutional Buy / Sell Areas (Vivid Institutional Framing)
+pSellTop = plot(showValZones ? sellAreaTop : na, "Premium Sell Ceiling", color=color.new(#FF1744, 20), linewidth=2, style=plot.style_line)
+pSellBot = plot(showValZones ? sellAreaBottom : na, "Premium Sell Floor", color=color.new(#FF1744, 40), linewidth=1, style=plot.style_line)
+fill(pSellTop, pSellBot, color=color.new(#FF1744, 80), title="Institutional Premium Sell Area (Distribution)")
+
+pBuyTop  = plot(showValZones ? buyAreaTop : na, "Discount Buy Ceiling", color=color.new(#00E676, 40), linewidth=1, style=plot.style_line)
+pBuyBot  = plot(showValZones ? buyAreaBottom : na, "Discount Buy Floor", color=color.new(#00E676, 20), linewidth=2, style=plot.style_line)
+fill(pBuyTop, pBuyBot, color=color.new(#00E676, 80), title="Institutional Discount Buy Area (Accumulation)")
+
+// EXACTLY ONE CLEAN LABEL PER TREND REGIME (CONFIGURABLE SIZE)
+// Size: Small (Default - Compact & Clean)
+plotshape(buySignal and lblSizeInput == "Small", title="BUY Signal (Small)", text="BUY", style=shape.labelup, location=location.belowbar, color=color.new(#00E676, 0), textcolor=color.black, size=size.small)
+plotshape(sellSignal and lblSizeInput == "Small", title="SELL Signal (Small)", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.new(#FF1744, 0), textcolor=color.white, size=size.small)
+
+// Size: Tiny (Ultra-Minimalist)
+plotshape(buySignal and lblSizeInput == "Tiny", title="BUY Signal (Tiny)", text="BUY", style=shape.labelup, location=location.belowbar, color=color.new(#00E676, 0), textcolor=color.black, size=size.tiny)
+plotshape(sellSignal and lblSizeInput == "Tiny", title="SELL Signal (Tiny)", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.new(#FF1744, 0), textcolor=color.white, size=size.tiny)
+
+// Size: Normal (Large)
+plotshape(buySignal and lblSizeInput == "Normal", title="BUY Signal (Normal)", text="BUY", style=shape.labelup, location=location.belowbar, color=color.new(#00E676, 0), textcolor=color.black, size=size.normal)
+plotshape(sellSignal and lblSizeInput == "Normal", title="SELL Signal (Normal)", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.new(#FF1744, 0), textcolor=color.white, size=size.normal)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. ULTRA-COMPACT INSTITUTIONAL TELEMETRY DASHBOARD (STREAMLINED & HIGH-CONTRAST)
+// ─────────────────────────────────────────────────────────────────────────────
+var table hudTR = table.new(position.top_right, 2, 13, bgcolor=color.new(#0D1117, 100), border_width=0)
+var table hudMR = table.new(position.middle_right, 2, 13, bgcolor=color.new(#0D1117, 100), border_width=0)
+var table hudBR = table.new(position.bottom_right, 2, 13, bgcolor=color.new(#0D1117, 100), border_width=0)
+
+if showHUD and (barstate.islast or barstate.islastconfirmedhistory)
+    table hud = hudPos == "Bottom Right" ? hudBR : (hudPos == "Middle Right" ? hudMR : hudTR)
+    bool isTop = hudPos == "Top Right (Below Header)"
+    float spacerH = isTop ? topOffsetPct : 0.0
+
+    // Row 0: Invisible Dynamic Spacer (Offsets table 10-20px below crypto token header)
+    table.cell(hud, 0, 0, "", height=spacerH, bgcolor=color.new(color.black, 100))
+    table.cell(hud, 1, 0, "", height=spacerH, bgcolor=color.new(color.black, 100))
+
+    // Row 1: Header (Compact & Crisp)
+    table.cell(hud, 0, 1, "ZAAKIY HUD", bgcolor=color.new(#1F6FEB, 0), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 1, "STATUS", bgcolor=color.new(#1F6FEB, 0), text_color=color.white, text_size=size.tiny)
+
+    // Row 2: Recommended Tactical Action Directive
+    table.cell(hud, 0, 2, "Action", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 2, actionText, bgcolor=color.new(#0D1117, 10), text_color=actionColor, text_size=size.tiny)
+
+    // Row 3: Regime (Ultra High-Contrast Text on Dark Slate)
+    table.cell(hud, 0, 3, "Regime", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 3, trendState == 1 ? "BULLISH" : "BEARISH", bgcolor=color.new(#0D1117, 10), text_color=trendState == 1 ? #3FB950 : #F85149, text_size=size.tiny)
+
+    // Row 4: Confluence Score
+    table.cell(hud, 0, 4, "Confluence", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 4, str.tostring(trendState == 1 ? bullScore : bearScore) + " / 7", bgcolor=color.new(#0D1117, 10), text_color=#3FB950, text_size=size.tiny)
+
+    // Row 5: Trend Health (Momentum Exhaustion / Acceleration)
+    table.cell(hud, 0, 5, "Trend Health", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 5, trendHealthText, bgcolor=color.new(#0D1117, 10), text_color=trendHealthTxt, text_size=size.tiny)
+
+    // Row 6: Market Structure (Healthy Pullback vs Macro Reversal)
+    table.cell(hud, 0, 6, "Structure", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 6, structText, bgcolor=color.new(#0D1117, 10), text_color=structTxt, text_size=size.tiny)
+
+    // Row 7: Institutional Valuation Zone (Discount Buy vs Premium Sell)
+    table.cell(hud, 0, 7, "Valuation", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    string valZoneText = inDiscount ? "DISCOUNT (Buy)" : (inPremium ? "PREMIUM (Sell)" : "FAIR VALUE")
+    color  valZoneColor = inDiscount ? #3FB950 : (inPremium ? #F85149 : #8B949E)
+    table.cell(hud, 1, 7, valZoneText, bgcolor=color.new(#0D1117, 10), text_color=valZoneColor, text_size=size.tiny)
+
+    // Row 8: Ribbon
+    table.cell(hud, 0, 8, "Ribbon 21/50", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 8, ribbonBull ? "Bullish" : "Bearish", bgcolor=color.new(#0D1117, 10), text_color=ribbonBull ? #3FB950 : #F85149, text_size=size.tiny)
+
+    // Row 9: Supertrend
+    table.cell(hud, 0, 9, "Supertrend", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 9, stBull ? "Bull Break" : "Bear Break", bgcolor=color.new(#0D1117, 10), text_color=stBull ? #3FB950 : #F85149, text_size=size.tiny)
+
+    // Row 10: MACD Mom
+    table.cell(hud, 0, 10, "MACD Mom", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 10, macdMomBull ? "Exp Bull" : (macdMomBear ? "Exp Bear" : "Flat"), bgcolor=color.new(#0D1117, 10), text_color=macdMomBull ? #3FB950 : (macdMomBear ? #F85149 : #8B949E), text_size=size.tiny)
+
+    // Row 11: RSI
+    table.cell(hud, 0, 11, "RSI (14)", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 11, str.tostring(rsiVal, "#.#") + (rsiVal >= 50 ? " Bull" : " Bear"), bgcolor=color.new(#0D1117, 10), text_color=rsiVal >= 50 ? #3FB950 : #F85149, text_size=size.tiny)
+
+    // Row 12: Volume & Flow
+    table.cell(hud, 0, 12, "Vol & CMF", bgcolor=color.new(#0D1117, 10), text_color=color.white, text_size=size.tiny)
+    table.cell(hud, 1, 12, str.tostring(rvol, "#.#") + "x | " + (cmfVal >= 0 ? "+" : "") + str.tostring(cmfVal, "#.##"), bgcolor=color.new(#0D1117, 10), text_color=rvol >= 1.0 ? #FFD700 : color.white, text_size=size.tiny)

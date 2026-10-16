@@ -1,0 +1,1 @@
+"""Authenticated operational HTTP API."""

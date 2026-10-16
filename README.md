@@ -1,6 +1,6 @@
-# Atlas AlgoTrader
+# 1Terminal — Atlas Institutional AlgoTrader & Crypto Screener
 
-Atlas is a testnet-first, multi-venue algorithmic trading platform for 1-hour entries with
+1Terminal (Atlas) is a testnet-first, multi-venue algorithmic trading and screening platform for 1-hour entries with
 4-hour trend confirmation. It currently implements Binance Spot and Binance USD-M Futures,
 plus a broker-neutral paper execution adapter. The same ports are intended for an IBKR Paper
 adapter for equities, ETFs, and index futures.
@@ -343,4 +343,3 @@ Binance trades crypto products, not ordinary listed equities. Cash indexes are b
 than directly orderable assets. Equity and index exposure therefore requires a separate broker
 through stocks, ETFs, futures, or options. The domain ports support that separation; the first
 traditional-asset implementation should use IBKR Paper after an account and API choice are confirmed.
-# 1Terminal

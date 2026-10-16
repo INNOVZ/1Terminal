@@ -1,0 +1,6 @@
+{"timestamp": "2026-10-13T12:28:45.413970+00:00", "total_scanned": 490, "qualifying_count": 15, "longs": ["BTCUSDC", "TIAUSDT", "DUSKUSDT", "STXUSDT", "SYRUPUSDT", "FILUSDC", "DODOXUSDT"], "shorts": ["ACEUSDT", "SUIUSDC", "TRUMPUSDT", "NIGHTUSDT", "HYPEUSDT", "CRVUSDT", "LABUSDT", "SXTUSDT"]}
+{"timestamp": "2026-10-13T12:34:18.599639+00:00", "total_scanned": 490, "qualifying_count": 15, "longs": ["BTCUSDC", "TIAUSDT", "DUSKUSDT", "STXUSDT", "SYRUPUSDT", "INJUSDT", "FILUSDC"], "shorts": ["ACEUSDT", "SUIUSDC", "TRUMPUSDT", "NIGHTUSDT", "HYPEUSDT", "CRVUSDT", "LABUSDT", "SXTUSDT"]}
+{"timestamp": "2026-10-14T09:57:36.741911+00:00", "total_scanned": 490, "qualifying_count": 1, "longs": ["ALTUSDT"], "shorts": []}
+{"timestamp": "2026-10-14T11:43:37.491551+00:00", "total_scanned": 490, "qualifying_count": 1, "longs": ["ALTUSDT"], "shorts": []}
+{"timestamp": "2026-10-15T13:56:57.695908+00:00", "total_scanned": 490, "qualifying_count": 3, "longs": ["PYTHUSDT", "TIAUSDT"], "shorts": ["QUSDT"]}
+{"timestamp": "2026-10-15T16:12:49.839561+00:00", "total_scanned": 490, "qualifying_count": 4, "longs": ["MEGAUSDT", "AEROUSDT", "INJUSDT"], "shorts": ["QUSDT"]}

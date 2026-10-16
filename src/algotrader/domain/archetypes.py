@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from decimal import Decimal
+
+from algotrader.domain.crypto_screener_models import SetupLabel
+
+
+@dataclass(frozen=True, slots=True)
+class LongArchetypeFeatures:
+    close: Decimal
+    low_24h: Decimal
+    ema50_4h: Decimal
+    poc_30d: Decimal
+    vah_30d: Decimal
+    atr14_4h: Decimal
+    vcr_4h: Decimal
+    oi_delta_7d: Decimal | None
+    oi_delta_4h: Decimal | None
+    ret_7d: Decimal
+    bb_inside_kc_4h: bool
+    bb_bandwidth_4h: Decimal
+    local_swing_high_4h: Decimal
+    rvol_4h: Decimal
+    norm_momentum_1h: Decimal
+    btc_residual_alpha_24h: Decimal
+    macd_hist_4h: Decimal
+    macd_hist_4h_prev: Decimal
+    macd_hist_1h: Decimal
+    taker_buy_ratio_4h: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class ShortArchetypeFeatures:
+    close: Decimal
+    high_24h: Decimal
+    high_30d: Decimal
+    ema50_4h: Decimal
+    poc_30d: Decimal
+    atr14_4h: Decimal
+    has_bearish_div: bool
+    rsi_4h: Decimal
+    rsi_1d: Decimal
+    rsi_1w: Decimal
+    oi_delta_7d: Decimal | None
+    upper_wick_ratio_4h: Decimal
+    max_ret_30d: Decimal
+    taker_buy_ratio_24h: Decimal
+    macd_hist_4h: Decimal
+    pos_in_range_30d: Decimal = Decimal("0.70")
+    macd_hist_4h_prev: Decimal = Decimal("0")
+    runup_30d: Decimal = Decimal("0")
+    ret_14d: Decimal = Decimal("0")
+
+
+def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | None:
+    """Classify candidate into highest-priority Long Archetype (1 to 4).
+
+    Returns SetupLabel if matched, else None.
+    """
+    atr = max(features.atr14_4h, Decimal("1e-8"))
+
+    # 1. COIL_SPRING_LONG (Wyckoff Phase C Shakeout)
+    spring_threshold = min(features.ema50_4h, features.poc_30d) - Decimal("0.10") * atr
+    reclaim_threshold = max(features.ema50_4h, features.poc_30d * Decimal("0.99"))
+    if (
+        features.low_24h < spring_threshold
+        and features.close >= reclaim_threshold
+        and features.vcr_4h <= Decimal("0.90")
+    ):
+        return SetupLabel.COIL_SPRING_LONG
+
+    # 2. OI_ACCUMULATION_LONG (Smart Money Absorption)
+    oi_7d = features.oi_delta_7d or Decimal("0")
+    is_compressed = features.bb_inside_kc_4h or (features.bb_bandwidth_4h <= Decimal("0.20"))
+    if (
+        Decimal("0.10") <= oi_7d <= Decimal("0.60")
+        and is_compressed
+        and abs(features.ret_7d) <= Decimal("0.12")
+    ):
+        return SetupLabel.OI_ACCUMULATION_LONG
+
+    # 3. BREAKOUT_LONG (Volume & OI Expansion)
+    oi_4h = features.oi_delta_4h or Decimal("0")
+    at_or_above_resistance = (features.close >= features.local_swing_high_4h) or (
+        features.close >= features.vah_30d
+    )
+    if (
+        at_or_above_resistance
+        and features.rvol_4h >= Decimal("1.25")
+        and features.norm_momentum_1h > Decimal("0")
+        and oi_4h >= Decimal("0.01")
+    ):
+        return SetupLabel.BREAKOUT_LONG
+
+    # 4. MOMENTUM_EMERGING_LONG (Residual Alpha Regime Shift)
+    if (
+        features.btc_residual_alpha_24h >= Decimal("0.03")
+        and features.macd_hist_4h > features.macd_hist_4h_prev
+        and features.macd_hist_1h > Decimal("0")
+        and features.taker_buy_ratio_4h >= Decimal("0.535")
+    ):
+        return SetupLabel.MOMENTUM_EMERGING_LONG
+
+    return None
+
+
+def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | None:
+    """Classify candidate into highest-priority Short Archetype (1 to 3) per Section 3.2.
+
+    Returns SetupLabel if matched, else None.
+    """
+    atr = max(features.atr14_4h, Decimal("1e-8"))
+
+    # 1. UTAD_DIVERGENCE_SHORT (Wyckoff Phase C Upthrust After Distribution)
+    sweep_test = features.high_24h >= (features.high_30d * Decimal("0.985"))
+    rejection = features.close <= (features.high_24h - Decimal("0.50") * atr)
+    is_macd_rolling = (
+        features.macd_hist_4h <= features.macd_hist_4h_prev
+        if features.macd_hist_4h_prev != Decimal("0")
+        else True
+    )
+    if (
+        features.pos_in_range_30d >= Decimal("0.65")
+        and sweep_test
+        and rejection
+        and features.has_bearish_div
+        and is_macd_rolling
+    ):
+        return SetupLabel.UTAD_DIVERGENCE_SHORT
+
+    # 2. EXHAUSTION_REVERSAL_SHORT (Multi-Timeframe Overbought Climax)
+    oi_7d = features.oi_delta_7d or Decimal("0")
+    mtf_rsi_overbought = (
+        features.rsi_1d >= Decimal("76.0") or features.rsi_1w >= Decimal("76.0")
+    )
+    if (
+        features.pos_in_range_30d >= Decimal("0.65")
+        and features.close <= (features.high_24h - Decimal("0.50") * atr)
+        and mtf_rsi_overbought
+        and features.upper_wick_ratio_4h >= Decimal("0.45")
+        and oi_7d >= Decimal("0.25")
+    ):
+        return SetupLabel.EXHAUSTION_REVERSAL_SHORT
+
+    # 3. DISTRIBUTION_SHORT (Macro Rollover Breakdown)
+    has_prior_markup = (
+        features.runup_30d >= Decimal("0.35")
+        or features.ret_14d >= Decimal("0.22")
+        or features.max_ret_30d >= Decimal("0.35")
+    )
+    is_macd_decaying = (
+        features.macd_hist_4h < Decimal("0.0")
+        and (
+            features.macd_hist_4h <= features.macd_hist_4h_prev
+            if features.macd_hist_4h_prev != Decimal("0")
+            else True
+        )
+    )
+    if (
+        has_prior_markup
+        and features.close < features.ema50_4h
+        and features.close < features.poc_30d
+        and is_macd_decaying
+        and features.taker_buy_ratio_24h <= Decimal("0.47")
+    ):
+        return SetupLabel.DISTRIBUTION_SHORT
+
+    return None
+
