@@ -6,6 +6,7 @@ import type { Candle } from "./TradingChart";
 
 export interface Opportunity {
   symbol: string;
+  base_asset?: string;
   direction: string;
   setup_label: string;
   regime: string;
@@ -295,6 +296,7 @@ function CandidateSidebar({
 
   return (
     <aside
+      className="candidate-sidebar"
       style={{
         width: "320px",
         height: "100%",
@@ -392,7 +394,7 @@ function CandidateSidebar({
       </div>
 
       {/* Candidate List */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "10px" }}>
+      <div className="candidate-list-container" style={{ flex: 1, overflowY: "auto", padding: "10px" }}>
         {filteredOpps.length === 0 ? (
           <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-muted)", fontSize: "12px" }}>
             No tokens matching filter.

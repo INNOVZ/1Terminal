@@ -294,3 +294,39 @@ body {
 .pulse-indicator {
   animation: pulseGlow 2.5s infinite ease-in-out;
 }
+
+/* ==============================================================================
+   Mobile Responsiveness: Left Pane / Candidate Screener View Only
+   ============================================================================== */
+@media (max-width: 768px) {
+  .portal-header-desktop-metrics {
+    display: none !important;
+  }
+
+  .portal-sidebar-column {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+    visibility: visible !important;
+  }
+
+  .portal-sidebar-inner {
+    width: 100% !important;
+  }
+
+  .candidate-sidebar {
+    width: 100% !important;
+    border-right: none !important;
+  }
+
+  .candidate-list-container {
+    padding-bottom: 96px !important;
+  }
+
+  .portal-chart-column,
+  .portal-verification-column {
+    display: none !important;
+  }
+}
+

@@ -15,6 +15,15 @@ const parseBool = (raw: string) => raw === "true";
 const parseInterval = (raw: string) =>
   ["1h", "4h", "1d", "1w"].includes(raw) ? (raw as CandleInterval) : "1h";
 
+interface ScreenerResponse {
+  timestamp?: string;
+  total_scanned?: number;
+  qualifying_count?: number;
+  macro_narrative?: string;
+  is_scanning?: boolean;
+  opportunities?: Opportunity[];
+}
+
 // Sleek loading skeleton fallbacks for lazy-loaded components
 const SidebarSkeleton = () => (
   <div
@@ -266,10 +275,10 @@ function RadarPageContent() {
         ? `/api/screener/live?refresh=true&scope=${scope}`
         : "/api/screener/live";
 
-      let res = await fetch(url).catch(() => null);
-      let data: any = null;
+      const res = await fetch(url).catch(() => null);
+      let data: ScreenerResponse | null = null;
       if (res && res.ok) {
-        data = await res.json();
+        data = (await res.json()) as ScreenerResponse;
       }
 
       // If backend reports an active background scan, poll until it finishes (max 50s)
@@ -280,9 +289,9 @@ function RadarPageContent() {
           await new Promise((r) => setTimeout(r, 1500));
           pollAttempts++;
           try {
-            let pollRes = await fetch("/api/screener/live").catch(() => null);
+            const pollRes = await fetch("/api/screener/live").catch(() => null);
             if (pollRes && pollRes.ok) {
-              const pollData = await pollRes.json();
+              const pollData = (await pollRes.json()) as ScreenerResponse;
               if (pollData && !pollData.is_scanning) {
                 data = pollData;
                 break;
@@ -295,7 +304,7 @@ function RadarPageContent() {
       }
 
       if (data && data.opportunities && data.opportunities.length > 0) {
-        const enriched = data.opportunities.map((o: Opportunity) => ({
+        const enriched: Opportunity[] = data.opportunities.map((o: Opportunity) => ({
           ...o,
           candles:
             o.candles && o.candles.length > 0
@@ -316,11 +325,11 @@ function RadarPageContent() {
           // If candidate is not in screener opportunities, fetch directly from /api/chart/${cleanTarget}
           if (!matchedTarget) {
             try {
-              let chartRes = await fetch(
+              const chartRes = await fetch(
                 `/api/chart/${cleanTarget}`,
               ).catch(() => null);
               if (chartRes && chartRes.ok) {
-                const chartData = await chartRes.json();
+                const chartData = (await chartRes.json()) as { opportunity?: Opportunity; candles?: Candle[] };
                 if (chartData && chartData.opportunity) {
                   matchedTarget = {
                     ...chartData.opportunity,
@@ -345,7 +354,7 @@ function RadarPageContent() {
         const seenBases = new Set<string>();
         const dedupedEnriched: Opportunity[] = [];
         for (const item of enriched) {
-          const rawBase = (item as any).base_asset || item.symbol.replace(/USDT$/, "").replace(/USDC$/, "");
+          const rawBase = item.base_asset || item.symbol.replace(/USDT$/, "").replace(/USDC$/, "");
           const baseKey = rawBase.toUpperCase();
           if (baseKey && !seenBases.has(baseKey)) {
             seenBases.add(baseKey);
@@ -413,11 +422,11 @@ function RadarPageContent() {
           // Screener returned 0 items, but we have a symbol query parameter!
           const cleanTarget = symbolParam.toUpperCase();
           try {
-            let chartRes = await fetch(`/api/chart/${cleanTarget}`).catch(
+            const chartRes = await fetch(`/api/chart/${cleanTarget}`).catch(
               () => null,
             );
             if (chartRes && chartRes.ok) {
-              const chartData = await chartRes.json();
+              const chartData = (await chartRes.json()) as { opportunity?: Opportunity; candles?: Candle[] };
               if (chartData && chartData.opportunity) {
                 const targetOpp: Opportunity = {
                   ...chartData.opportunity,
@@ -458,11 +467,16 @@ function RadarPageContent() {
   }, [symbolParam]);
 
   useEffect(() => {
-    fetchScreener(false);
+    const timer = setTimeout(() => {
+      void fetchScreener(false);
+    }, 0);
     const interval = setInterval(() => {
-      fetchScreener(false);
+      void fetchScreener(false);
     }, 60000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
   }, [fetchScreener]);
 
   // Dynamically react if URL symbol changes or candidate was directly linked
@@ -475,16 +489,18 @@ function RadarPageContent() {
       (o) => o.symbol.toUpperCase() === cleanTarget,
     );
     if (existing) {
-      handleSelectOpportunity(existing);
-      return;
+      const selectTimer = setTimeout(() => {
+        handleSelectOpportunity(existing);
+      }, 0);
+      return () => clearTimeout(selectTimer);
     }
 
     let isMounted = true;
     const loadSymbol = async () => {
       try {
-        let res = await fetch(`/api/chart/${cleanTarget}`).catch(() => null);
+        const res = await fetch(`/api/chart/${cleanTarget}`).catch(() => null);
         if (res && res.ok && isMounted) {
-          const chartData = await res.json();
+          const chartData = (await res.json()) as { opportunity?: Opportunity; candles?: Candle[] };
           if (chartData && chartData.opportunity) {
             const oppWithCandles: Opportunity = {
               ...chartData.opportunity,
@@ -496,7 +512,7 @@ function RadarPageContent() {
             setOpportunities((prev) => {
               const targetBase = cleanTarget.replace(/USDT$/, "").replace(/USDC$/, "");
               const filtered = prev.filter((o) => {
-                const oBase = ((o as any).base_asset || o.symbol).replace(/USDT$/, "").replace(/USDC$/, "");
+                const oBase = (o.base_asset || o.symbol).replace(/USDT$/, "").replace(/USDC$/, "");
                 return oBase.toUpperCase() !== targetBase;
               });
               return [oppWithCandles, ...filtered];
@@ -516,17 +532,18 @@ function RadarPageContent() {
         console.warn("Error loading targeted candidate chart:", err);
       }
     };
-    loadSymbol();
+    void loadSymbol();
     return () => {
       isMounted = false;
     };
   }, [symbolParam, opportunities, activeOpportunity, handleSelectOpportunity]);
 
   useEffect(() => {
-    const handleTriggerRescan = (e: any) => {
+    const handleTriggerRescan = (e: Event) => {
       e.preventDefault(); // Prevents default in BottomDock to indicate in-place handling
-      const scope = e?.detail?.scope || "core";
-      fetchScreener(true, scope);
+      const customEvt = e as CustomEvent<{ scope?: "core" | "full" }>;
+      const scope = customEvt.detail?.scope || "core";
+      void fetchScreener(true, scope);
     };
     window.addEventListener("atlas:trigger-rescan", handleTriggerRescan);
     return () =>
@@ -1016,6 +1033,7 @@ function RadarPageContent() {
           </div>
 
           <div
+            className="portal-header-desktop-metrics"
             style={{
               height: "20px",
               width: "1px",
@@ -1025,7 +1043,10 @@ function RadarPageContent() {
 
           {/* Active Symbol, Live Price & OHLCV in Header */}
           {headerMetrics && (
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div
+              className="portal-header-desktop-metrics"
+              style={{ display: "flex", alignItems: "center", gap: "10px" }}
+            >
               <span
                 style={{
                   fontSize: "16px",
@@ -1139,92 +1160,55 @@ function RadarPageContent() {
         </div>
 
         {/* Right: Key Microstructure Metrics Bar */}
-        {headerMetrics && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "18px",
-              fontSize: "11px",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            <div>
-              <span style={{ color: "var(--text-muted)" }}>30D POC: </span>
-              <strong style={{ color: "#f49d0d" }}>${headerMetrics.poc}</strong>
-            </div>
-            <div>
-              <span style={{ color: "var(--text-muted)" }}>VAH: </span>
-              <strong style={{ color: "#ffffff" }}>${headerMetrics.vah}</strong>
-            </div>
-            <div>
-              <span style={{ color: "var(--text-muted)" }}>7D OI: </span>
-              <strong
-                style={{
-                  color: headerMetrics.isOiNegative
-                    ? "var(--accent-crimson)"
-                    : "var(--accent-emerald)",
-                }}
-              >
-                {headerMetrics.oiChange}
-              </strong>
-            </div>
-            <div>
-              <span style={{ color: "var(--text-muted)" }}>Funding: </span>
-              <strong style={{ color: "var(--text-primary)" }}>
-                {headerMetrics.fundingRate}
-              </strong>
-            </div>
-            <div>
-              <span style={{ color: "var(--text-muted)" }}>R:R: </span>
-              <strong style={{ color: "var(--accent-emerald)" }}>
-                {headerMetrics.riskReward}:1
-              </strong>
-            </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {headerMetrics && (
             <div
+              className="portal-header-desktop-metrics"
               style={{
-                background: "rgba(244, 157, 13, 0.12)",
-                color: "#f49d0d",
-                border: "1px solid rgba(244, 157, 13, 0.3)",
-                borderRadius: "6px",
-                padding: "2px 8px",
-                fontSize: "10px",
-                fontWeight: 800,
                 display: "flex",
                 alignItems: "center",
-                gap: "4px",
+                gap: "18px",
+                fontSize: "11px",
+                fontFamily: "var(--font-mono)",
               }}
             >
-              <Zap size={11} /> COIL ACTIVE
-            </div>
-
-            {isScanning && (
-              <div
-                style={{
-                  background: "rgba(244, 157, 13, 0.16)",
-                  color: "#f49d0d",
-                  border: "1px solid rgba(244, 157, 13, 0.45)",
-                  borderRadius: "6px",
-                  padding: "2px 8px",
-                  fontSize: "10px",
-                  fontWeight: 800,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "5px",
-                  letterSpacing: "0.04em",
-                }}
-              >
-                <RefreshCw size={10} className="animate-spin" /> SCANNING LIVE
-                UNIVERSE...
+              <div>
+                <span style={{ color: "var(--text-muted)" }}>30D POC: </span>
+                <strong style={{ color: "#f49d0d" }}>${headerMetrics.poc}</strong>
               </div>
-            )}
-
-            {!isScanning && scanNotification && (
+              <div>
+                <span style={{ color: "var(--text-muted)" }}>VAH: </span>
+                <strong style={{ color: "#ffffff" }}>${headerMetrics.vah}</strong>
+              </div>
+              <div>
+                <span style={{ color: "var(--text-muted)" }}>7D OI: </span>
+                <strong
+                  style={{
+                    color: headerMetrics.isOiNegative
+                      ? "var(--accent-crimson)"
+                      : "var(--accent-emerald)",
+                  }}
+                >
+                  {headerMetrics.oiChange}
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: "var(--text-muted)" }}>Funding: </span>
+                <strong style={{ color: "var(--text-primary)" }}>
+                  {headerMetrics.fundingRate}
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: "var(--text-muted)" }}>R:R: </span>
+                <strong style={{ color: "var(--accent-emerald)" }}>
+                  {headerMetrics.riskReward}:1
+                </strong>
+              </div>
               <div
                 style={{
-                  background: "rgba(16, 185, 129, 0.14)",
-                  color: "#10b981",
-                  border: "1px solid rgba(16, 185, 129, 0.35)",
+                  background: "rgba(244, 157, 13, 0.12)",
+                  color: "#f49d0d",
+                  border: "1px solid rgba(244, 157, 13, 0.3)",
                   borderRadius: "6px",
                   padding: "2px 8px",
                   fontSize: "10px",
@@ -1234,11 +1218,51 @@ function RadarPageContent() {
                   gap: "4px",
                 }}
               >
-                {scanNotification}
+                <Zap size={11} /> COIL ACTIVE
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+
+          {isScanning && (
+            <div
+              style={{
+                background: "rgba(244, 157, 13, 0.16)",
+                color: "#f49d0d",
+                border: "1px solid rgba(244, 157, 13, 0.45)",
+                borderRadius: "6px",
+                padding: "2px 8px",
+                fontSize: "10px",
+                fontWeight: 800,
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                letterSpacing: "0.04em",
+              }}
+            >
+              <RefreshCw size={10} className="animate-spin" /> SCANNING LIVE
+              UNIVERSE...
+            </div>
+          )}
+
+          {!isScanning && scanNotification && (
+            <div
+              style={{
+                background: "rgba(16, 185, 129, 0.14)",
+                color: "#10b981",
+                border: "1px solid rgba(16, 185, 129, 0.35)",
+                borderRadius: "6px",
+                padding: "2px 8px",
+                fontSize: "10px",
+                fontWeight: 800,
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+              }}
+            >
+              {scanNotification}
+            </div>
+          )}
+        </div>
       </header>
 
       {/* Main 3-Column Portal Body */}
@@ -1252,6 +1276,7 @@ function RadarPageContent() {
       >
         {/* Column 1: Collapsible Candidate Sidebar */}
         <div
+          className="portal-sidebar-column"
           style={{
             width: showLeftSidebar ? "320px" : "0px",
             minWidth: showLeftSidebar ? "320px" : "0px",
@@ -1263,10 +1288,10 @@ function RadarPageContent() {
             visibility: showLeftSidebar ? "visible" : "hidden",
           }}
         >
-          <div style={{ width: "320px", height: "100%" }}>
+          <div className="portal-sidebar-inner" style={{ width: "320px", height: "100%" }}>
             <CandidateSidebar
               opportunities={opportunities}
-              activeSymbol={activeOpportunity.symbol}
+              activeSymbol={activeOpportunity ? activeOpportunity.symbol : ""}
               onSelect={handleSelectOpportunity}
               livePrices={livePrices}
               priceChanges24h={priceChanges24h}
@@ -1275,70 +1300,76 @@ function RadarPageContent() {
         </div>
 
         {/* Column 2: TradingView Chart Canvas */}
-        <section
-          style={{
-            flex: 1,
-            height: "100%",
-            minWidth: 0,
-            minHeight: 0,
-            overflow: "hidden",
-            background: "#090d16",
-            display: "flex",
-            flexDirection: "column",
-            position: "relative",
-          }}
-        >
-          <TradingChart
-            key={activeOpportunity.symbol}
-            symbol={activeOpportunity.symbol}
-            direction={activeOpportunity.direction}
-            candles={activeCandles}
-            pocPrice={pocPriceVal}
-            vahPrice={vahPriceVal}
-            valPrice={valPriceVal}
-            entryPrice={entryPriceVal}
-            breakoutTrigger={breakoutTriggerPrice}
-            stopPrice={stopPriceVal}
-            targets={memoizedTargets}
-            showLeftSidebar={showLeftSidebar}
-            onToggleLeftSidebar={handleToggleLeftSidebar}
-            showRightPanel={showRightPanel}
-            onToggleRightPanel={handleToggleRightPanel}
-            showLevels={showLevels}
-            onToggleLevels={handleToggleLevels}
-            showTargets={showTargets}
-            onToggleTargets={handleToggleTargets}
-            showVolume={showVolume}
-            onToggleVolume={handleToggleVolume}
-            candleInterval={candleInterval}
-            onChangeInterval={handleChangeInterval}
-            onCandleChange={handleCandleChange}
-            onLiveTick={handleLiveTick}
-            onLevelsUpdated={handleLevelsUpdated}
-          />
-        </section>
+        {activeOpportunity && (
+          <section
+            className="portal-chart-column"
+            style={{
+              flex: 1,
+              height: "100%",
+              minWidth: 0,
+              minHeight: 0,
+              overflow: "hidden",
+              background: "#090d16",
+              display: "flex",
+              flexDirection: "column",
+              position: "relative",
+            }}
+          >
+            <TradingChart
+              key={activeOpportunity.symbol}
+              symbol={activeOpportunity.symbol}
+              direction={activeOpportunity.direction}
+              candles={activeCandles}
+              pocPrice={pocPriceVal}
+              vahPrice={vahPriceVal}
+              valPrice={valPriceVal}
+              entryPrice={entryPriceVal}
+              breakoutTrigger={breakoutTriggerPrice}
+              stopPrice={stopPriceVal}
+              targets={memoizedTargets}
+              showLeftSidebar={showLeftSidebar}
+              onToggleLeftSidebar={handleToggleLeftSidebar}
+              showRightPanel={showRightPanel}
+              onToggleRightPanel={handleToggleRightPanel}
+              showLevels={showLevels}
+              onToggleLevels={handleToggleLevels}
+              showTargets={showTargets}
+              onToggleTargets={handleToggleTargets}
+              showVolume={showVolume}
+              onToggleVolume={handleToggleVolume}
+              candleInterval={candleInterval}
+              onChangeInterval={handleChangeInterval}
+              onCandleChange={handleCandleChange}
+              onLiveTick={handleLiveTick}
+              onLevelsUpdated={handleLevelsUpdated}
+            />
+          </section>
+        )}
 
         {/* Column 3: Collapsible Institutional Verification Panel */}
-        <div
-          style={{
-            width: showRightPanel ? "360px" : "0px",
-            minWidth: showRightPanel ? "360px" : "0px",
-            overflow: "hidden",
-            transition:
-              "width 0.22s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
-            height: "100%",
-            flexShrink: 0,
-            visibility: showRightPanel ? "visible" : "hidden",
-          }}
-        >
-          <div style={{ width: "360px", height: "100%" }}>
-            <VerificationPanel
-              opportunity={activeOpportunity}
-              adaptedLevels={adaptedLevelsMap[activeOpportunity.symbol]}
-              livePrice={livePrices[activeOpportunity.symbol]}
-            />
+        {activeOpportunity && (
+          <div
+            className="portal-verification-column"
+            style={{
+              width: showRightPanel ? "360px" : "0px",
+              minWidth: showRightPanel ? "360px" : "0px",
+              overflow: "hidden",
+              transition:
+                "width 0.22s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
+              height: "100%",
+              flexShrink: 0,
+              visibility: showRightPanel ? "visible" : "hidden",
+            }}
+          >
+            <div style={{ width: "360px", height: "100%" }}>
+              <VerificationPanel
+                opportunity={activeOpportunity}
+                adaptedLevels={adaptedLevelsMap[activeOpportunity.symbol]}
+                livePrice={livePrices[activeOpportunity.symbol]}
+              />
+            </div>
           </div>
-        </div>
+        )}
       </main>
     </div>
   );

@@ -719,11 +719,16 @@ export default function MacroPage() {
   }, []);
 
   useEffect(() => {
-    fetchMacroReport(false);
+    const timer = setTimeout(() => {
+      void fetchMacroReport(false);
+    }, 0);
     const interval = setInterval(() => {
-      fetchMacroReport(false);
+      void fetchMacroReport(false);
     }, 45000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
   }, [fetchMacroReport]);
 
   const report = useMemo(() => data, [data]);
