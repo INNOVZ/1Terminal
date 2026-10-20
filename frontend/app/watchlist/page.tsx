@@ -88,16 +88,6 @@ export default function WatchlistPage() {
         const data = await res.json();
         setItems(data.items || []);
         setLastAudited(new Date());
-      } else {
-        const directUrl = forceRefresh
-          ? "http://127.0.0.1:8000/api/watchlist?live_audit=true&refresh=true"
-          : "http://127.0.0.1:8000/api/watchlist?live_audit=true";
-        const direct = await fetch(directUrl);
-        if (direct.ok) {
-          const d = await direct.json();
-          setItems(d.items || []);
-          setLastAudited(new Date());
-        }
       }
     } catch (e) {
       console.error("Failed to load watchlist:", e);

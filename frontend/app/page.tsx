@@ -263,16 +263,10 @@ function RadarPageContent() {
     }
     try {
       const url = isLiveRefresh
-        ? `http://127.0.0.1:8000/api/screener/live?refresh=true&scope=${scope}`
-        : "http://127.0.0.1:8000/api/screener/live";
-      const fallbackUrl = isLiveRefresh
         ? `/api/screener/live?refresh=true&scope=${scope}`
         : "/api/screener/live";
 
       let res = await fetch(url).catch(() => null);
-      if (!res || !res.ok) {
-        res = await fetch(fallbackUrl).catch(() => null);
-      }
       let data: any = null;
       if (res && res.ok) {
         data = await res.json();
@@ -286,10 +280,7 @@ function RadarPageContent() {
           await new Promise((r) => setTimeout(r, 1500));
           pollAttempts++;
           try {
-            let pollRes = await fetch("http://127.0.0.1:8000/api/screener/live").catch(() => null);
-            if (!pollRes || !pollRes.ok) {
-              pollRes = await fetch("/api/screener/live").catch(() => null);
-            }
+            let pollRes = await fetch("/api/screener/live").catch(() => null);
             if (pollRes && pollRes.ok) {
               const pollData = await pollRes.json();
               if (pollData && !pollData.is_scanning) {
@@ -326,13 +317,8 @@ function RadarPageContent() {
           if (!matchedTarget) {
             try {
               let chartRes = await fetch(
-                `http://127.0.0.1:8000/api/chart/${cleanTarget}`,
+                `/api/chart/${cleanTarget}`,
               ).catch(() => null);
-              if (!chartRes || !chartRes.ok) {
-                chartRes = await fetch(
-                  `/api/chart/${cleanTarget}`,
-                ).catch(() => null);
-              }
               if (chartRes && chartRes.ok) {
                 const chartData = await chartRes.json();
                 if (chartData && chartData.opportunity) {
@@ -427,14 +413,9 @@ function RadarPageContent() {
           // Screener returned 0 items, but we have a symbol query parameter!
           const cleanTarget = symbolParam.toUpperCase();
           try {
-            let chartRes = await fetch(
-              `http://127.0.0.1:8000/api/chart/${cleanTarget}`,
-            ).catch(() => null);
-            if (!chartRes || !chartRes.ok) {
-              chartRes = await fetch(`/api/chart/${cleanTarget}`).catch(
-                () => null,
-              );
-            }
+            let chartRes = await fetch(`/api/chart/${cleanTarget}`).catch(
+              () => null,
+            );
             if (chartRes && chartRes.ok) {
               const chartData = await chartRes.json();
               if (chartData && chartData.opportunity) {
@@ -497,12 +478,7 @@ function RadarPageContent() {
     let isMounted = true;
     const loadSymbol = async () => {
       try {
-        let res = await fetch(
-          `http://127.0.0.1:8000/api/chart/${cleanTarget}`,
-        ).catch(() => null);
-        if (!res || !res.ok) {
-          res = await fetch(`/api/chart/${cleanTarget}`).catch(() => null);
-        }
+        let res = await fetch(`/api/chart/${cleanTarget}`).catch(() => null);
         if (res && res.ok && isMounted) {
           const chartData = await res.json();
           if (chartData && chartData.opportunity) {

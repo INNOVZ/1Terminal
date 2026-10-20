@@ -35,6 +35,23 @@ app.add_middleware(
 app.include_router(portal_router)
 
 
+@app.get("/")
+async def root() -> dict[str, object]:
+    return {
+        "status": "online",
+        "service": "Atlas Institutional Crypto Portal API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "endpoints": {
+            "health": "/healthz",
+            "ready": "/readyz",
+            "screener_live": "/api/screener/live",
+            "watchlist": "/api/watchlist",
+            "cron_status": "/api/screener/cron/status",
+        },
+    }
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok", "service": "atlas-portal-api"}

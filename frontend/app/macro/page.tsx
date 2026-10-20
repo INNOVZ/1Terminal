@@ -710,13 +710,6 @@ export default function MacroPage() {
         const report = await res.json();
         setData(report);
         setLastRefreshed(new Date());
-      } else {
-        const direct = await fetch(forceRefresh ? "http://127.0.0.1:8000/api/macro?refresh=true" : "http://127.0.0.1:8000/api/macro");
-        if (direct.ok) {
-          const report = await direct.json();
-          setData(report);
-          setLastRefreshed(new Date());
-        }
       }
     } catch (err) {
       console.error("Failed to load macro overextension report:", err);

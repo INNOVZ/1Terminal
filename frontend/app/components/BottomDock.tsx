@@ -21,7 +21,7 @@ function BottomDock({
   const [cronInfo, setCronInfo] = useState<string>("Auto-Scan: Every 1h");
 
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/api/screener/cron/status")
+    fetch("/api/screener/cron/status")
       .then((res) => res.json())
       .then((data) => {
         if (data && data.next_run) {
@@ -68,10 +68,7 @@ function BottomDock({
     setInternalRefreshing(true);
     window.dispatchEvent(new CustomEvent("atlas:scan-start"));
     try {
-      let res = await fetch("http://127.0.0.1:8000/api/screener/live?refresh=true").catch(() => null);
-      if (!res || !res.ok) {
-        res = await fetch("/api/screener/live?refresh=true").catch(() => null);
-      }
+      let res = await fetch("/api/screener/live?refresh=true").catch(() => null);
       if (res && res.ok) {
         const data = await res.json();
         window.dispatchEvent(
