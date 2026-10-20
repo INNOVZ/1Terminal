@@ -101,6 +101,7 @@ def calculate_continuous_long_factor_scores(
     dist_to_trigger: Decimal,
     macro_multiplier: Decimal,
     is_btc_cascade: bool = False,
+    dist_to_entry: Decimal = Decimal("0.0"),
 ) -> LongContinuousFactorScores:
     """Continuous Multi-Factor Quant Scoring Engine across the 5 Institutional Pillars.
 
@@ -183,7 +184,16 @@ def calculate_continuous_long_factor_scores(
         if (Decimal("0.0") <= dist_to_trigger <= Decimal("0.05"))
         else (Decimal("8.0") if dist_to_trigger <= Decimal("0.10") else Decimal("0.0"))
     )
-    asymmetry_score = clip(rr_score + trigger_pts, Decimal("0.0"), Decimal("100.0"))
+    raw_asymmetry = clip(rr_score + trigger_pts, Decimal("0.0"), Decimal("100.0"))
+
+    # Execution Proximity Discount:
+    # If market price is disconnected from the entry level (> 4.5% away), apply a proportional penalty
+    if dist_to_entry > Decimal("0.045"):
+        excess_dist = dist_to_entry - Decimal("0.045")
+        proximity_penalty = min(Decimal("55.0"), excess_dist * Decimal("350.0"))
+        asymmetry_score = max(Decimal("15.0"), raw_asymmetry - proximity_penalty)
+    else:
+        asymmetry_score = raw_asymmetry
 
     # Multi-System Confluence: Best candidates require broad alignment across all 5 systems,
     # penalizing tokens that only spike on 1 or 2 isolated dimensions.
@@ -278,6 +288,7 @@ def calculate_continuous_short_factor_scores(
     macro_multiplier: Decimal,
     is_btc_cascade: bool = False,
     upper_wick_ratio_4h: Decimal = Decimal("0.0"),
+    dist_to_entry: Decimal = Decimal("0.0"),
 ) -> ShortContinuousFactorScores:
     """Continuous Multi-Factor Quant Scoring Engine across the 5 Institutional Short Pillars.
 
@@ -388,7 +399,16 @@ def calculate_continuous_short_factor_scores(
         if (Decimal("0.0") <= dist_to_trigger <= Decimal("0.05"))
         else (Decimal("8.0") if dist_to_trigger <= Decimal("0.10") else Decimal("0.0"))
     )
-    asymmetry_score = clip(rr_score + trigger_pts, Decimal("0.0"), Decimal("100.0"))
+    raw_asymmetry = clip(rr_score + trigger_pts, Decimal("0.0"), Decimal("100.0"))
+
+    # Execution Proximity Discount:
+    # If market price is disconnected from the entry level (> 4.5% away), apply a proportional penalty
+    if dist_to_entry > Decimal("0.045"):
+        excess_dist = dist_to_entry - Decimal("0.045")
+        proximity_penalty = min(Decimal("55.0"), excess_dist * Decimal("350.0"))
+        asymmetry_score = max(Decimal("15.0"), raw_asymmetry - proximity_penalty)
+    else:
+        asymmetry_score = raw_asymmetry
 
     # Multi-System Confluence: Best candidates require broad alignment across all 5 systems,
     # penalizing tokens that only spike on 1 or 2 isolated dimensions.

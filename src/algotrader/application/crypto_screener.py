@@ -751,6 +751,7 @@ class CryptoOpportunityScreener:
             dist_to_trigger=dist_to_ceiling,
             macro_multiplier=macro_mult,
             is_btc_cascade=is_btc_cascade,
+            dist_to_entry=abs(close - bracket.suggested_entry) / max(close, Decimal("1e-8")),
         )
 
         final_score = factor_scores.final_composite_score
@@ -1147,6 +1148,7 @@ class CryptoOpportunityScreener:
         closes_4h_calc = [c.close for c in closed_4h]
         ema200_4h = ema(closes_4h_calc, 200)[-1] if len(closes_4h_calc) >= 200 else ema50_4h
         dist_to_trigger = (close - bracket.breakout_trigger) / max(close, Decimal("1e-8"))
+        dist_to_entry = abs(close - bracket.suggested_entry) / max(close, Decimal("1e-8"))
         cvd_val = Decimal(str(quote.cvd_zscore)) if hasattr(quote, "cvd_zscore") and quote.cvd_zscore is not None else Decimal("0.0")
 
         factor_scores = calculate_continuous_short_factor_scores(
@@ -1177,6 +1179,7 @@ class CryptoOpportunityScreener:
             macro_multiplier=macro_context.multiplier_for(Direction.SHORT),
             is_btc_cascade=is_btc_cascade,
             upper_wick_ratio_4h=upper_wick_ratio_4h,
+            dist_to_entry=dist_to_entry,
         )
 
         final_score = factor_scores.final_composite_score
@@ -1207,7 +1210,7 @@ class CryptoOpportunityScreener:
         )
 
         checklist_verification = ChecklistVerification(
-            value_acceptance=(close < poc_price or close <= (high_24h - Decimal("0.50") * atr14)),
+            value_acceptance=bool((close < poc_price and rsi_4h >= Decimal("38.0")) or close <= (high_24h - Decimal("0.50") * atr14)),
             volatility_structure=bool(track_a_pass or track_b_pass),
             momentum_alignment=bool(macd_hist_4h < macd_hist_4h_prev or macd_hist_4h < ZERO),
             volume_microstructure=bool(upper_wick_ratio_4h >= Decimal("0.45") or taker_buy_ratio_24h <= Decimal("0.47")),
@@ -1250,7 +1253,17 @@ class CryptoOpportunityScreener:
             rationale.append(f"Macro Tailwind: BTC Flash Dump Active ({float(btc_ret_1h*100):.1f}%)")
 
         mtf_desc = "Overbought/Rollover" if mtf_rsi_count >= 1 else "Normal Range"
-        div_desc = "Confirmed 4H/1D Bearish Divergence (RSI & MACD)" if has_bearish_divergence else "Momentum decelerating into resistance"
+        primary_ceiling = max(ema50_4h, poc_price)
+        is_div_valid = bool(has_bearish_divergence or (is_4h_hist_decelerating and close >= (primary_ceiling - atr14)))
+        div_desc = (
+            "Confirmed 4H/1D Bearish Divergence (RSI & MACD)"
+            if has_bearish_divergence
+            else (
+                "Momentum decelerating into resistance"
+                if (is_4h_hist_decelerating and close >= (primary_ceiling - atr14))
+                else "Momentum decelerating"
+            )
+        )
         macd_desc = "4H MACD crossed below signal line | Hist decelerating" if is_4h_macd_bearish_cross else "Bearish MACD momentum active"
         vol_desc = "Effort vs Result: Volume drying on push, seller dominance" if (vol_drying or has_climax_wick) else f"Volume ratio {float(vol_contraction_ratio):.2f}"
         deriv_desc = (
@@ -1258,15 +1271,30 @@ class CryptoOpportunityScreener:
             if derivatives
             else "Derivatives positioning neutral"
         )
+
+        is_rsi_valid = bool(
+            (mtf_rsi_count >= 1 or rsi_4h >= Decimal("55.0") or rsi_1d >= Decimal("65.0"))
+            or (close < poc_price and rsi_4h >= Decimal("38.0"))
+        )
+        rsi_desc = (
+            f"1W: {float(rsi_1w):.1f} | 1D: {float(rsi_1d):.1f} | 4H: {float(rsi_4h):.1f} ({mtf_desc})"
+            if (mtf_rsi_count >= 1 or rsi_4h >= Decimal("55.0"))
+            else (
+                f"Value Breakdown below POC (${float(poc_price):.4f})"
+                if (close < poc_price and rsi_4h >= Decimal("38.0"))
+                else f"4H RSI {float(rsi_4h):.1f} (Oversold Extension)"
+            )
+        )
+
         checklist = (
             (
                 "MTF RSI Overbought",
-                mtf_rsi_count >= 1 or rsi_4h >= Decimal("55") or close < poc_price,
-                f"1W: {float(rsi_1w):.1f} | 1D: {float(rsi_1d):.1f} | 4H: {float(rsi_4h):.1f} ({mtf_desc})" if mtf_rsi_count >= 1 else f"Value Breakdown below POC (${float(poc_price):.4f})",
+                is_rsi_valid,
+                rsi_desc,
             ),
             (
                 "Bearish Divergence",
-                has_bearish_divergence or is_4h_hist_decelerating,
+                is_div_valid,
                 div_desc,
             ),
             (

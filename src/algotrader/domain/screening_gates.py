@@ -305,9 +305,11 @@ def evaluate_short_gates(
         and (downward_atr_ext <= Decimal("1.75"))
     )
     breakdown_s3 = (
-        (inputs.rsi_1h >= Decimal("24.0"))
-        and (inputs.rsi_4h >= Decimal("28.0"))
-        and (downward_atr_ext <= Decimal("3.25"))
+        (dist_72h_low > Decimal("0.035"))
+        and (pos_in_range_30d >= Decimal("0.28"))
+        and (inputs.rsi_1h >= Decimal("28.0"))
+        and (inputs.rsi_4h >= Decimal("35.0"))
+        and (downward_atr_ext <= Decimal("2.20"))
         and (inputs.close <= inputs.poc_30d or inputs.close <= inputs.ema50_4h)
     )
     s3 = standard_s3 or breakdown_s3

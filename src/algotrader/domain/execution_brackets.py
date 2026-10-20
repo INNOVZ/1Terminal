@@ -48,7 +48,7 @@ def build_long_bracket(
     effective_val = val_30d if val_30d is not None else (poc_30d - atr * Decimal("1.5"))
 
     # Invariant 3: Strict Raw Retest Entry Calculation
-    if close <= poc_30d * Decimal("1.005"):
+    if close < poc_30d * Decimal("0.985"):
         raw_retest_entry = min(
             effective_val + Decimal("0.40") * (poc_30d - effective_val),
             close * Decimal("0.985"),
@@ -264,8 +264,9 @@ def build_short_bracket(
     swing_range = max(swing_high_4h - low_30d, atr * Decimal("3.0"))
     raw_t1 = min(poc_30d, val_30d) if close > poc_30d else low_30d
 
-    if raw_t1 >= raw_breakdown_trigger:
-        raw_t1 = raw_breakdown_trigger - Decimal("0.50") * atr
+    # Ensure Target 1 always provides >= 1.20 * atr expansion room below breakdown trigger
+    max_t1 = raw_breakdown_trigger - Decimal("1.20") * atr
+    raw_t1 = min(raw_t1, max_t1)
 
     raw_t2 = swing_high_4h - Decimal("1.618") * swing_range
     if raw_t2 >= raw_t1:

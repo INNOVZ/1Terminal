@@ -234,3 +234,40 @@ def test_domain_screening_gates_two_track_compatibility():
     passed, details = evaluate_short_gates(inputs_b, SetupLabel.DISTRIBUTION_SHORT)
     assert passed
     assert all(details.values())
+
+
+def test_gate_s3_rejects_oversold_bottom_dump_shorts():
+    """Verify Gate S3 strictly rejects late-cycle shorts that dumped into the bottom 25% of 30d range or oversold."""
+    # Scenario matching VIRTUALUSDT: Dumped ~30%, hovering near low, pos_in_range=0.18, rsi_4h=31.0
+    inputs_exhausted = ShortGateInputs(
+        close=Decimal("65.00"),
+        ema50_4h=Decimal("78.00"),
+        high_7d=Decimal("88.00"),
+        range_height_30d=Decimal("0.40"),
+        ret_7d=Decimal("-0.25"),
+        ret_14d=Decimal("0.20"),
+        high_30d=Decimal("88.00"),
+        low_30d=Decimal("60.00"),
+        days_since_30d_high=Decimal("12.0"),
+        ema20_4h=Decimal("72.00"),
+        atr14_4h=Decimal("2.50"),
+        ret_24h=Decimal("-0.05"),
+        rsi_1h=Decimal("27.0"),
+        rsi_4h=Decimal("31.0"),
+        has_bearish_div=False,
+        has_climax_blowoff=False,
+        poc_30d=Decimal("78.50"),
+        macd_hist_4h=Decimal("-0.10"),
+        macd_hist_4h_prev=Decimal("-0.12"),
+        taker_buy_ratio_24h=Decimal("0.46"),
+        funding_rate_8h=Decimal("0.0001"),
+        oi_delta_7d=Decimal("0.10"),
+        oi_delta_1h=Decimal("-0.001"),
+        taker_buy_ratio_1h=Decimal("0.45"),
+        low_72h=Decimal("64.50"),  # (65 - 64.50)/64.50 = 0.0077 (scraping bottom)
+        runup_30d=Decimal("0.46"),
+    )
+    passed, details = evaluate_short_gates(inputs_exhausted, SetupLabel.COIL_BREAKDOWN_SHORT)
+    assert not passed
+    assert not details["S3"], "Gate S3 must reject exhausted bottom-scraping short setup"
+
