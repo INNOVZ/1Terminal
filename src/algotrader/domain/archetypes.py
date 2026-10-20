@@ -28,6 +28,12 @@ class LongArchetypeFeatures:
     macd_hist_4h_prev: Decimal
     macd_hist_1h: Decimal
     taker_buy_ratio_4h: Decimal
+    range_height_30d: Decimal = Decimal("0.50")
+    pos_in_range_30d: Decimal = Decimal("0.40")
+    dist_to_ceiling: Decimal = Decimal("0.25")
+    val_30d: Decimal = Decimal("0")
+    funding_rate_8h: Decimal | None = None
+    cvd_24h: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,11 +60,30 @@ class ShortArchetypeFeatures:
 
 
 def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | None:
-    """Classify candidate into highest-priority Long Archetype (1 to 4).
+    """Classify candidate into highest-priority Long Archetype (0 to 6).
 
     Returns SetupLabel if matched, else None.
     """
     atr = max(features.atr14_4h, Decimal("1e-8"))
+
+    # 0. SHORT_SQUEEZE_ABSORPTION_LONG (Crowded Short Squeeze & Order Flow Absorption)
+    funding_8h = features.funding_rate_8h
+    oi_7d = features.oi_delta_7d or Decimal("0")
+    oi_4h = features.oi_delta_4h or Decimal("0")
+    is_funding_crowded_short = funding_8h is not None and funding_8h <= Decimal("0.00005")
+    is_oi_expanding = oi_7d >= Decimal("0.15") or oi_4h >= Decimal("0.035")
+    has_buyer_absorption = features.cvd_24h > Decimal("0") or features.taker_buy_ratio_4h >= Decimal("0.50")
+    holding_structure = (
+        features.close >= features.ema50_4h * Decimal("0.975")
+        or features.close >= features.poc_30d * Decimal("0.975")
+    )
+    if (
+        is_funding_crowded_short
+        and is_oi_expanding
+        and has_buyer_absorption
+        and holding_structure
+    ):
+        return SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG
 
     # 1. COIL_SPRING_LONG (Wyckoff Phase C Shakeout)
     spring_threshold = min(features.ema50_4h, features.poc_30d) - Decimal("0.10") * atr
@@ -70,30 +95,63 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
     ):
         return SetupLabel.COIL_SPRING_LONG
 
-    # 2. OI_ACCUMULATION_LONG (Smart Money Absorption)
-    oi_7d = features.oi_delta_7d or Decimal("0")
-    is_compressed = features.bb_inside_kc_4h or (features.bb_bandwidth_4h <= Decimal("0.20"))
+    # Directional momentum helper inside compression
+    is_mom_up = (features.macd_hist_4h >= features.macd_hist_4h_prev) or (features.macd_hist_4h > Decimal("0"))
+
+    # 2. VCP_COMPRESSION_LONG (Mark Minervini Volatility Contraction Pattern)
+    is_vcp_compressed = features.bb_inside_kc_4h or (features.bb_bandwidth_4h <= Decimal("0.18"))
+    has_supply_exhaustion = (features.vcr_4h <= Decimal("1.10")) or (features.rvol_4h <= Decimal("1.15"))
     if (
-        Decimal("0.10") <= oi_7d <= Decimal("0.60")
+        features.range_height_30d <= Decimal("0.45")
+        and is_vcp_compressed
+        and has_supply_exhaustion
+        and is_mom_up
+        and features.close >= features.ema50_4h * Decimal("0.980")
+        and features.dist_to_ceiling <= Decimal("0.12")
+        and features.pos_in_range_30d > Decimal("0.60")
+    ):
+        return SetupLabel.VCP_COMPRESSION_LONG
+
+    # 3. OI_ACCUMULATION_LONG (Smart Money Absorption)
+    oi_7d = features.oi_delta_7d or Decimal("0")
+    is_compressed = features.bb_inside_kc_4h or (features.bb_bandwidth_4h <= Decimal("0.22"))
+    if (
+        Decimal("0.08") <= oi_7d <= Decimal("0.60")
         and is_compressed
         and abs(features.ret_7d) <= Decimal("0.12")
+        and is_mom_up
     ):
         return SetupLabel.OI_ACCUMULATION_LONG
 
-    # 3. BREAKOUT_LONG (Volume & OI Expansion)
+    # 4. RANGE_BOTTOM_ACCUMULATION_LONG (Wyckoff Value Area Base Accumulation)
+    if (
+        (features.close >= features.poc_30d * Decimal("0.85") or features.close >= features.val_30d * Decimal("0.98"))
+        and features.range_height_30d <= Decimal("0.55")
+        and (is_compressed or features.bb_bandwidth_4h <= Decimal("0.24"))
+        and is_mom_up
+        and features.close >= features.ema50_4h * Decimal("0.975")
+        and features.pos_in_range_30d <= Decimal("0.60")
+        and features.vcr_4h <= Decimal("1.25")
+    ):
+        return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
+
+    # 5. BREAKOUT_LONG (Volume & OI Expansion)
     oi_4h = features.oi_delta_4h or Decimal("0")
     at_or_above_resistance = (features.close >= features.local_swing_high_4h) or (
         features.close >= features.vah_30d
     )
+    has_breakout_volume = (
+        (features.rvol_4h >= Decimal("1.25") and oi_4h >= Decimal("0.0"))
+        or (features.rvol_4h >= Decimal("2.0"))
+    )
     if (
         at_or_above_resistance
-        and features.rvol_4h >= Decimal("1.25")
+        and has_breakout_volume
         and features.norm_momentum_1h > Decimal("0")
-        and oi_4h >= Decimal("0.01")
     ):
         return SetupLabel.BREAKOUT_LONG
 
-    # 4. MOMENTUM_EMERGING_LONG (Residual Alpha Regime Shift)
+    # 6. MOMENTUM_EMERGING_LONG (Residual Alpha Regime Shift)
     if (
         features.btc_residual_alpha_24h >= Decimal("0.03")
         and features.macd_hist_4h > features.macd_hist_4h_prev
@@ -102,6 +160,16 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
     ):
         return SetupLabel.MOMENTUM_EMERGING_LONG
 
+    # 7. Structural Market-Profile Affinity Fallback
+    # Classifies valid consolidation into closest structural archetype only if compressed
+    if at_or_above_resistance:
+        return SetupLabel.BREAKOUT_LONG
+    if oi_7d >= Decimal("0.05") and is_compressed:
+        return SetupLabel.OI_ACCUMULATION_LONG
+    if is_compressed or features.bb_bandwidth_4h <= Decimal("0.22"):
+        if features.pos_in_range_30d > Decimal("0.60") and has_supply_exhaustion:
+            return SetupLabel.VCP_COMPRESSION_LONG
+        return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
     return None
 
 
@@ -166,5 +234,27 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
     ):
         return SetupLabel.DISTRIBUTION_SHORT
 
-    return None
+    # 4. COIL_BREAKDOWN_SHORT (Compression breakdown below POC / Lower Value Area)
+    if features.close <= features.poc_30d and features.pos_in_range_30d <= Decimal("0.35"):
+        return SetupLabel.COIL_BREAKDOWN_SHORT
+
+    # 5. VCP_DISTRIBUTION_SHORT (Volatility Contraction Breakdown below 50 EMA)
+    if features.close <= features.ema50_4h and (
+        features.macd_hist_4h <= features.macd_hist_4h_prev
+        if features.macd_hist_4h_prev != Decimal("0")
+        else True
+    ):
+        return SetupLabel.VCP_DISTRIBUTION_SHORT
+
+    # 6. Structural Market-Profile Affinity Fallback
+    # Classifies valid structural weakness into closest short archetype rather than dropping it
+    if features.close <= features.poc_30d and features.close <= features.ema50_4h:
+        return SetupLabel.DISTRIBUTION_SHORT
+    if features.pos_in_range_30d <= Decimal("0.35"):
+        return SetupLabel.COIL_BREAKDOWN_SHORT
+    if features.pos_in_range_30d >= Decimal("0.65") and (
+        features.has_bearish_div or features.upper_wick_ratio_4h >= Decimal("0.30")
+    ):
+        return SetupLabel.UTAD_DIVERGENCE_SHORT
+    return SetupLabel.VCP_DISTRIBUTION_SHORT
 

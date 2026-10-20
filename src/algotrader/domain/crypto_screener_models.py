@@ -33,6 +33,7 @@ class SetupLabel(StrEnum):
     """High-conviction institutional crypto setup labels."""
 
     # Pre-Breakout & Accumulation Setups (BEFORE the pump)
+    SHORT_SQUEEZE_ABSORPTION_LONG = "SHORT_SQUEEZE_ABSORPTION_LONG"
     COIL_SPRING_LONG = "COIL_SPRING_LONG"
     OI_ACCUMULATION_LONG = "OI_ACCUMULATION_LONG"
     VCP_COMPRESSION_LONG = "VCP_COMPRESSION_LONG"
@@ -167,6 +168,8 @@ class CryptoOpportunity:
 
         return {
             "symbol": self.instrument.id.symbol,
+            "base_asset": self.instrument.base_asset,
+            "quote_asset": self.instrument.quote_asset,
             "direction": self.direction.value,
             "regime": self.regime.value,
             "setup_label": self.setup_label.value,

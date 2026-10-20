@@ -36,7 +36,7 @@ class BinanceHttpClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout_seconds: float = 10.0,
-        max_rate_limit_retries: int = 3,
+        max_rate_limit_retries: int = 5,
         rate_limit_backoff_seconds: float = 1.0,
         max_rate_limit_backoff_seconds: float = 30.0,
     ) -> None:
@@ -45,11 +45,14 @@ class BinanceHttpClient:
         self._max_rate_limit_retries = max_rate_limit_retries
         self._rate_limit_backoff_seconds = rate_limit_backoff_seconds
         self._max_rate_limit_backoff_seconds = max_rate_limit_backoff_seconds
+        headers = {"User-Agent": "atlas-algotrader/0.1"}
+        if api_key.get_secret_value():
+            headers["X-MBX-APIKEY"] = api_key.get_secret_value()
         self._http = httpx.AsyncClient(
             base_url=base_url,
             timeout=httpx.Timeout(timeout_seconds),
             transport=transport,
-            headers={"User-Agent": "atlas-algotrader/0.1"},
+            headers=headers,
         )
         self._clock_offset_ms = 0
         self._used_weight_1m = 0
@@ -137,12 +140,15 @@ class BinanceHttpClient:
         if elapsed < 60.0 and self._used_weight_1m > 0:
             effective_weight = int(self._used_weight_1m * (1.0 - elapsed / 60.0))
 
-        if effective_weight >= 2100:
-            # Danger zone (> 87% of 2400 ceiling): brief pause to let window drain
-            await asyncio.sleep(0.3)
-        elif effective_weight >= 1800:
-            # High load (> 75%): light micro-spacing
-            await asyncio.sleep(0.04)
+        if effective_weight >= 2150:
+            # Danger zone (> 90% of 2400 ceiling): pause to let window drain safely
+            await asyncio.sleep(1.5)
+        elif effective_weight >= 1900:
+            # High load (> 79%): moderate backpressure
+            await asyncio.sleep(0.35)
+        elif effective_weight >= 1600:
+            # Approaching ceiling: micro-spacing
+            await asyncio.sleep(0.08)
 
         try:
             response = await self._http.request(
@@ -166,8 +172,9 @@ class BinanceHttpClient:
         secret = self._api_secret.get_secret_value()
         if not api_key or not secret:
             raise ConfigurationError("Binance credentials are required for signed requests")
-        request_params["timestamp"] = time.time_ns() // 1_000_000 + self._clock_offset_ms
-        request_params.setdefault("recvWindow", 5000)
+        # Subtract 500ms safety buffer so requests are never rejected for being slightly ahead of server clock
+        request_params["timestamp"] = time.time_ns() // 1_000_000 + self._clock_offset_ms - 500
+        request_params.setdefault("recvWindow", 10000)
         query = urlencode(request_params)
         request_params["signature"] = hmac.new(
             secret.encode("utf-8"), query.encode("utf-8"), hashlib.sha256

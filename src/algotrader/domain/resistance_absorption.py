@@ -90,10 +90,12 @@ def compute_resistance_absorption(
     oi_4h = float(oi_delta_4h) if oi_delta_4h is not None else 0.0
     if oi_7d >= 0.05 and oi_4h >= 0.015:
         pts_oi = 25.0
-    elif oi_7d >= 0.03 and oi_4h >= 0.0:
+    elif (oi_7d >= 0.03 and oi_4h >= 0.0) or (oi_4h >= 0.015):
         pts_oi = 18.0
-    elif oi_7d >= 0.0:
+    elif (oi_7d >= 0.0) or (oi_4h >= 0.005):
         pts_oi = 10.0
+    elif oi_7d >= -0.03 and oi_4h >= 0.0:
+        pts_oi = 5.0
     else:
         pts_oi = 0.0
 
@@ -150,15 +152,18 @@ def compute_resistance_absorption(
     score = min(100.0, max(0.0, round(pts_cvd + pts_oi + pts_funding + pts_geometry + pts_vpvr, 1)))
 
     # Universal Invariant 4 Status Mapping:
-    # 1. "BREAKOUT_CONFIRMED" (Green): resistance_absorption_score >= 65.0 and oi_delta_7d >= 0.0 and cvd_zscore_24h > -0.25
-    # 2. "HIGH_REJECTION_RISK" (Red): resistance_absorption_score < 45.0 or oi_delta_7d < -0.01 or (cvd_zscore_24h <= -1.0 and dist_to_vah <= 0.03)
-    # 3. "RETEST_ONLY_WAIT_FOR_DIP" (Amber): All other valid candidates (e.g. scores 45.0 to 64.9 with non-bleeding 7d OI)
+    # 1. "BREAKOUT_CONFIRMED" (Green): score >= 60.0 and non-bleeding OI with healthy taker/cvd flow
+    # 2. "HIGH_REJECTION_RISK" (Red): score < 45.0 or severe OI bleeding (<-0.08) or (cvd_z <= -1.0 and dist_to_vah <= 0.03)
+    # 3. "RETEST_ONLY_WAIT_FOR_DIP" (Amber): All other valid candidates
     dist_to_vah = float((Decimal(str(vah_30d)) - Decimal(str(close))) / max(Decimal(str(close)), EPSILON))
 
-    if score < 45.0 or oi_7d < -0.01 or (cvd_z <= -1.0 and dist_to_vah <= 0.03):
+    is_severe_oi_drain = oi_7d < -0.08 or (oi_7d < -0.03 and oi_4h < -0.01)
+    is_tape_dump_at_vah = (cvd_z <= -1.0 and dist_to_vah <= 0.03)
+
+    if is_severe_oi_drain or is_tape_dump_at_vah or score < 35.0:
         status = "HIGH_REJECTION_RISK"
-        score = min(score, 44.0)
-    elif score >= 65.0 and oi_7d >= 0.0 and cvd_z > -0.25:
+        score = min(score, 34.0)
+    elif score >= 55.0 and (oi_7d >= 0.0 or oi_4h >= 0.005 or taker_ratio >= 0.515) and cvd_z > -0.25:
         status = "BREAKOUT_CONFIRMED"
     else:
         status = "RETEST_ONLY_WAIT_FOR_DIP"

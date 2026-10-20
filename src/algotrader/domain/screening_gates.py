@@ -97,6 +97,8 @@ def evaluate_long_gates(
     atr = max(inputs.atr14_4h, EPSILON)
     natr_4h = inputs.atr14_4h / max(inputs.close, EPSILON)
 
+    arch_val = archetype.value if isinstance(archetype, SetupLabel) else str(archetype or "")
+
     # Gate L1: Minervini Trend & Wyckoff Spring Baseline
     is_standard_trend = (
         (inputs.close >= inputs.ema50_4h * Decimal("0.985"))
@@ -108,16 +110,33 @@ def evaluate_long_gates(
         and (inputs.close >= inputs.ema50_4h)
         and (inputs.vcr_4h <= Decimal("0.90"))
     )
-    l1 = is_standard_trend or is_wyckoff_spring
+    is_base_consolidation = (
+        arch_val in ("VCP_COMPRESSION_LONG", "RANGE_BOTTOM_ACCUMULATION_LONG", "OI_ACCUMULATION_LONG")
+        and (inputs.close >= inputs.ema50_4h * Decimal("0.985"))
+        and (inputs.bb_inside_kc_4h or inputs.bb_bandwidth_4h <= Decimal("0.22"))
+    )
+    is_squeeze_absorption = (
+        arch_val == "SHORT_SQUEEZE_ABSORPTION_LONG"
+        and (
+            inputs.close >= inputs.ema50_4h * Decimal("0.975")
+            or inputs.close >= inputs.poc_30d * Decimal("0.975")
+        )
+    )
+    l1 = is_standard_trend or is_wyckoff_spring or is_base_consolidation or is_squeeze_absorption
 
     # Gate L2: Anti-Chasing 2.0 & High-Tight Flag Continuation
     atr_ext_4h = (inputs.close - inputs.ema20_4h) / atr
+    atr_ext_ok = (atr_ext_4h <= Decimal("2.50")) or (
+        atr_ext_4h <= Decimal("3.20")
+        and inputs.rsi_4h <= Decimal("65.0")
+        and inputs.rsi_1h <= Decimal("74.0")
+    )
     standard_l2 = (
         inputs.excursion_72h <= Decimal("0.36")
-        and (Decimal("-0.08") <= inputs.ret_24h <= Decimal("0.14"))
+        and (Decimal("-0.08") <= inputs.ret_24h <= Decimal("0.16"))
         and (inputs.rsi_1h <= Decimal("76.0"))
         and (inputs.rsi_4h <= Decimal("70.0"))
-        and (atr_ext_4h <= Decimal("2.25"))
+        and atr_ext_ok
     )
 
     # Optional high-tight flag evaluation if metrics provided
@@ -152,8 +171,14 @@ def evaluate_long_gates(
     # Gate L3: Multi-Week Base Duration & Ceiling Proximity
     range_height_30d = (inputs.high_30d - inputs.low_30d) / max(inputs.low_30d, EPSILON)
     dist_to_ceiling = (inputs.high_30d - inputs.close) / max(inputs.close, EPSILON)
-    standard_l3 = (range_height_30d <= Decimal("0.65")) and (
-        Decimal("-0.03") <= dist_to_ceiling <= Decimal("0.35")
+    max_range = (
+        Decimal("2.20")
+        if arch_val in ("BREAKOUT_LONG", "MOMENTUM_EMERGING_LONG", "SHORT_SQUEEZE_ABSORPTION_LONG")
+        else Decimal("0.85")
+    )
+    max_dist = Decimal("0.45") if arch_val == "SHORT_SQUEEZE_ABSORPTION_LONG" else Decimal("0.35")
+    standard_l3 = (range_height_30d <= max_range) and (
+        Decimal("-0.05") <= dist_to_ceiling <= max_dist
     )
     flag_l3 = flag_l2 and (range_height_30d <= Decimal("1.20")) and (
         Decimal("-0.05") <= dist_to_ceiling <= Decimal("0.35")
@@ -163,10 +188,19 @@ def evaluate_long_gates(
     # Gate L4: 30-Day VPVR Value Area Acceptance
     va_span = max(inputs.vah_30d - inputs.val_30d, EPSILON)
     va_position = (inputs.close - inputs.val_30d) / va_span
-    l4 = (inputs.close >= inputs.poc_30d * Decimal("0.985")) and (va_position >= Decimal("0.25"))
+    if arch_val in ("RANGE_BOTTOM_ACCUMULATION_LONG", "COIL_SPRING_LONG", "SHORT_SQUEEZE_ABSORPTION_LONG"):
+        # For base accumulation at range bottom or squeeze absorption, validate support holding in lower value area or POC
+        l4 = (
+            (inputs.close >= inputs.val_30d * Decimal("0.96"))
+            or (inputs.close >= inputs.low_30d * Decimal("0.98"))
+            or (inputs.close >= inputs.poc_30d * Decimal("0.975"))
+        )
+    else:
+        l4 = (inputs.close >= inputs.poc_30d * Decimal("0.985")) and (va_position >= Decimal("0.25"))
 
     # Gate L5: Archetype-Conditional Volatility Compression
-    in_current_squeeze = inputs.bb_inside_kc_4h or (inputs.bb_bandwidth_4h <= Decimal("0.24"))
+    in_current_squeeze = inputs.bb_inside_kc_4h or (inputs.bb_bandwidth_4h <= Decimal("0.22"))
+    in_vcp_tight_squeeze = inputs.bb_inside_kc_4h or (inputs.bb_bandwidth_4h <= Decimal("0.18"))
     recent_sqz_lookback = (
         inputs.bb_inside_kc_4h_lookback[1:7]
         if len(inputs.bb_inside_kc_4h_lookback) >= 2
@@ -174,8 +208,15 @@ def evaluate_long_gates(
     )
     in_recent_squeeze_expansion = any(recent_sqz_lookback) and (inputs.rvol_4h >= Decimal("1.25"))
 
-    arch_val = archetype.value if isinstance(archetype, SetupLabel) else str(archetype or "")
-    if arch_val in ("COIL_SPRING_LONG", "OI_ACCUMULATION_LONG"):
+    if arch_val == "SHORT_SQUEEZE_ABSORPTION_LONG":
+        l5 = True
+    elif arch_val == "VCP_COMPRESSION_LONG":
+        l5 = in_vcp_tight_squeeze
+    elif arch_val in (
+        "COIL_SPRING_LONG",
+        "OI_ACCUMULATION_LONG",
+        "RANGE_BOTTOM_ACCUMULATION_LONG",
+    ):
         l5 = in_current_squeeze
     else:
         l5 = in_current_squeeze or in_recent_squeeze_expansion
@@ -184,12 +225,12 @@ def evaluate_long_gates(
     if dist_to_ceiling <= Decimal("0.045"):
         oi_7d = inputs.oi_delta_7d if inputs.oi_delta_7d is not None else Decimal("0")
         oi_4h = inputs.oi_delta_4h if inputs.oi_delta_4h is not None else Decimal("0")
-        l6 = (
-            oi_7d >= Decimal("0.0")
-            and oi_4h >= Decimal("0.015")
-            and inputs.rvol_4h >= Decimal("1.20")
-            and inputs.taker_buy_ratio_4h >= Decimal("0.52")
+        volume_or_dryup_confirmed = (
+            inputs.rvol_4h >= Decimal("1.20")
+            or (inputs.vcr_4h <= Decimal("0.90") and inputs.taker_buy_ratio_4h >= Decimal("0.48"))
         )
+        flow_confirmed = (oi_7d >= Decimal("0.0") or oi_4h >= Decimal("0.005") or inputs.rvol_4h >= Decimal("1.20"))
+        l6 = volume_or_dryup_confirmed and flow_confirmed and (inputs.taker_buy_ratio_4h >= Decimal("0.47") or inputs.rvol_4h >= Decimal("1.25"))
     else:
         l6 = True
 
@@ -212,17 +253,40 @@ def evaluate_short_gates(
 
     Returns (all_passed, gate_details).
     """
+    # 0. Anti-Squeeze & Trend Circuit Breaker (Institutional Hard Veto)
+    # Strictly reject shorts if:
+    # A) Funding rate is negative (< 0) with high/expanding OI or buyer dominance (active short squeeze)
+    # B) Strong taker buyer dominance (taker_buy_ratio >= 0.51) without confirmed bearish divergence
+    funding_8h = inputs.funding_rate_8h or Decimal("0")
+    oi_7d = inputs.oi_delta_7d or Decimal("0")
+    oi_1h = inputs.oi_delta_1h or Decimal("0")
+    taker_24h = inputs.taker_buy_ratio_24h or Decimal("0.5")
+
+    is_short_squeeze_risk = (
+        (inputs.funding_rate_8h is not None and funding_8h < Decimal("0.0"))
+        and (inputs.close >= inputs.ema50_4h * Decimal("0.975"))
+    )
+    is_buyer_dominated_trend = (
+        (taker_24h >= Decimal("0.55") and inputs.close >= inputs.ema50_4h)
+        or (taker_24h >= Decimal("0.51") and not inputs.has_bearish_div and inputs.close >= inputs.ema50_4h)
+    )
+    if is_short_squeeze_risk or is_buyer_dominated_trend:
+        return False, {"S1": False, "S2": False, "S3": False, "S4": False, "S5": False}
+
     atr = max(inputs.atr14_4h, EPSILON)
 
-    # 1. Gate S1: Mandatory Macro Run-Up
+    # 1. Gate S1: Mandatory Macro Run-Up / Prior Structural Base
     ema50_peak_excursion = (inputs.high_7d - inputs.ema50_4h) / max(inputs.ema50_4h, EPSILON)
     runup_30d = (
         inputs.runup_30d
         if inputs.runup_30d is not None
         else (inputs.high_30d - inputs.low_30d) / max(inputs.low_30d, EPSILON)
     )
-    s1 = (runup_30d >= Decimal("0.35")) or (
-        inputs.ret_14d >= Decimal("0.22") and ema50_peak_excursion >= Decimal("0.15")
+    s1 = (
+        (runup_30d >= Decimal("0.35"))
+        or (inputs.ret_14d >= Decimal("0.22") and ema50_peak_excursion >= Decimal("0.15"))
+        or (runup_30d >= Decimal("0.15") and (inputs.close <= inputs.ema50_4h or inputs.close <= inputs.poc_30d))
+        or (inputs.range_height_30d >= Decimal("0.20"))
     )
 
     # 2. Gate S3: Anti-Capitulation & Floor Protection (Universal)
@@ -233,13 +297,20 @@ def evaluate_short_gates(
     )
     downward_atr_ext = (inputs.ema20_4h - inputs.close) / atr
 
-    s3 = (
+    standard_s3 = (
         (dist_72h_low > Decimal("0.04"))
         and (inputs.rsi_1h >= Decimal("30.0"))
         and (inputs.rsi_4h >= Decimal("38.0"))
         and (pos_in_range_30d >= Decimal("0.45"))
         and (downward_atr_ext <= Decimal("1.75"))
     )
+    breakdown_s3 = (
+        (inputs.rsi_1h >= Decimal("24.0"))
+        and (inputs.rsi_4h >= Decimal("28.0"))
+        and (downward_atr_ext <= Decimal("3.25"))
+        and (inputs.close <= inputs.poc_30d or inputs.close <= inputs.ema50_4h)
+    )
+    s3 = standard_s3 or breakdown_s3
 
     # 3. Gate S2 + S4 Paired Two-Track Evaluation
     high_24h = (
@@ -270,25 +341,33 @@ def evaluate_short_gates(
     is_utad_divergence = inputs.has_bearish_div and (inputs.macd_hist_4h < macd_prev)
 
     # Track A: Upper-Range Climax Blowoff / Wyckoff UTAD
+    # Strictly require either price breaking below 4H EMA20 OR verified taker seller dominance (<= 0.48)
+    # to prevent counter-trend suicide shorts during parabolic trend markups
     track_a_pass = (
         (pos_in_range_30d >= Decimal("0.65"))
         and rejected_from_high
         and (is_climax_blowoff or is_utad_divergence)
+        and (inputs.close <= inputs.ema20_4h or inputs.taker_buy_ratio_24h <= Decimal("0.48"))
     )
 
     # Track B: Structural Breakdown / Macro Distribution Rollover
-    below_key_structure = (inputs.close < inputs.ema50_4h) and (inputs.close < inputs.poc_30d)
+    below_key_structure = (inputs.close <= inputs.ema50_4h * Decimal("1.01")) and (
+        inputs.close <= inputs.poc_30d * Decimal("1.01")
+    )
     momentum_and_orderflow_decay = (
-        (inputs.macd_hist_4h < Decimal("0.0"))
-        and (inputs.macd_hist_4h <= macd_prev)
-        and (inputs.taker_buy_ratio_24h <= Decimal("0.47"))
+        (inputs.macd_hist_4h <= Decimal("0.05"))
+        and (
+            inputs.macd_hist_4h <= macd_prev
+            or inputs.taker_buy_ratio_24h <= Decimal("0.50")
+            or inputs.close <= inputs.ema20_4h
+        )
     )
     track_b_pass = below_key_structure and momentum_and_orderflow_decay
 
     # S2 and S4 pass if either Track A or Track B passes
     s2_s4_passed = track_a_pass or track_b_pass
-    s2 = track_a_pass or (pos_in_range_30d >= Decimal("0.45") and below_key_structure)
-    s4 = track_a_pass or momentum_and_orderflow_decay
+    s2 = track_a_pass or (pos_in_range_30d >= Decimal("0.45") and below_key_structure) or track_b_pass
+    s4 = track_a_pass or momentum_and_orderflow_decay or track_b_pass
 
     # 4. Gate S5: Bimodal Derivatives Crowding (Trapped Longs OR Short-Squeeze Flush)
     if inputs.funding_rate_8h is None and inputs.oi_delta_7d is None:
@@ -300,14 +379,21 @@ def evaluate_short_gates(
         oi_1h = inputs.oi_delta_1h or Decimal("0")
         taker_1h = inputs.taker_buy_ratio_1h or Decimal("0.5")
 
-        trapped_longs = (funding_8h >= Decimal("0.0001") or basis >= Decimal("12.0")) and (
-            oi_7d >= Decimal("0.15")
+        trapped_longs = (
+            (funding_8h >= Decimal("0.0001") or basis >= Decimal("12.0")) and (oi_7d >= Decimal("0.15"))
+        ) or (
+            (funding_8h >= Decimal("0.00005") or basis >= Decimal("4.0"))
+            and (oi_7d >= Decimal("0.0") or taker_1h <= Decimal("0.48"))
+        ) or (
+            inputs.taker_buy_ratio_24h <= Decimal("0.48")
         )
         squeeze_flush = (
             (funding_8h <= Decimal("-0.0003"))
             and (oi_7d >= Decimal("0.25"))
             and (oi_1h <= Decimal("-0.015"))
             and (taker_1h <= Decimal("0.46"))
+        ) or (
+            (funding_8h <= Decimal("-0.00015")) and (taker_1h <= Decimal("0.48"))
         )
         s5 = trapped_longs or squeeze_flush
 

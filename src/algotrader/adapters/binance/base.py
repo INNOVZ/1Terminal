@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -149,6 +150,7 @@ class BinanceMarketDataBase:
             if len(page) < page_size:
                 break
             end_time = int(page[0][0]) - 1
+            await asyncio.sleep(0.15)
         return self._parse_candle_rows(rows[-limit:])
 
     @staticmethod

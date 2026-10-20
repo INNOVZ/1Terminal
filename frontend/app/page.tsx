@@ -355,7 +355,19 @@ function RadarPageContent() {
           }
         }
 
-        setOpportunities(enriched);
+        // Client-side base-asset deduplication: enforce single canonical contract per underlying asset
+        const seenBases = new Set<string>();
+        const dedupedEnriched: Opportunity[] = [];
+        for (const item of enriched) {
+          const rawBase = (item as any).base_asset || item.symbol.replace(/USDT$/, "").replace(/USDC$/, "");
+          const baseKey = rawBase.toUpperCase();
+          if (baseKey && !seenBases.has(baseKey)) {
+            seenBases.add(baseKey);
+            dedupedEnriched.push(item);
+          }
+        }
+
+        setOpportunities(dedupedEnriched);
 
         // Preserve active token or activate targeted candidate
         setActiveOpportunity((prev) => {
@@ -502,9 +514,11 @@ function RadarPageContent() {
                   : [],
             };
             setOpportunities((prev) => {
-              const filtered = prev.filter(
-                (o) => o.symbol.toUpperCase() !== cleanTarget,
-              );
+              const targetBase = cleanTarget.replace(/USDT$/, "").replace(/USDC$/, "");
+              const filtered = prev.filter((o) => {
+                const oBase = ((o as any).base_asset || o.symbol).replace(/USDT$/, "").replace(/USDC$/, "");
+                return oBase.toUpperCase() !== targetBase;
+              });
               return [oppWithCandles, ...filtered];
             });
             setActiveOpportunity(oppWithCandles);
@@ -1004,7 +1018,7 @@ function RadarPageContent() {
                 color: "var(--text-primary)",
               }}
             >
-              1 TERMINAL
+              ALFA TERMINAL
             </span>
             <span
               style={{

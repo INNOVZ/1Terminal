@@ -11,6 +11,7 @@ from typing import Any
 
 from algotrader.config import load_settings
 from algotrader.domain.crypto_screener_models import ScreenerMode
+from algotrader.domain.scoring import OpportunityGrade
 from algotrader.infrastructure.runtime import Runtime, build_runtime
 
 
@@ -35,7 +36,7 @@ async def execute_screener_job(
     runtime: Runtime,
     *,
     interval_hours: int = 1,
-    min_score: float = 50.0,
+    min_score: float = 65.0,
     max_symbols: int = 250,
 ) -> dict[str, Any]:
     """Executes a full USD-M universe scan and persists results."""
@@ -54,11 +55,43 @@ async def execute_screener_job(
         mode=ScreenerMode.ALL,
     )
 
-    long_opps = [opp for opp in opportunities if opp.direction.value == "long"]
-    short_opps = [opp for opp in opportunities if opp.direction.value == "short"]
-    balanced_picks = long_opps[:7] + short_opps[:8]
+    top_longs = [opp for opp in opportunities if opp.direction.value == "long" and opp.grade != OpportunityGrade.SUB_GRADE]
+    top_shorts = [opp for opp in opportunities if opp.direction.value == "short" and opp.grade != OpportunityGrade.SUB_GRADE]
+
+    seen_bases: set[str] = set()
+    deduped_longs = []
+    for opp in top_longs:
+        if opp.instrument.base_asset not in seen_bases:
+            seen_bases.add(opp.instrument.base_asset)
+            deduped_longs.append(opp)
+
+    deduped_shorts = []
+    for opp in top_shorts:
+        if opp.instrument.base_asset not in seen_bases:
+            seen_bases.add(opp.instrument.base_asset)
+            deduped_shorts.append(opp)
+
+    balanced_picks = deduped_longs[:24] + deduped_shorts[:8]
     if not balanced_picks:
-        balanced_picks = opportunities[:15]
+        balanced_picks = [opp for opp in opportunities if opp.grade != OpportunityGrade.SUB_GRADE][:32]
+
+    def _conv(o: Any) -> float:
+        base = float(o.conviction) if o.conviction is not None else float(o.estimated_win_rate_pct) * 0.4 + float(o.score) * 0.6
+        if o.checklist_verification is not None:
+            passed = o.checklist_verification.passed_count
+            if passed == 5:
+                return base * 1.08
+            elif passed == 4:
+                return base * 1.04
+            elif passed == 3:
+                return base * 1.00
+            elif passed == 2:
+                return base * 0.88
+            else:
+                return base * 0.75
+        return base
+
+    balanced_picks.sort(key=_conv, reverse=True)
 
     inst_map = {opp.instrument.id.symbol: opp.instrument for opp in balanced_picks}
 
@@ -78,7 +111,7 @@ async def execute_screener_job(
 
         if inst:
             try:
-                raw_candles = await asyncio.wait_for(futures.candles(inst, "1h", 250), timeout=2.5)
+                raw_candles = await asyncio.wait_for(futures.candles(inst, "1h", 250), timeout=5.0)
                 candles_payload = [
                     {
                         "time": int(c.closed_at.timestamp()),

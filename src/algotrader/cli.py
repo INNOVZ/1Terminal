@@ -719,6 +719,119 @@ def _portal() -> int:
             frontend_proc.wait(timeout=3)
         except Exception:
             pass
+async def _backtest_screener(
+    *,
+    symbols_arg: str | None,
+    history_days: int,
+    interval_hours: int,
+    min_score: Decimal,
+    direction_arg: str | None,
+    entry_mode: str,
+    initial_equity: Decimal,
+    risk_per_trade_pct: Decimal,
+    max_open_trades: int,
+    as_json: bool,
+) -> int:
+    from algotrader.application.crypto_screener_backtest import (
+        CryptoScreenerBacktestAssumptions,
+        CryptoScreenerBacktester,
+    )
+    from algotrader.domain.models import Direction
+
+    if symbols_arg:
+        symbols = [s.strip().upper() for s in symbols_arg.split(",") if s.strip()]
+    else:
+        # Default representative basket: includes short squeeze candidates, base coils, and distribution shorts
+        symbols = [
+            "QUSDT", "AXLUSDT", "RSRUSDT", "KMNOUSDT", "SOLVUSDT",
+            "BEAMXUSDT", "COLLECTUSDT", "IOTXUSDT", "COMPUSDT", "PNUTUSDT"
+        ]
+
+    target_direction = None
+    if direction_arg:
+        target_direction = Direction.LONG if direction_arg.lower() == "long" else Direction.SHORT
+
+    assumptions = CryptoScreenerBacktestAssumptions(
+        initial_equity=initial_equity,
+        risk_per_trade_pct=risk_per_trade_pct,
+        max_open_trades=max_open_trades,
+        min_score=min_score,
+        entry_mode=entry_mode,
+        target_direction=target_direction,
+    )
+    backtester = CryptoScreenerBacktester(assumptions=assumptions)
+
+    dir_label = target_direction.value.upper() if target_direction else "BIDIRECTIONAL"
+    print("=" * 85)
+    print("  ATLAS TRIPLE-CONFLUENCE SCREENER AUTOMATED BACKTESTER")
+    print(f"  Universe ({len(symbols)} Assets): {', '.join(symbols)}")
+    print(f"  Period: Last {history_days} Days | Step: {interval_hours}H | Min Score: {min_score} | Direction: {dir_label} | Mode: {entry_mode.upper()}")
+    print(f"  Initial Equity: ${initial_equity:,.2f} | Risk/Trade: {float(risk_per_trade_pct * 100):.1f}% | Max Open Trades: {max_open_trades}")
+    print("=" * 85)
+
+    result = await backtester.run(
+        symbols=symbols,
+        history_days=history_days,
+        interval_hours=interval_hours,
+    )
+
+    if as_json:
+        print(json.dumps(result.as_dict(), indent=2))
+        return 0
+
+    print("\n" + "=" * 85)
+    print("  PORTFOLIO EXECUTIVE SUMMARY")
+    print("=" * 85)
+    print(f"  Initial Capital:      ${result.initial_equity:,.2f}")
+    print(f"  Ending Capital:       ${result.final_equity:,.2f}")
+    ret_sign = "+" if result.total_return_pct >= 0 else ""
+    print(f"  Total Return:         {ret_sign}{result.total_return_pct:.2f}%")
+    print(f"  Max Drawdown:         -${result.max_drawdown_usd:,.2f} ({result.max_drawdown_pct:.2f}%)")
+    print(f"  Total Trades:         {result.total_trades} (Wins: {result.winning_trades}, Losses: {result.losing_trades})")
+    print(f"  Win Rate:             {result.win_rate_pct:.1f}%")
+    pf_str = f"{result.profit_factor:.2f}" if result.profit_factor is not None else "N/A"
+    print(f"  Profit Factor:        {pf_str}")
+    print(f"  Expectancy (E[R]):    {result.expectancy_r:+.2f}R per trade")
+    sharpe_str = f"{result.sharpe_ratio:.2f}" if result.sharpe_ratio is not None else "N/A"
+    print(f"  Sharpe Ratio (Ann.):  {sharpe_str}")
+    print(f"  Avg Holding Duration: {result.avg_holding_hours:.1f} Hours")
+    print("=" * 85)
+
+    if result.archetype_performance:
+        print("\n" + "-" * 85)
+        print("  PERFORMANCE BREAKDOWN BY INSTITUTIONAL ARCHETYPE")
+        print("-" * 85)
+        print(f"  {'Archetype':<32} {'Trades':<8} {'Win Rate':<10} {'Profit Factor':<15} {'Net PnL':<12} {'Avg R':<8}")
+        print("  " + "-" * 83)
+        for arch, stats in sorted(result.archetype_performance.items(), key=lambda x: x[1]['trades'], reverse=True):
+            print(f"  {arch:<32} {stats['trades']:<8} {stats['win_rate']:<10} {stats['profit_factor']:<15} {stats['net_pnl']:<12} {stats['avg_r']:<8}")
+
+    if result.symbol_performance:
+        print("\n" + "-" * 85)
+        print("  PERFORMANCE BREAKDOWN BY SYMBOL")
+        print("-" * 85)
+        print(f"  {'Symbol':<15} {'Trades':<10} {'Win Rate':<12} {'Net PnL':<15} {'Avg R':<10}")
+        print("  " + "-" * 83)
+        for sym, stats in sorted(result.symbol_performance.items(), key=lambda x: x[0]):
+            print(f"  {sym:<15} {stats['trades']:<10} {stats['win_rate']:<12} {stats['net_pnl']:<15} {stats['avg_r']:<10}")
+
+    if result.trades:
+        print("\n" + "-" * 85)
+        print(f"  TRADE EXECUTION LOG (Total {len(result.trades)} Trades)")
+        print("-" * 85)
+        print(f"  {'Symbol':<10} {'Dir':<6} {'Archetype':<26} {'Entry':<10} {'Exit':<10} {'Net PnL':<10} {'R-Mult':<8} {'Exit Reason'}")
+        print("  " + "-" * 83)
+        for t in result.trades[-25:]:
+            dir_str = "LONG" if t.direction is Direction.LONG else "SHORT"
+            print(
+                f"  {t.symbol:<10} {dir_str:<6} {t.archetype[:25]:<26} "
+                f"{float(t.entry_price):<10.4g} {float(t.exit_price):<10.4g} "
+                f"{float(t.net_pnl):>+8.2f}  {float(t.return_r):>+5.2f}R  {t.exit_reason}"
+            )
+        if len(result.trades) > 25:
+            print(f"  ... ({len(result.trades) - 25} earlier trades omitted; run with --json to see all)")
+
+    print("=" * 85 + "\n")
     return 0
 
 
@@ -739,6 +852,7 @@ ARGUMENT_COMMANDS = (
     "abandon-lifecycle",
     "adopt-position",
     "backtest",
+    "backtest-screener",
     "chart-verify",
     "crypto-screen",
     "dashboard",
@@ -836,8 +950,28 @@ def main() -> int:
         default="accumulation",
         help="Screening objective: pre-breakout accumulation coils vs active momentum breakouts",
     )
+    parser.add_argument("--symbols", default=None, help="Comma-separated list of symbols for multi-symbol screener backtest")
+    parser.add_argument("--interval-hours", type=int, default=4, help="Screening frequency in hours for backtest (e.g. 1 or 4)")
+    parser.add_argument("--risk-per-trade-pct", type=Decimal, default=Decimal("0.01"), help="Risk per trade as equity fraction (e.g. 0.01 = 1%%)")
+    parser.add_argument("--entry-mode", choices=("pullback", "breakout", "both"), default="pullback", help="Entry execution mode: pullback limit or breakout stop")
+    parser.add_argument("--max-open-trades", type=int, default=5, help="Maximum concurrent open positions in portfolio")
     parser.add_argument("--json", dest="as_json", action="store_true", default=False)
     args = parser.parse_args()
+    if args.command == "backtest-screener":
+        return asyncio.run(
+            _backtest_screener(
+                symbols_arg=args.symbols or args.symbol or args.target_symbol,
+                history_days=int(args.history_days),
+                interval_hours=int(args.interval_hours),
+                min_score=Decimal(args.min_score),
+                direction_arg=args.direction,
+                entry_mode=str(args.entry_mode),
+                initial_equity=Decimal(args.initial_equity),
+                risk_per_trade_pct=Decimal(args.risk_per_trade_pct),
+                max_open_trades=int(args.max_open_trades),
+                as_json=bool(args.as_json),
+            )
+        )
     if args.command == "crypto-screen":
         return asyncio.run(
             _crypto_screen(

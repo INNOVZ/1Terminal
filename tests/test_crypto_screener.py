@@ -449,7 +449,12 @@ async def test_accumulation_screener_identifies_tight_coil(settings: Settings) -
     assert len(opportunities) > 0
     coil_opp = next((o for o in opportunities if o.instrument.id.symbol == "COILUSDT"), None)
     assert coil_opp is not None
-    assert coil_opp.setup_label in (SetupLabel.COIL_SPRING_LONG, SetupLabel.OI_ACCUMULATION_LONG, SetupLabel.VCP_COMPRESSION_LONG)
+    assert coil_opp.setup_label in (
+        SetupLabel.COIL_SPRING_LONG,
+        SetupLabel.OI_ACCUMULATION_LONG,
+        SetupLabel.VCP_COMPRESSION_LONG,
+        SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG,
+    )
     assert coil_opp.risk_reward_ratio >= Decimal("2.0")
     assert coil_opp.suggested_stop < coil_opp.current_price
     assert coil_opp.suggested_targets[0] > coil_opp.current_price
@@ -842,6 +847,157 @@ async def test_utad_mtf_rsi_divergence_short_screening(settings: Settings) -> No
     assert near_opp.suggested_targets[0] < near_opp.breakout_trigger
     assert near_opp.suggested_targets[1] < near_opp.suggested_targets[0]
     assert near_opp.suggested_targets[2] < near_opp.suggested_targets[1]
+
+
+@pytest.mark.asyncio
+async def test_screener_canonical_token_deduplication_usdt_vs_usdc(settings: Settings) -> None:
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+
+    from algotrader.domain.models import AssetClass, InstrumentId
+
+    def _make_inst(sym: str, base: str, quote: str) -> Instrument:
+        return Instrument(
+            id=InstrumentId(Venue.BINANCE_USDM, sym),
+            base_asset=base,
+            quote_asset=quote,
+            asset_class=AssetClass.CRYPTO,
+            market_kind=MarketKind.FUTURES,
+            trading=True,
+            price_tick=Decimal("0.001"),
+            quantity_step=Decimal("0.1"),
+            min_quantity=Decimal("0.1"),
+            min_notional=Decimal("5"),
+            max_leverage=50,
+        )
+
+    near_usdt = _make_inst("NEARUSDT", "NEAR", "USDT")
+    near_usdc = _make_inst("NEARUSDC", "NEAR", "USDC")
+    wld_usdt = _make_inst("WLDUSDT", "WLD", "USDT")
+    wld_usdc = _make_inst("WLDUSDC", "WLD", "USDC")
+    btc_inst = _make_inst("BTCUSDT", "BTC", "USDT")
+
+    insts = [btc_inst, near_usdt, near_usdc, wld_usdt, wld_usdc]
+
+    # Quotes with USDT having higher volume than USDC
+    custom_quotes = {
+        "BTCUSDT": Quote(
+            instrument_id=btc_inst.id,
+            bid=Decimal("60000"),
+            ask=Decimal("60001"),
+            last=Decimal("60000"),
+            quote_volume_24h=Decimal("600000000"),
+            observed_at=now,
+        ),
+        "NEARUSDT": Quote(
+            instrument_id=near_usdt.id,
+            bid=Decimal("5.0"),
+            ask=Decimal("5.001"),
+            last=Decimal("5.0"),
+            quote_volume_24h=Decimal("25000000"),  # $25M
+            observed_at=now,
+        ),
+        "NEARUSDC": Quote(
+            instrument_id=near_usdc.id,
+            bid=Decimal("5.0"),
+            ask=Decimal("5.002"),
+            last=Decimal("5.0"),
+            quote_volume_24h=Decimal("1000000"),  # $1M
+            observed_at=now,
+        ),
+        "WLDUSDT": Quote(
+            instrument_id=wld_usdt.id,
+            bid=Decimal("2.0"),
+            ask=Decimal("2.001"),
+            last=Decimal("2.0"),
+            quote_volume_24h=Decimal("20000000"),  # $20M
+            observed_at=now,
+        ),
+        "WLDUSDC": Quote(
+            instrument_id=wld_usdc.id,
+            bid=Decimal("2.0"),
+            ask=Decimal("2.002"),
+            last=Decimal("2.0"),
+            quote_volume_24h=Decimal("1000000"),  # $1M
+            observed_at=now,
+        ),
+    }
+
+    candles_1h_map = {
+        "BTCUSDT": trending_candles(up=True, count=750),
+        "NEARUSDT": trending_candles(up=True, count=750),
+        "NEARUSDC": trending_candles(up=True, count=750),
+        "WLDUSDT": trending_candles(up=True, count=750),
+        "WLDUSDC": trending_candles(up=True, count=750),
+    }
+    candles_4h_map = {
+        "BTCUSDT": trending_candles(up=True, count=180),
+        "NEARUSDT": trending_candles(up=True, count=180),
+        "NEARUSDC": trending_candles(up=True, count=180),
+        "WLDUSDT": trending_candles(up=True, count=180),
+        "WLDUSDC": trending_candles(up=True, count=180),
+    }
+
+    class DeduplicationMarketData(FakeCryptoMarketData):
+        async def quotes(self, instruments: Sequence[Instrument]) -> Sequence[Quote]:
+            return [custom_quotes[inst.id.symbol] for inst in instruments if inst.id.symbol in custom_quotes]
+
+    market = DeduplicationMarketData(insts, candles_1h_map, candles_4h_map)
+
+    deriv_port = AsyncMock()
+    deriv_port.derivatives_snapshot.return_value = DerivativesSnapshot(
+        funding_rate=Decimal("0.0001"),
+        basis_rate=Decimal("0"),
+        open_interest=Decimal("1000000"),
+        open_interest_change_1h=Decimal("0.05"),
+        taker_buy_sell_ratio=Decimal("1.25"),
+        bid_depth_notional=Decimal("2000000"),
+        ask_depth_notional=Decimal("1000000"),
+        open_interest_change_7d=Decimal("0.20"),
+    )
+
+    mock_macro = AsyncMock()
+    mock_macro.get_context.return_value = MacroSentimentContext(
+        fear_greed=FearGreedReading(value=60, classification="Greed", observed_at=now),
+        stablecoin_supply=StablecoinSupplyMetric(
+            total_circulating_usd=Decimal("160000000000"),
+            change_1d_pct=Decimal("0.0"),
+            change_7d_pct=Decimal("0.0"),
+            change_30d_pct=Decimal("1.0"),
+        ),
+    )
+
+    screener = CryptoOpportunityScreener(settings, macro_provider=mock_macro)
+    opportunities = await screener.screen(
+        market,
+        derivatives_port=deriv_port,
+        min_score=Decimal("40"),
+        mode=ScreenerMode.ALL,
+    )
+
+    # 1. Verify that no duplicate base assets exist
+    symbols = [o.instrument.id.symbol for o in opportunities]
+    base_assets = [o.instrument.base_asset for o in opportunities]
+    assert len(base_assets) == len(set(base_assets)), f"Duplicate base assets found: {base_assets}"
+
+    # 2. Verify that USDC contracts were dropped in favor of USDT contracts
+    assert "NEARUSDC" not in symbols
+    assert "WLDUSDC" not in symbols
+    if "NEAR" in base_assets:
+        assert "NEARUSDT" in symbols
+    if "WLD" in base_assets:
+        assert "WLDUSDT" in symbols
+
+    # 3. Verify as_dict contains base_asset and quote_asset
+    for opp in opportunities:
+        d = opp.as_dict()
+        assert "base_asset" in d
+        assert "quote_asset" in d
+        assert d["quote_asset"] in ("USDT", "USDC")
+        # Invariants
+        if opp.direction == Direction.LONG:
+            assert opp.suggested_stop < opp.suggested_entry
+        elif opp.direction == Direction.SHORT:
+            assert opp.suggested_stop > opp.suggested_entry
 
 
 

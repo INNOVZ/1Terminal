@@ -110,8 +110,17 @@ def _get_fresh_baseline_opportunities() -> dict[str, Any]:
         try:
             cached_latest = json.loads(latest_path.read_text())
             if isinstance(cached_latest, dict) and "opportunities" in cached_latest:
+                seen_bases: set[str] = set()
+                deduped: list[dict[str, Any]] = []
                 for o in cached_latest.get("opportunities", []):
                     _enrich_opp_with_win_rate(o)
+                    sym = str(o.get("symbol", ""))
+                    base = o.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
+                    if base and base not in seen_bases:
+                        seen_bases.add(base)
+                        deduped.append(o)
+                cached_latest["opportunities"] = deduped
+                cached_latest["qualifying_count"] = len(deduped)
                 return cached_latest
         except Exception:
             pass
@@ -169,7 +178,7 @@ async def _do_crypto_screen(
             short_opps = [opp for opp in ranked_opps if opp.direction.value == "short"]
 
             if long_opps and short_opps:
-                top_picks = long_opps[:16] + short_opps[:16]
+                top_picks = long_opps[:24] + short_opps[:8]
                 top_picks.sort(key=_conviction, reverse=True)
             else:
                 top_picks = ranked_opps[:32]
@@ -205,13 +214,14 @@ async def _do_crypto_screen(
         else:
             opps_list = []
 
-        # Deduplicate by symbol preserving order
-        seen_syms: set[str] = set()
+        # Deduplicate by base asset preserving order (retaining single canonical contract per token)
+        seen_bases: set[str] = set()
         deduped_opps: list[dict[str, Any]] = []
         for o in opps_list:
-            sym = o.get("symbol")
-            if sym and sym not in seen_syms:
-                seen_syms.add(sym)
+            sym = str(o.get("symbol", ""))
+            base = o.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
+            if base and base not in seen_bases:
+                seen_bases.add(base)
                 deduped_opps.append(o)
 
         now = datetime.now(UTC)
@@ -299,7 +309,7 @@ async def get_live_screener(
     if latest_path.exists():
         try:
             mtime = datetime.fromtimestamp(latest_path.stat().st_mtime, tz=UTC)
-            if not _cache_timestamp or mtime > _cache_timestamp:
+            if not _cache_timestamp or mtime != _cache_timestamp:
                 _screener_cache = _get_fresh_baseline_opportunities()
                 _cache_timestamp = mtime
         except Exception:

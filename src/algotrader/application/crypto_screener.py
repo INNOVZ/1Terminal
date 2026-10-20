@@ -61,6 +61,8 @@ from algotrader.domain.resistance_absorption import compute_resistance_absorptio
 from algotrader.domain.scoring import (
     OpportunityGrade,
     calculate_adx_subscore,
+    calculate_continuous_long_factor_scores,
+    calculate_continuous_short_factor_scores,
     classify_opportunity_grade,
     compute_3tier_ev_r,
     compute_p_win_and_conviction,
@@ -147,6 +149,28 @@ class CryptoOpportunityScreener:
                 continue
             liquid_instruments.append(inst)
 
+        # Stage 4b: Canonical Single-Pair-Per-Asset Deduplication (Best of USDT/USDC)
+        # Avoid duplicate scanning of the same underlying asset (e.g. NEARUSDT vs NEARUSDC).
+        # Retain the single contract with highest 24h quote liquidity, strictly favoring USDT when comparable.
+        best_by_base: dict[str, Instrument] = {}
+        for inst in liquid_instruments:
+            base = inst.base_asset
+            if base not in best_by_base:
+                best_by_base[base] = inst
+            else:
+                curr = best_by_base[base]
+                vol_new = quotes_by_symbol[inst.id.symbol].quote_volume_24h
+                vol_curr = quotes_by_symbol[curr.id.symbol].quote_volume_24h
+                if vol_new > vol_curr * Decimal("1.05"):
+                    best_by_base[base] = inst
+                elif vol_curr > vol_new * Decimal("1.05"):
+                    pass  # keep curr
+                elif inst.quote_asset == "USDT" and curr.quote_asset != "USDT":
+                    best_by_base[base] = inst
+                elif vol_new > vol_curr:
+                    best_by_base[base] = inst
+        liquid_instruments = list(best_by_base.values())
+
         # Stage 5: Institutional Liquidity Index (ILI) Stratification (Top liquid descending)
         limit_symbols = max_symbols if max_symbols is not None else 250
         limit_symbols = min(limit_symbols, len(liquid_instruments))
@@ -192,11 +216,11 @@ class CryptoOpportunityScreener:
         is_btc_cascade = btc_ret_1h <= Decimal("-0.025") or btc_ret_4h <= Decimal("-0.045")
 
         # 4. Evaluate Candidates Concurrently (paced to strictly respect Binance weight limit)
-        semaphore = asyncio.Semaphore(7)
+        semaphore = asyncio.Semaphore(5)
 
         async def eval_instrument(inst: Instrument) -> list[CryptoOpportunity]:
             async with semaphore:
-                await asyncio.sleep(0.035)  # Polite pacing: keeps request rate well below Binance 2400-wt ceiling
+                await asyncio.sleep(0.065)  # Polite pacing: keeps request rate well below Binance 2400-wt ceiling
                 return await self._evaluate_single(
                     inst=inst,
                     quote=quotes_by_symbol[inst.id.symbol],
@@ -221,29 +245,61 @@ class CryptoOpportunityScreener:
                 for opp in res:
                     eff_score = opp.conviction if opp.conviction is not None else opp.score
                     if eff_score >= cutoff_score and (target_direction is None or opp.direction is target_direction):
+                        if cutoff_score >= Decimal("50.0") and opp.grade == OpportunityGrade.SUB_GRADE:
+                            continue
+                        # Candidates must demonstrate institutional multi-system validation, not just 1 isolated system
+                        if opp.checklist_verification is not None and opp.checklist_verification.passed_count < 2:
+                            continue
                         opportunities.append(opp)
             elif isinstance(res, Exception):
                 log.debug("instrument_eval_exception", error=str(res))
 
-        # Rank descending by composite conviction (weighted score & win rate) ensuring balanced long/short representation
+        # Rank descending by composite conviction (multi-system confluence, score & win rate)
         def _conviction(o: CryptoOpportunity) -> float:
-            if o.conviction is not None:
-                return float(o.conviction)
-            return float(o.estimated_win_rate_pct) * 0.4 + float(o.score) * 0.6
+            base = float(o.conviction) if o.conviction is not None else float(o.estimated_win_rate_pct) * 0.4 + float(o.score) * 0.6
+            if o.checklist_verification is not None:
+                passed = o.checklist_verification.passed_count
+                if passed == 5:
+                    return base * 1.08  # 5-system institutional consensus
+                elif passed == 4:
+                    return base * 1.04  # 4-system consensus
+                elif passed == 3:
+                    return base * 1.00  # Baseline 3-system confluence
+                elif passed == 2:
+                    return base * 0.88  # Only 2 systems passed
+                else:
+                    return base * 0.75  # 1 system passed
+            return base
 
         longs = [o for o in opportunities if o.direction is Direction.LONG]
         shorts = [o for o in opportunities if o.direction is Direction.SHORT]
         longs.sort(key=_conviction, reverse=True)
         shorts.sort(key=_conviction, reverse=True)
 
-        if longs and shorts and target_direction is None:
-            half = max(10, top_n // 2)
-            balanced = longs[:half] + shorts[:half]
+        # Final base-asset deduplication: retain the single highest conviction pair per token
+        seen_bases: set[str] = set()
+        deduped_longs: list[CryptoOpportunity] = []
+        for o in longs:
+            if o.instrument.base_asset not in seen_bases:
+                seen_bases.add(o.instrument.base_asset)
+                deduped_longs.append(o)
+
+        deduped_shorts: list[CryptoOpportunity] = []
+        for o in shorts:
+            if o.instrument.base_asset not in seen_bases:
+                seen_bases.add(o.instrument.base_asset)
+                deduped_shorts.append(o)
+
+        if target_direction is None:
+            # Dynamic regime-adaptive allocation: allow up to 8 shorts while allocating remaining capacity to top longs
+            short_quota = min(len(deduped_shorts), max(6, top_n // 4))
+            long_quota = min(len(deduped_longs), top_n - short_quota)
+            balanced = deduped_longs[:long_quota] + deduped_shorts[:short_quota]
             balanced.sort(key=_conviction, reverse=True)
             return balanced
 
-        opportunities.sort(key=_conviction, reverse=True)
-        return opportunities[:top_n]
+        final_opps = deduped_longs if target_direction is Direction.LONG else deduped_shorts
+        return final_opps[:top_n]
 
     async def _evaluate_single(
         self,
@@ -360,12 +416,11 @@ class CryptoOpportunityScreener:
         # MTF overbought exhaustion, or confirmed bearish divergence with score >= 70),
         # it is fundamentally in Distribution — it must NEVER be classified as a pre-breakout accumulation long!
         if accum_opp is not None and dist_opp is not None:
-            if dist_opp.score >= Decimal("70.0"):
+            # If both directions qualify, assign the one with higher score and conviction
+            if dist_opp.score > accum_opp.score:
                 accum_opp = None
-            elif accum_opp.score >= Decimal("70.0") or accum_opp.score >= dist_opp.score:
-                dist_opp = None
             else:
-                accum_opp = None
+                dist_opp = None
 
         if accum_opp is not None and accum_opp.setup_label is not SetupLabel.NO_SETUP:
             opps.append(accum_opp)
@@ -441,8 +496,9 @@ class CryptoOpportunityScreener:
         """Score pre-breakout volatility squeeze, base coiling, and silent accumulation BEFORE expansion (V2.5)."""
         close = snap_1h.close
         atr14 = snap_1h.atr14
+        closes_1h = [c.close for c in closed_1h]
         closes_4h = [c.close for c in closed_4h]
-        if len(closes_4h) < 20:
+        if len(closes_4h) < 20 or len(closes_1h) < 20:
             return None
         ema20_4h = ema(closes_4h, 20)[-1]
         ema50_4h = ema(closes_4h, 50)[-1] if len(closes_4h) >= 50 else ema20_4h
@@ -494,29 +550,49 @@ class CryptoOpportunityScreener:
                 bb_lower_4h, kc_lower_4h, bb_upper_4h, kc_upper_4h, strict=False
             )
         ]
-        bb_inside_kc = bb_inside_kc_series[-1] if bb_inside_kc_series else False
+        bb_inside_kc_4h = bb_inside_kc_series[-1] if bb_inside_kc_series else False
+
+        # Concurrently detect 1H intraday squeeze coiling inside 4H base
+        bb_upper_1h, bb_mid_1h, bb_lower_1h, bbw_1h = bollinger_bands(closes_1h, 20, Decimal("2.0"))
+        kc_upper_1h, kc_mid_1h, kc_lower_1h = keltner_channels(closed_1h, 20, Decimal("1.5"))
+        bb_inside_kc_1h = bool(
+            bb_lower_1h
+            and kc_lower_1h
+            and bb_upper_1h
+            and kc_upper_1h
+            and bb_lower_1h[-1] is not None
+            and kc_lower_1h[-1] is not None
+            and bb_upper_1h[-1] is not None
+            and kc_upper_1h[-1] is not None
+            and bb_lower_1h[-1] >= kc_lower_1h[-1]
+            and bb_upper_1h[-1] <= kc_upper_1h[-1]
+        )
+        bb_inside_kc = bb_inside_kc_4h or bb_inside_kc_1h
         bandwidth_current = bbw_4h[-1] if bbw_4h else Decimal("0.20")
         adv_7d, adv_14d, vol_contraction_ratio = volume_contraction_metrics(closed_1h, 7, 14)
 
-        # Disqualify Bearish Divergences on accumulation
-        if len(closed_4h) >= 30:
-            rsi_divs_4h = confirmed_rsi_divergences(closed_4h, lookback=48, min_rsi_delta=Decimal("2.0"))
+        # Disqualify Active Bearish Divergences on accumulation only if price broke below structural support
+        if len(closed_4h) >= 24 and (close < ema50_4h and close < poc_price):
+            rsi_divs_4h = confirmed_rsi_divergences(closed_4h[-24:], lookback=18, min_rsi_delta=Decimal("2.0"))
             if any(d.kind == "bearish" for d in rsi_divs_4h):
                 return None
-            macd_divs_4h = confirmed_macd_divergences(closed_4h, lookback=48)
+            macd_divs_4h = confirmed_macd_divergences(closed_4h[-24:], lookback=18)
             if any(d.kind == "bearish" for d in macd_divs_4h):
                 return None
 
         # Swings & Indicators
         local_swing_high_4h = max(c.high for c in (closed_4h[-18:] if len(closed_4h) >= 18 else closed_4h))
-        swing_low_4h = min(c.low for c in (closed_4h[-30:] if len(closed_4h) >= 30 else closed_4h))
+        swing_low_4h = min(c.low for c in (closed_4h[-42:] if len(closed_4h) >= 42 else closed_4h))
         macd_line_4h, macd_sig_4h, macd_hist_4h_series = macd(closes_4h)
         macd_hist_4h = macd_hist_4h_series[-1] if macd_hist_4h_series else ZERO
         macd_hist_4h_prev = macd_hist_4h_series[-2] if len(macd_hist_4h_series) >= 2 else ZERO
         rvol_4h = snap_1h.relative_volume
 
-        # Derivatives features
+        # Derivatives & Order Flow features
         funding = derivatives.funding_rate if derivatives else None
+        # Crowded long funding guard (> 25% APR / 2.5 bps per 8h)
+        if funding is not None and funding > Decimal("0.00025"):
+            return None
         oi_change = derivatives.open_interest_change_1h if derivatives else None
         oi_change_7d = derivatives.open_interest_change_7d if derivatives else None
         taker_ratio_calc = taker_buy_ratio_from_candles(closed_4h[-6:] if len(closed_4h) >= 6 else closed_4h)
@@ -526,6 +602,10 @@ class CryptoOpportunityScreener:
             else taker_ratio_calc
         )
         taker_buy_ratio_4h = taker_ratio if taker_ratio is not None else Decimal("0.5")
+        cvd_metrics = cumulative_volume_delta_metrics(closed_1h, lookback_window=24)
+
+        range_height_30d = (high_30d - low_30d) / max(low_30d, Decimal("1e-8"))
+        dist_to_ceiling = (high_30d - close) / max(close, Decimal("1e-8"))
 
         # Archetype Classification (Wyckoff & Order Flow Priority)
         long_features = LongArchetypeFeatures(
@@ -549,6 +629,12 @@ class CryptoOpportunityScreener:
             macd_hist_4h_prev=macd_hist_4h_prev,
             macd_hist_1h=snap_1h.macd_hist,
             taker_buy_ratio_4h=taker_buy_ratio_4h,
+            range_height_30d=range_height_30d,
+            pos_in_range_30d=pos_in_range,
+            dist_to_ceiling=dist_to_ceiling,
+            val_30d=val_price,
+            funding_rate_8h=funding,
+            cvd_24h=cvd_metrics.cvd_24h_change,
         )
         archetype = classify_long_archetype(long_features)
         if archetype is None:
@@ -613,6 +699,10 @@ class CryptoOpportunityScreener:
             poc_bin_volume=vp.poc_volume,
         )
 
+        # Strict Quality Guard: Reject candidates with heavy rejection risk / tape selling walls
+        if breakout_status == "HIGH_REJECTION_RISK" or absorption_score < 35.0:
+            return None
+
         # 5-Level Execution Bracket (Normalized with tick_size and Execution Mode Split)
         bracket = build_long_bracket(
             close=close,
@@ -628,75 +718,54 @@ class CryptoOpportunityScreener:
             resistance_absorption_score=Decimal(str(absorption_score)),
         )
 
-        # Quantitative Factor Scoring (5-Factor Formula)
+        # Continuous Multi-Factor Quant Scoring (5 Institutional Pillars)
         adx_subscore = calculate_adx_subscore(
             archetype, snap_1h.adx14, snap_1h.momentum_reference_adx14, snap_1h.plus_di, snap_1h.minus_di
         )
-        ema_alignment_score = (
-            Decimal("100.0")
-            if close >= ema20_4h >= ema50_4h
-            else (Decimal("75.0") if close >= ema50_4h else Decimal("50.0"))
-        )
-        minervini_stage_score = (
-            Decimal("95.0") if (close >= ema50_4h and ema50_4h >= ema200_4h) else Decimal("65.0")
-        )
-        trend_score = (
-            Decimal("0.40") * ema_alignment_score
-            + Decimal("0.35") * adx_subscore
-            + Decimal("0.25") * minervini_stage_score
-        )
-
-        # Momentum score
-        if bandwidth_current <= Decimal("0.10"):
-            base_bw = Decimal("100.0")
-        elif bandwidth_current <= Decimal("0.24"):
-            ratio = (bandwidth_current - Decimal("0.10")) / Decimal("0.14")
-            base_bw = Decimal("100.0") - ratio * Decimal("50.0")
-        else:
-            base_bw = max(
-                Decimal("10.0"),
-                Decimal("50.0") - (bandwidth_current - Decimal("0.24")) * Decimal("100.0"),
-            )
-        kc_bonus = Decimal("20.0") if bb_inside_kc else Decimal("0.0")
-        macd_vel = Decimal("15.0") if macd_hist_4h > macd_hist_4h_prev else Decimal("0.0")
-        momentum_score = min(HUNDRED, max(ZERO, Decimal("0.70") * base_bw + kc_bonus + macd_vel))
-
-        # Derivatives score
-        deriv_pts = Decimal("50.0")
-        if oi_change_7d is not None and oi_change_7d >= Decimal("0.05"):
-            deriv_pts += Decimal("25.0")
-        if funding is not None and funding <= Decimal("0.00005"):
-            deriv_pts += Decimal("15.0")
-        if taker_buy_ratio_4h >= Decimal("0.52"):
-            deriv_pts += Decimal("10.0")
-        derivatives_score = min(HUNDRED, deriv_pts)
-
-        # Alpha score
-        alpha_pts = Decimal("60.0")
-        if pos_in_range >= Decimal("0.75"):
-            alpha_pts += Decimal("25.0")
-        alpha_score = min(HUNDRED, max(ZERO, alpha_pts))
-
-        # Volume score
-        vol_pts = Decimal("50.0")
-        if rvol_4h >= Decimal("1.25"):
-            vol_pts += Decimal("25.0")
-        if vol_contraction_ratio <= Decimal("0.90"):
-            vol_pts += Decimal("25.0")
-        volume_score = min(HUNDRED, vol_pts)
-
-        raw_score = (
-            Decimal("0.25") * trend_score
-            + Decimal("0.25") * momentum_score
-            + Decimal("0.25") * derivatives_score
-            + Decimal("0.15") * alpha_score
-            + Decimal("0.10") * volume_score
-        ).quantize(Decimal("0.1"))
-
         macro_mult = macro_context.multiplier_for(Direction.LONG)
-        if is_btc_cascade:
-            macro_mult *= Decimal("0.60")
-        final_score = min(HUNDRED, max(ZERO, (raw_score * macro_mult).quantize(Decimal("0.1"))))
+
+        factor_scores = calculate_continuous_long_factor_scores(
+            bandwidth_4h=bandwidth_current,
+            bb_inside_kc=bb_inside_kc,
+            vol_contraction_ratio=vol_contraction_ratio,
+            close=close,
+            poc_30d=poc_price,
+            val_30d=val_price,
+            vah_30d=vah_price,
+            pos_in_range_30d=pos_in_range,
+            ema50_4h=ema50_4h,
+            ema200_4h=ema200_4h,
+            resistance_absorption_score=Decimal(str(absorption_score)),
+            cvd_zscore=Decimal(str(cvd_metrics.cvd_z_score or ZERO)),
+            oi_change_7d=oi_change_7d,
+            oi_change_4h=oi_change,
+            taker_buy_ratio_4h=taker_buy_ratio_4h,
+            funding_rate=funding,
+            ema20_4h=ema20_4h,
+            macd_hist_4h=macd_hist_4h,
+            macd_hist_4h_prev=macd_hist_4h_prev,
+            adx_subscore=adx_subscore,
+            btc_residual_alpha=residual_24h,
+            rvol_4h=rvol_4h,
+            asymmetric_rr=bracket.asymmetric_rr,
+            dist_to_trigger=dist_to_ceiling,
+            macro_multiplier=macro_mult,
+            is_btc_cascade=is_btc_cascade,
+        )
+
+        final_score = factor_scores.final_composite_score
+
+        # 5-Point Institutional Checklist badges
+        checklist_verification = ChecklistVerification(
+            value_acceptance=(close >= poc_price),
+            volatility_structure=(bb_inside_kc or bandwidth_current <= Decimal("0.24")),
+            momentum_alignment=(ema20_4h >= ema50_4h and macd_hist_4h >= macd_hist_4h_prev),
+            volume_microstructure=(vol_contraction_ratio <= Decimal("1.0") or rvol_4h >= Decimal("1.25")),
+            derivatives_positioning=(
+                (oi_change_7d is None or oi_change_7d >= Decimal("0.0"))
+                and taker_buy_ratio_4h >= Decimal("0.51")
+            ),
+        )
 
         # Macro Overextension & Conviction
         coi = Decimal("50.0")
@@ -705,6 +774,7 @@ class CryptoOpportunityScreener:
             archetype=archetype,
             quantitative_score=final_score,
             coi=coi,
+            checklist_passed=checklist_verification.passed_count,
         )
 
         # 3-Tier Conditional Mathematical Expectancy (EV_R) and Grade
@@ -718,6 +788,7 @@ class CryptoOpportunityScreener:
             ev_r=ev_r,
             conviction=conviction,
             asymmetric_rr=bracket.asymmetric_rr,
+            checklist_passed=checklist_verification.passed_count,
         )
         # Universal Invariant 4: Coherent state consistency
         if breakout_status == "HIGH_REJECTION_RISK":
@@ -738,18 +809,6 @@ class CryptoOpportunityScreener:
             rationale.append(f"7d Macro OI Growth: {float(oi_change_7d*100):+.1f}%")
         if is_btc_cascade:
             rationale.append(f"WARNING: BTC Velocity Cascade Active ({float(btc_ret_1h*100):.1f}%) — High Long Risk")
-
-        # 5-Point Institutional Checklist badges
-        checklist_verification = ChecklistVerification(
-            value_acceptance=(close >= poc_price),
-            volatility_structure=(bb_inside_kc or bandwidth_current <= Decimal("0.24")),
-            momentum_alignment=(ema20_4h >= ema50_4h and macd_hist_4h >= macd_hist_4h_prev),
-            volume_microstructure=(vol_contraction_ratio <= Decimal("1.0") or rvol_4h >= Decimal("1.25")),
-            derivatives_positioning=(
-                (oi_change_7d is None or oi_change_7d >= Decimal("0.0"))
-                and taker_buy_ratio_4h >= Decimal("0.51")
-            ),
-        )
 
         checklist = (
             (
@@ -783,14 +842,14 @@ class CryptoOpportunityScreener:
         )
 
         breakdown = CryptoScreenerScoreBreakdown(
-            trend_score=trend_score.quantize(Decimal("0.1")),
-            momentum_score=momentum_score.quantize(Decimal("0.1")),
-            derivatives_score=derivatives_score.quantize(Decimal("0.1")),
-            alpha_score=alpha_score.quantize(Decimal("0.1")),
-            volume_score=volume_score.quantize(Decimal("0.1")),
-            structure_score=alpha_score.quantize(Decimal("0.1")),
-            macro_multiplier=macro_mult.quantize(Decimal("0.01")),
-            final_composite_score=final_score,
+            trend_score=factor_scores.trend_momentum_score,
+            momentum_score=factor_scores.volatility_score,
+            derivatives_score=factor_scores.absorption_score,
+            alpha_score=factor_scores.asymmetry_score,
+            volume_score=factor_scores.volatility_score,
+            structure_score=factor_scores.value_score,
+            macro_multiplier=factor_scores.macro_multiplier,
+            final_composite_score=factor_scores.final_composite_score,
         )
 
         max_size_usd = normalize_quantity(
@@ -970,18 +1029,20 @@ class CryptoOpportunityScreener:
         days_since_30d_high = Decimal(str(bars_since_high)) / Decimal("24")
 
         local_consolidation_low_4h = min(c.low for c in closed_4h[-12:]) if len(closed_4h) >= 12 else close
-        swing_high_4h = max(c.high for c in closed_4h[-12:]) if len(closed_4h) >= 12 else high_24h
+        swing_high_4h = max(c.high for c in (closed_4h[-42:] if len(closed_4h) >= 42 else closed_4h))
 
         # 7. Derivatives positioning & Taker flow
         funding = derivatives.funding_rate if derivatives else None
         oi_change = derivatives.open_interest_change_1h if derivatives else None
         oi_change_7d = derivatives.open_interest_change_7d if derivatives else None
         taker_ratio_calc = taker_buy_ratio_from_candles(closed_1h[-24:] if len(closed_1h) >= 24 else closed_1h)
-        taker_ratio_raw = derivatives.taker_buy_sell_ratio if (derivatives and derivatives.taker_buy_sell_ratio) else taker_ratio_calc
-        if taker_ratio_raw is not None and taker_ratio_raw > Decimal("0.75"):
-            taker_ratio = (taker_ratio_raw / (Decimal("1.0") + taker_ratio_raw)).quantize(Decimal("0.001"))
+        if derivatives and derivatives.taker_buy_sell_ratio is not None:
+            # Binance takerlongshortRatio is B/S ratio -> convert to B/(B+S) share
+            raw_r = derivatives.taker_buy_sell_ratio
+            taker_ratio = (raw_r / (Decimal("1.0") + raw_r)).quantize(Decimal("0.001"))
         else:
-            taker_ratio = taker_ratio_raw
+            # Candle calculation is already B/(B+S) share
+            taker_ratio = taker_ratio_calc
         taker_buy_ratio_24h = taker_ratio if taker_ratio is not None else Decimal("0.5")
 
         # Position in range & run-up
@@ -1079,103 +1140,48 @@ class CryptoOpportunityScreener:
             tick_size=inst.price_tick,
         )
 
-        # 11. Multi-Factor Scoring (0 to 100)
-        # Pillar 1: Trend Score (25% Weight — Regime Adaptive)
+        # 11. Multi-Factor Scoring (0 to 100 via Continuous Short Factor Engine)
         adx_subscore = calculate_adx_subscore(
             archetype, snap_1h.adx14, snap_1h.momentum_reference_adx14, snap_1h.minus_di, snap_1h.plus_di
         )
-        ema_alignment_score = (
-            Decimal("100.0") if close <= ema20_4h <= ema50_4h else (Decimal("75.0") if close <= ema50_4h else Decimal("50.0"))
-        )
-        breakdown_stage_score = (
-            Decimal("95.0") if (close <= ema50_4h and close <= poc_price) else Decimal("65.0")
-        )
-        trend_score = (
-            Decimal("0.40") * ema_alignment_score
-            + Decimal("0.35") * adx_subscore
-            + Decimal("0.25") * breakdown_stage_score
-        )
+        closes_4h_calc = [c.close for c in closed_4h]
+        ema200_4h = ema(closes_4h_calc, 200)[-1] if len(closes_4h_calc) >= 200 else ema50_4h
+        dist_to_trigger = (close - bracket.breakout_trigger) / max(close, Decimal("1e-8"))
+        cvd_val = Decimal(str(quote.cvd_zscore)) if hasattr(quote, "cvd_zscore") and quote.cvd_zscore is not None else Decimal("0.0")
 
-        # Pillar 2: Momentum Score (25% Weight)
-        div_pts = Decimal("40.0") if has_bearish_divergence else (Decimal("20.0") if rsi_4h >= Decimal("65.0") else Decimal("10.0"))
-        macd_accel = Decimal("30.0") if (is_4h_hist_decelerating or macd_hist_4h < ZERO) else Decimal("10.0")
-        climax_pts = Decimal("30.0") * upper_wick_ratio_4h if upper_wick_ratio_4h > ZERO else (Decimal("15.0") if has_climax_wick else Decimal("10.0"))
-        momentum_score = min(HUNDRED, max(ZERO, div_pts + macd_accel + climax_pts))
-
-        # Pillar 3: Derivatives Score (25% Weight)
-        deriv_pts = Decimal("50.0")
-        if funding is not None and funding >= Decimal("0.0001"):
-            deriv_pts += Decimal("25.0")
-        if oi_change_7d is not None and oi_change_7d >= Decimal("0.10"):
-            deriv_pts += Decimal("15.0")
-        if taker_ratio is not None and taker_ratio <= Decimal("0.48"):
-            deriv_pts += Decimal("10.0")
-        derivatives_score = min(HUNDRED, deriv_pts)
-
-        # Pillar 4: Alpha Score (15% Weight)
-        pos_in_range_30d = (close - low_30d) / max(high_30d - low_30d, Decimal("1e-8"))
-        alpha_pts = Decimal("60.0")
-        if pos_in_range_30d >= Decimal("0.65"):
-            alpha_pts += Decimal("25.0")
-        elif pos_in_range_30d <= Decimal("0.45"):
-            alpha_pts += Decimal("15.0")
-        alpha_score = min(HUNDRED, max(ZERO, alpha_pts))
-
-        # Pillar 5: Volume Score (10% Weight)
-        vol_pts = Decimal("50.0")
-        if vol_drying:
-            vol_pts += Decimal("25.0")
-        if has_climax_wick:
-            vol_pts += Decimal("25.0")
-        volume_score = min(HUNDRED, vol_pts)
-
-        raw_score = (
-            Decimal("0.25") * trend_score
-            + Decimal("0.25") * momentum_score
-            + Decimal("0.25") * derivatives_score
-            + Decimal("0.15") * alpha_score
-            + Decimal("0.10") * volume_score
-        ).quantize(Decimal("0.1"))
-
-        macro_mult = macro_context.multiplier_for(Direction.SHORT)
-        if is_btc_cascade:
-            macro_mult *= Decimal("1.15")
-        final_score = min(HUNDRED, max(ZERO, (raw_score * macro_mult).quantize(Decimal("0.1"))))
-
-        # 12. Composite Conviction, 3-Tier EV_R, and Opportunity Grade
-        coi = Decimal("50.0")
-        p_win, conviction = compute_p_win_and_conviction(
-            direction=Direction.SHORT,
-            archetype=archetype,
-            quantitative_score=final_score,
-            coi=coi,
-        )
-        ev_r = compute_3tier_ev_r(
-            p_win=p_win,
-            r_t1=bracket.r_t1,
-            r_t2=bracket.r_t2,
-            r_t3=bracket.r_t3,
-        )
-        grade = classify_opportunity_grade(
-            ev_r=ev_r,
-            conviction=conviction,
+        factor_scores = calculate_continuous_short_factor_scores(
+            bandwidth_4h=bbw_4h[-1] if bbw_4h else Decimal("0.20"),
+            bb_inside_kc=bb_inside_kc,
+            vol_contraction_ratio=vol_contraction_ratio,
+            close=close,
+            poc_30d=poc_price,
+            val_30d=val_price,
+            vah_30d=vah_price,
+            pos_in_range_30d=pos_in_range,
+            ema50_4h=ema50_4h,
+            ema200_4h=ema200_4h,
+            has_bearish_div=has_bearish_divergence,
+            cvd_zscore=cvd_val,
+            oi_change_7d=oi_change_7d,
+            oi_change_4h=oi_change,
+            taker_buy_ratio_4h=taker_buy_ratio_24h,
+            funding_rate=funding,
+            ema20_4h=ema20_4h,
+            macd_hist_4h=macd_hist_4h,
+            macd_hist_4h_prev=macd_hist_4h_prev,
+            adx_subscore=adx_subscore,
+            btc_residual_alpha=residual_24h,
+            rvol_4h=snap_1h.relative_volume,
             asymmetric_rr=bracket.asymmetric_rr,
+            dist_to_trigger=dist_to_trigger,
+            macro_multiplier=macro_context.multiplier_for(Direction.SHORT),
+            is_btc_cascade=is_btc_cascade,
+            upper_wick_ratio_4h=upper_wick_ratio_4h,
         )
 
-        # 13. Rationale Construction
-        rationale: list[str] = [
-            f"Archetype: {archetype.value} | Conviction: {float(conviction):.1f} | Grade: {grade.value}",
-            f"MTF RSI: 1W {float(rsi_1w):.1f} | 1D {float(rsi_1d):.1f} | 4H {float(rsi_4h):.1f}",
-            f"Distribution Ceiling: 30d POC (${float(poc_price):.4f}) | VAH: ${float(vah_price):.4f}",
-        ]
-        if has_bearish_divergence:
-            rationale.append("Confirmed 4H/1D Regular Bearish Divergence (RSI/MACD)")
-        if is_4h_macd_bearish_cross:
-            rationale.append("4H MACD Bearish Crossover Below Signal Line")
-        if is_btc_cascade:
-            rationale.append(f"Macro Tailwind: BTC Flash Dump Active ({float(btc_ret_1h*100):.1f}%)")
+        final_score = factor_scores.final_composite_score
 
-        # 14. 5-Point Institutional Checklist Badges (Section 8)
+        # 12. 5-Point Institutional Checklist Badges (Section 8)
         track_a_pass = (
             (pos_in_range >= Decimal("0.65"))
             and (close <= high_24h - Decimal("0.50") * atr14)
@@ -1207,6 +1213,41 @@ class CryptoOpportunityScreener:
             volume_microstructure=bool(upper_wick_ratio_4h >= Decimal("0.45") or taker_buy_ratio_24h <= Decimal("0.47")),
             derivatives_positioning=bool(trapped_longs_check or squeeze_flush_check or (funding is None or funding >= ZERO)),
         )
+
+        # 13. Composite Conviction, 3-Tier EV_R, and Opportunity Grade
+        coi = Decimal("50.0")
+        p_win, conviction = compute_p_win_and_conviction(
+            direction=Direction.SHORT,
+            archetype=archetype,
+            quantitative_score=final_score,
+            coi=coi,
+            checklist_passed=checklist_verification.passed_count,
+        )
+        ev_r = compute_3tier_ev_r(
+            p_win=p_win,
+            r_t1=bracket.r_t1,
+            r_t2=bracket.r_t2,
+            r_t3=bracket.r_t3,
+        )
+        grade = classify_opportunity_grade(
+            ev_r=ev_r,
+            conviction=conviction,
+            asymmetric_rr=bracket.asymmetric_rr,
+            checklist_passed=checklist_verification.passed_count,
+        )
+
+        # 14. Rationale Construction
+        rationale: list[str] = [
+            f"Archetype: {archetype.value} | Conviction: {float(conviction):.1f} | Grade: {grade.value}",
+            f"MTF RSI: 1W {float(rsi_1w):.1f} | 1D {float(rsi_1d):.1f} | 4H {float(rsi_4h):.1f}",
+            f"Distribution Ceiling: 30d POC (${float(poc_price):.4f}) | VAH: ${float(vah_price):.4f}",
+        ]
+        if has_bearish_divergence:
+            rationale.append("Confirmed 4H/1D Regular Bearish Divergence (RSI/MACD)")
+        if is_4h_macd_bearish_cross:
+            rationale.append("4H MACD Bearish Crossover Below Signal Line")
+        if is_btc_cascade:
+            rationale.append(f"Macro Tailwind: BTC Flash Dump Active ({float(btc_ret_1h*100):.1f}%)")
 
         mtf_desc = "Overbought/Rollover" if mtf_rsi_count >= 1 else "Normal Range"
         div_desc = "Confirmed 4H/1D Bearish Divergence (RSI & MACD)" if has_bearish_divergence else "Momentum decelerating into resistance"
@@ -1246,14 +1287,14 @@ class CryptoOpportunityScreener:
         )
 
         breakdown = CryptoScreenerScoreBreakdown(
-            trend_score=trend_score.quantize(Decimal("0.1")),
-            momentum_score=momentum_score.quantize(Decimal("0.1")),
-            derivatives_score=derivatives_score.quantize(Decimal("0.1")),
-            alpha_score=alpha_score.quantize(Decimal("0.1")),
-            volume_score=volume_score.quantize(Decimal("0.1")),
-            structure_score=alpha_score.quantize(Decimal("0.1")),
-            macro_multiplier=macro_mult.quantize(Decimal("0.01")),
-            final_composite_score=final_score,
+            trend_score=factor_scores.trend_breakdown_score,
+            momentum_score=factor_scores.volatility_score,
+            derivatives_score=factor_scores.distribution_score,
+            alpha_score=factor_scores.asymmetry_score,
+            volume_score=factor_scores.volatility_score,
+            structure_score=factor_scores.value_rejection_score,
+            macro_multiplier=factor_scores.macro_multiplier,
+            final_composite_score=factor_scores.final_composite_score,
         )
 
         cvd_metrics = cumulative_volume_delta_metrics(closed_1h, lookback_window=24)

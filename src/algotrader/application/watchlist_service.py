@@ -33,10 +33,15 @@ class WatchlistService:
         self._ensure_table()
         self._seed_if_empty()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _get_connection(self):
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _ensure_table(self) -> None:
         with self._lock, self._get_connection() as conn:

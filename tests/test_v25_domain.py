@@ -25,8 +25,10 @@ from algotrader.domain.liquidity import SymbolLiquidityMetrics, compute_ili_rank
 from algotrader.domain.models import Candle, Direction
 from algotrader.domain.precision import normalize_price, normalize_quantity
 from algotrader.domain.scoring import (
+    LongContinuousFactorScores,
     OpportunityGrade,
     calculate_adx_subscore,
+    calculate_continuous_long_factor_scores,
     classify_opportunity_grade,
     compute_3tier_ev_r,
     compute_p_win_and_conviction,
@@ -245,6 +247,64 @@ def test_classify_momentum_emerging_long() -> None:
         taker_buy_ratio_4h=Decimal("0.54"),  # >= 0.535
     )
     assert classify_long_archetype(features) == SetupLabel.MOMENTUM_EMERGING_LONG
+
+
+def test_classify_vcp_compression_long() -> None:
+    features = LongArchetypeFeatures(
+        close=Decimal("100.00"),
+        low_24h=Decimal("99.50"),
+        ema50_4h=Decimal("99.00"),
+        poc_30d=Decimal("99.00"),
+        vah_30d=Decimal("102.00"),
+        atr14_4h=Decimal("2.00"),
+        vcr_4h=Decimal("0.85"),  # Supply dry-up <= 0.92
+        oi_delta_7d=Decimal("0.02"),
+        oi_delta_4h=Decimal("0.01"),
+        ret_7d=Decimal("0.02"),
+        bb_inside_kc_4h=True,  # Compressed Carter Squeeze
+        bb_bandwidth_4h=Decimal("0.12"),
+        local_swing_high_4h=Decimal("101.50"),
+        rvol_4h=Decimal("0.95"),
+        norm_momentum_1h=Decimal("0.1"),
+        btc_residual_alpha_24h=Decimal("0.01"),
+        macd_hist_4h=Decimal("0.08"),  # Mom up
+        macd_hist_4h_prev=Decimal("0.03"),
+        macd_hist_1h=Decimal("0.02"),
+        taker_buy_ratio_4h=Decimal("0.52"),
+        range_height_30d=Decimal("0.22"),  # Tight VCP base <= 0.35
+        pos_in_range_30d=Decimal("0.75"),  # Launchpad upper half >= 0.50
+        dist_to_ceiling=Decimal("0.05"),  # Within 5% of ceiling <= 0.15
+    )
+    assert classify_long_archetype(features) == SetupLabel.VCP_COMPRESSION_LONG
+
+
+def test_classify_range_bottom_accumulation_long() -> None:
+    features = LongArchetypeFeatures(
+        close=Decimal("100.00"),
+        low_24h=Decimal("99.00"),
+        ema50_4h=Decimal("99.50"),
+        poc_30d=Decimal("99.00"),
+        vah_30d=Decimal("105.00"),
+        atr14_4h=Decimal("2.00"),
+        vcr_4h=Decimal("0.92"),  # Supply dry-up <= 0.95
+        oi_delta_7d=Decimal("-0.01"),
+        oi_delta_4h=Decimal("0.005"),
+        ret_7d=Decimal("0.01"),
+        bb_inside_kc_4h=True,
+        bb_bandwidth_4h=Decimal("0.16"),
+        local_swing_high_4h=Decimal("103.00"),
+        rvol_4h=Decimal("0.90"),
+        norm_momentum_1h=Decimal("0.1"),
+        btc_residual_alpha_24h=Decimal("0.01"),
+        macd_hist_4h=Decimal("0.05"),
+        macd_hist_4h_prev=Decimal("0.02"),
+        macd_hist_1h=Decimal("0.01"),
+        taker_buy_ratio_4h=Decimal("0.51"),
+        range_height_30d=Decimal("0.38"),  # <= 0.42
+        pos_in_range_30d=Decimal("0.60"),
+        dist_to_ceiling=Decimal("0.12"),  # <= 0.16
+    )
+    assert classify_long_archetype(features) == SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
 
 
 # =====================================================================
@@ -624,3 +684,259 @@ def test_dual_loop_scheduler_timing() -> None:
     assert target_macro.hour == 8
     assert target_macro.minute == 0
     assert target_macro.second == 30
+
+
+# =====================================================================
+# 10. Continuous Multi-Factor Quant Scoring Engine
+# =====================================================================
+
+
+def test_continuous_long_factor_scores_tight_compression() -> None:
+    factors = calculate_continuous_long_factor_scores(
+        bandwidth_4h=Decimal("0.09"),
+        bb_inside_kc=True,
+        vol_contraction_ratio=Decimal("0.85"),
+        close=Decimal("100.00"),
+        poc_30d=Decimal("99.50"),
+        val_30d=Decimal("95.00"),
+        vah_30d=Decimal("103.00"),
+        pos_in_range_30d=Decimal("0.70"),
+        ema50_4h=Decimal("98.00"),
+        ema200_4h=Decimal("92.00"),
+        resistance_absorption_score=Decimal("80.0"),
+        cvd_zscore=Decimal("1.2"),
+        oi_change_7d=Decimal("0.15"),
+        oi_change_4h=Decimal("0.02"),
+        taker_buy_ratio_4h=Decimal("0.54"),
+        funding_rate=Decimal("0.00002"),
+        ema20_4h=Decimal("99.00"),
+        macd_hist_4h=Decimal("0.10"),
+        macd_hist_4h_prev=Decimal("0.05"),
+        adx_subscore=Decimal("80.0"),
+        btc_residual_alpha=Decimal("0.02"),
+        rvol_4h=Decimal("1.10"),
+        asymmetric_rr=Decimal("3.20"),
+        dist_to_trigger=Decimal("0.03"),
+        macro_multiplier=Decimal("1.0"),
+    )
+    assert factors.volatility_score == Decimal("100.0")
+    assert factors.value_score >= Decimal("80.0")
+    assert factors.absorption_score >= Decimal("80.0")
+    assert factors.trend_momentum_score >= Decimal("75.0")
+    assert factors.asymmetry_score >= Decimal("90.0")
+    assert factors.final_composite_score >= Decimal("80.0")
+
+
+def test_continuous_long_factor_scores_breakout_expansion() -> None:
+    factors = calculate_continuous_long_factor_scores(
+        bandwidth_4h=Decimal("0.25"),
+        bb_inside_kc=False,
+        vol_contraction_ratio=Decimal("1.20"),
+        close=Decimal("105.00"),
+        poc_30d=Decimal("98.00"),
+        val_30d=Decimal("94.00"),
+        vah_30d=Decimal("104.00"),
+        pos_in_range_30d=Decimal("0.95"),
+        ema50_4h=Decimal("97.00"),
+        ema200_4h=Decimal("90.00"),
+        resistance_absorption_score=Decimal("85.0"),
+        cvd_zscore=Decimal("2.1"),
+        oi_change_7d=Decimal("0.05"),
+        oi_change_4h=Decimal("0.02"),
+        taker_buy_ratio_4h=Decimal("0.56"),
+        funding_rate=Decimal("0.00003"),
+        ema20_4h=Decimal("101.00"),
+        macd_hist_4h=Decimal("0.25"),
+        macd_hist_4h_prev=Decimal("0.12"),
+        adx_subscore=Decimal("85.0"),
+        btc_residual_alpha=Decimal("0.04"),
+        rvol_4h=Decimal("2.50"),
+        asymmetric_rr=Decimal("2.80"),
+        dist_to_trigger=Decimal("0.01"),
+        macro_multiplier=Decimal("1.0"),
+    )
+    assert factors.trend_momentum_score >= Decimal("85.0")
+    assert factors.value_score >= Decimal("85.0")
+    assert factors.asymmetry_score >= Decimal("85.0")
+    assert factors.final_composite_score >= Decimal("75.0")
+
+
+def test_qusdt_anomaly_prevention_and_short_squeeze_long() -> None:
+    """Verify that an asset like QUSDT with negative funding, surging OI, and positive taker flow
+
+    is strictly VETOED as a Short and correctly classified as a SHORT_SQUEEZE_ABSORPTION_LONG.
+    """
+    # 1. Verify Short Gate Hard Veto
+    short_inputs = ShortGateInputs(
+        close=Decimal("0.0502"),
+        ema50_4h=Decimal("0.0485"),
+        high_7d=Decimal("0.0560"),
+        range_height_30d=Decimal("0.85"),
+        ret_7d=Decimal("0.25"),
+        ret_14d=Decimal("0.45"),
+        high_30d=Decimal("0.0560"),
+        low_30d=Decimal("0.0210"),
+        days_since_30d_high=Decimal("1.0"),
+        ema20_4h=Decimal("0.0495"),
+        atr14_4h=Decimal("0.0025"),
+        ret_24h=Decimal("0.08"),
+        rsi_1h=Decimal("72.0"),
+        rsi_4h=Decimal("87.0"),
+        has_bearish_div=False,
+        has_climax_blowoff=True,
+        poc_30d=Decimal("0.0509"),
+        macd_hist_4h=Decimal("0.001"),
+        taker_buy_ratio_24h=Decimal("0.517"),
+        funding_rate_8h=Decimal("-0.000093"),  # -0.93 bps (shorts paying longs)
+        oi_delta_7d=Decimal("3.71"),  # +371%
+        oi_delta_1h=Decimal("0.0546"),  # +5.46%
+        taker_buy_ratio_1h=Decimal("0.52"),
+        high_24h=Decimal("0.0560"),
+        rsi_1d=Decimal("93.5"),
+    )
+    passed_short, gate_details = evaluate_short_gates(short_inputs, SetupLabel.EXHAUSTION_REVERSAL_SHORT)
+    # MUST BE VETOED!
+    assert not passed_short
+
+    # 2. Verify Long Archetype Classification
+    long_features = LongArchetypeFeatures(
+        close=Decimal("0.0502"),
+        low_24h=Decimal("0.0480"),
+        ema50_4h=Decimal("0.0485"),
+        poc_30d=Decimal("0.0509"),
+        vah_30d=Decimal("0.0540"),
+        atr14_4h=Decimal("0.0025"),
+        vcr_4h=Decimal("0.85"),
+        oi_delta_7d=Decimal("3.71"),
+        oi_delta_4h=Decimal("0.12"),
+        ret_7d=Decimal("0.25"),
+        bb_inside_kc_4h=True,
+        bb_bandwidth_4h=Decimal("0.18"),
+        local_swing_high_4h=Decimal("0.0530"),
+        rvol_4h=Decimal("1.85"),
+        norm_momentum_1h=Decimal("0.65"),
+        btc_residual_alpha_24h=Decimal("0.05"),
+        macd_hist_4h=Decimal("0.001"),
+        macd_hist_4h_prev=Decimal("0.0005"),
+        macd_hist_1h=Decimal("0.0008"),
+        taker_buy_ratio_4h=Decimal("0.517"),
+        funding_rate_8h=Decimal("-0.000093"),
+        cvd_24h=Decimal("519412462"),
+    )
+    arch = classify_long_archetype(long_features)
+    assert arch == SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG
+
+    # 3. Verify Long Gate Evaluation
+    long_inputs = LongGateInputs(
+        close=Decimal("0.0502"),
+        ema50_4h=Decimal("0.0485"),
+        ema20_1h=Decimal("0.0498"),
+        ema200_4h=Decimal("0.0420"),
+        low_24h=Decimal("0.0480"),
+        atr14_4h=Decimal("0.0025"),
+        vcr_4h=Decimal("0.85"),
+        ema20_4h=Decimal("0.0495"),
+        excursion_72h=Decimal("0.20"),
+        ret_24h=Decimal("0.05"),
+        rsi_1h=Decimal("65.0"),
+        rsi_4h=Decimal("68.0"),
+        high_30d=Decimal("0.0560"),
+        low_30d=Decimal("0.0210"),
+        poc_30d=Decimal("0.0509"),
+        val_30d=Decimal("0.0350"),
+        vah_30d=Decimal("0.0540"),
+        bb_inside_kc_4h=True,
+        bb_bandwidth_4h=Decimal("0.18"),
+        rvol_4h=Decimal("1.85"),
+        oi_delta_7d=Decimal("3.71"),
+        oi_delta_4h=Decimal("0.12"),
+        taker_buy_ratio_4h=Decimal("0.517"),
+        funding_rate_8h=Decimal("-0.000093"),
+    )
+    passed_long, details = evaluate_long_gates(long_inputs, SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG)
+    assert passed_long
+    assert all(details.values())
+
+
+def test_multi_system_confluence_scoring_and_penalization() -> None:
+    """Verify that candidate scoring rewards broad multi-system harmony and penalizes 1-2 system wonders."""
+    # Candidate A: Balanced 5-system institutional confluence
+    balanced = calculate_continuous_long_factor_scores(
+        bandwidth_4h=Decimal("0.10"),
+        bb_inside_kc=True,
+        vol_contraction_ratio=Decimal("0.85"),
+        close=Decimal("100.0"),
+        poc_30d=Decimal("99.0"),
+        val_30d=Decimal("94.0"),
+        vah_30d=Decimal("103.0"),
+        pos_in_range_30d=Decimal("0.75"),
+        ema50_4h=Decimal("96.0"),
+        ema200_4h=Decimal("90.0"),
+        resistance_absorption_score=Decimal("80.0"),
+        cvd_zscore=Decimal("1.5"),
+        oi_change_7d=Decimal("0.10"),
+        oi_change_4h=Decimal("0.02"),
+        taker_buy_ratio_4h=Decimal("0.55"),
+        funding_rate=Decimal("0.00002"),
+        ema20_4h=Decimal("98.0"),
+        macd_hist_4h=Decimal("0.15"),
+        macd_hist_4h_prev=Decimal("0.05"),
+        adx_subscore=Decimal("75.0"),
+        btc_residual_alpha=Decimal("0.03"),
+        rvol_4h=Decimal("1.20"),
+        asymmetric_rr=Decimal("3.0"),
+        dist_to_trigger=Decimal("0.02"),
+        macro_multiplier=Decimal("1.0"),
+    )
+
+    # Candidate B: Lopsided 2-system wonder (Extreme squeeze & R:R, but failing structure & negative CVD)
+    lopsided = calculate_continuous_long_factor_scores(
+        bandwidth_4h=Decimal("0.08"),
+        bb_inside_kc=True,
+        vol_contraction_ratio=Decimal("0.70"),
+        close=Decimal("92.0"),  # Below POC and VAL
+        poc_30d=Decimal("98.0"),
+        val_30d=Decimal("95.0"),
+        vah_30d=Decimal("103.0"),
+        pos_in_range_30d=Decimal("0.15"),
+        ema50_4h=Decimal("97.0"),  # Below EMA50
+        ema200_4h=Decimal("105.0"),
+        resistance_absorption_score=Decimal("20.0"),  # Hostile resistance
+        cvd_zscore=Decimal("-2.5"),  # Aggressive selling
+        oi_change_7d=Decimal("-0.20"),
+        oi_change_4h=Decimal("-0.05"),
+        taker_buy_ratio_4h=Decimal("0.38"),
+        funding_rate=Decimal("0.00030"),
+        ema20_4h=Decimal("93.0"),
+        macd_hist_4h=Decimal("-0.40"),
+        macd_hist_4h_prev=Decimal("-0.20"),
+        adx_subscore=Decimal("25.0"),
+        btc_residual_alpha=Decimal("-0.08"),
+        rvol_4h=Decimal("0.40"),
+        asymmetric_rr=Decimal("3.5"),  # Huge theoretical R:R
+        dist_to_trigger=Decimal("0.02"),
+        macro_multiplier=Decimal("1.0"),
+    )
+
+    # Balanced candidate must significantly outscore lopsided 2-system candidate
+    assert balanced.final_composite_score >= Decimal("80.0")
+    assert lopsided.final_composite_score < Decimal("55.0")
+    assert balanced.final_composite_score > lopsided.final_composite_score + Decimal("25.0")
+
+    # Checklist institutional consensus weighting
+    _, conv_5sys = compute_p_win_and_conviction(
+        direction=Direction.LONG,
+        archetype=SetupLabel.COIL_SPRING_LONG,
+        quantitative_score=Decimal("80.0"),
+        checklist_passed=5,
+    )
+    _, conv_1sys = compute_p_win_and_conviction(
+        direction=Direction.LONG,
+        archetype=SetupLabel.COIL_SPRING_LONG,
+        quantitative_score=Decimal("80.0"),
+        checklist_passed=1,
+    )
+    assert conv_5sys > conv_1sys + Decimal("7.0")
+
+
+

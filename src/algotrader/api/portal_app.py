@@ -40,6 +40,11 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok", "service": "atlas-portal-api"}
 
 
+@app.get("/readyz")
+async def readyz() -> dict[str, str]:
+    return {"status": "ready", "service": "atlas-portal-api"}
+
+
 def main() -> None:
     print("=" * 70)
     print("🚀 Starting Atlas Institutional Portal Backend on http://127.0.0.1:8000")

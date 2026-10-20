@@ -25,6 +25,8 @@ class ExecutionBracket:
     r_t3: Decimal
     asymmetric_rr: Decimal
     execution_mode: str = "RETEST_ACCUMULATION"
+    retest_stop: Decimal = Decimal("0")
+    breakout_stop: Decimal = Decimal("0")
 
 
 def build_long_bracket(
@@ -124,28 +126,36 @@ def build_long_bracket(
     # Invariant 2: Minimum Structural Stop Distance for Retest Entry
     min_retest_risk = max(Decimal("1.20") * atr, retest_entry * Decimal("0.035"))
     raw_stop = min(
-        swing_low_4h - Decimal("0.35") * atr,
-        effective_val - Decimal("0.20") * atr,
+        swing_low_4h - Decimal("0.80") * atr,
+        effective_val - Decimal("0.60") * atr,
         retest_entry - min_retest_risk,
     )
-    invalidation_stop = floor_to_increment(raw_stop, tick_size)
-    if invalidation_stop >= retest_entry:
-        invalidation_stop = floor_to_increment(retest_entry - min_retest_risk, tick_size)
-    if invalidation_stop >= retest_entry:
-        invalidation_stop = floor_to_increment(retest_entry - tick_size, tick_size)
+
+    retest_stop = floor_to_increment(raw_stop, tick_size)
+    if retest_stop >= retest_entry:
+        retest_stop = floor_to_increment(retest_entry - min_retest_risk, tick_size)
+    if retest_stop >= retest_entry:
+        retest_stop = floor_to_increment(retest_entry - tick_size, tick_size)
 
     # Invariant 1: Unified Entry/Stop Anchor for R:R and EV_R
     if execution_mode == "CEILING_BREAKOUT":
         effective_entry = breakout_trigger
-        structural_shelf = max(ema50_4h, poc_30d)
-        min_breakout_risk = max(Decimal("1.0") * atr, effective_entry * Decimal("0.030"))
-        raw_breakout_stop = min(structural_shelf - Decimal("0.35") * atr, effective_entry - min_breakout_risk)
-        effective_stop = floor_to_increment(raw_breakout_stop, tick_size)
-        if effective_stop >= effective_entry:
-            effective_stop = floor_to_increment(effective_entry - min_breakout_risk, tick_size)
-        if effective_stop >= effective_entry:
-            effective_stop = floor_to_increment(effective_entry - tick_size, tick_size)
+        min_breakout_risk = max(Decimal("1.0") * atr, effective_entry * Decimal("0.025"))
+        max_breakout_risk = max(Decimal("3.0") * atr, effective_entry * Decimal("0.080"))
 
+        # Minervini Pivot Handle Stop: anchor to local consolidation handle swing low
+        handle_stop = swing_low_4h - Decimal("0.20") * atr
+        raw_breakout_stop = max(
+            min(handle_stop, effective_entry - min_breakout_risk),
+            effective_entry - max_breakout_risk,
+        )
+        breakout_stop = floor_to_increment(raw_breakout_stop, tick_size)
+        if breakout_stop >= effective_entry:
+            breakout_stop = floor_to_increment(effective_entry - min_breakout_risk, tick_size)
+        if breakout_stop >= effective_entry:
+            breakout_stop = floor_to_increment(effective_entry - tick_size, tick_size)
+
+        effective_stop = breakout_stop
         risk_unit = max(effective_entry - effective_stop, min_breakout_risk)
         risk_unit = max(risk_unit, EPSILON)
 
@@ -158,14 +168,34 @@ def build_long_bracket(
         if t3 <= t2:
             t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
 
-        invalidation_stop = effective_stop
         suggested_entry = min(close, retest_entry)
+        invalidation_stop = retest_stop
+        if invalidation_stop >= suggested_entry:
+            invalidation_stop = floor_to_increment(suggested_entry - min_retest_risk, tick_size)
+        if invalidation_stop >= suggested_entry:
+            invalidation_stop = floor_to_increment(suggested_entry - tick_size, tick_size)
     else:
         effective_entry = retest_entry
-        effective_stop = invalidation_stop
+        effective_stop = retest_stop
+        invalidation_stop = retest_stop
+        breakout_stop = floor_to_increment(breakout_trigger - max(Decimal("1.0") * atr, breakout_trigger * Decimal("0.025")), tick_size)
         risk_unit = max(effective_entry - effective_stop, min_retest_risk)
         risk_unit = max(risk_unit, EPSILON)
+
+        # Scale targets above effective_entry so asymmetric upside is guaranteed
+        t1 = max(t1, normalize_price(effective_entry + Decimal("1.50") * risk_unit, tick_size))
+        t2 = max(t2, normalize_price(effective_entry + Decimal("2.50") * risk_unit, tick_size))
+        t3 = max(t3, normalize_price(effective_entry + Decimal("3.80") * risk_unit, tick_size))
+        if t2 <= t1:
+            t2 = normalize_price(t1 + max(tick_size, atr * Decimal("0.5")), tick_size)
+        if t3 <= t2:
+            t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
+
         suggested_entry = min(close, retest_entry)
+        if invalidation_stop >= suggested_entry:
+            invalidation_stop = floor_to_increment(suggested_entry - min_retest_risk, tick_size)
+        if invalidation_stop >= suggested_entry:
+            invalidation_stop = floor_to_increment(suggested_entry - tick_size, tick_size)
 
     # Compute r_t1, r_t2, r_t3, asymmetric_rr strictly from unified effective_entry and risk_unit
     r_t1 = (abs(t1 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
@@ -191,6 +221,8 @@ def build_long_bracket(
         r_t3=r_t3,
         asymmetric_rr=asymmetric_rr,
         execution_mode=execution_mode,
+        retest_stop=retest_stop,
+        breakout_stop=breakout_stop,
     )
 
 
@@ -219,8 +251,8 @@ def build_short_bracket(
     # Invariant 2: Symmetric structural stop distance for SHORT setup
     min_short_risk = max(Decimal("1.20") * atr, raw_retest_entry * Decimal("0.035"))
     raw_invalidation_stop = max(
-        swing_high_4h + Decimal("0.35") * atr,
-        vah_30d + Decimal("0.20") * atr,
+        swing_high_4h + Decimal("0.80") * atr,
+        vah_30d + Decimal("0.60") * atr,
         raw_retest_entry + min_short_risk,
     )
     if raw_invalidation_stop <= raw_retest_entry:
@@ -280,6 +312,10 @@ def build_short_bracket(
         suggested_entry = normalize_price(invalidation_stop - tick_size, tick_size)
     if suggested_entry < close:
         suggested_entry = normalize_price(close + tick_size, tick_size)
+    if invalidation_stop <= suggested_entry:
+        invalidation_stop = normalize_price(suggested_entry + min_short_risk, tick_size)
+    if invalidation_stop <= suggested_entry:
+        invalidation_stop = normalize_price(suggested_entry + tick_size, tick_size)
 
     risk_unit = max(invalidation_stop - effective_entry, min_short_risk)
     risk_unit = max(risk_unit, EPSILON)
@@ -306,4 +342,7 @@ def build_short_bracket(
         r_t2=r_t2,
         r_t3=r_t3,
         asymmetric_rr=asymmetric_rr,
+        execution_mode="WAIT_FOR_RETEST_ONLY" if close < primary_ceiling else "RETEST_ACCUMULATION",
+        retest_stop=invalidation_stop,
+        breakout_stop=normalize_price(breakout_trigger + max(Decimal("1.0") * atr, breakout_trigger * Decimal("0.025")), tick_size),
     )

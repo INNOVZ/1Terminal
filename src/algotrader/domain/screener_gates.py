@@ -140,6 +140,22 @@ def evaluate_long_gates(s: GateEvaluationInput, archetype: str) -> tuple[bool, s
 
 
 def evaluate_short_gates(s: GateEvaluationInput) -> tuple[bool, str | None]:
+    # Anti-Squeeze & Trend Circuit Breaker
+    funding_8h = s.funding_rate_8h or 0.0
+    oi_7d = s.oi_delta_7d or 0.0
+    oi_1h = s.oi_delta_1h or 0.0
+    taker_24h = s.taker_buy_ratio_24h or 0.5
+    if (
+        s.funding_rate_8h is not None
+        and funding_8h < 0.0
+        and (oi_7d >= 0.10)
+        and (s.oi_delta_1h is None or oi_1h >= 0.0 or taker_24h >= 0.50)
+        and s.close >= s.ema50_4h * 0.975
+    ):
+        return False, "REJECT_ANTI_SQUEEZE_NEGATIVE_FUNDING"
+    if taker_24h >= 0.51 and not s.has_4h_bearish_rsi_div and s.close >= s.ema50_4h:
+        return False, "REJECT_ANTI_SQUEEZE_BUYER_DOMINANCE"
+
     # Gate S1: Mandatory Macro Run-Up
     ema50_peak_excursion = (s.high_7d - s.ema50_4h) / max(s.ema50_4h, 1e-8)
     s1_pass = (s.runup_30d >= 0.35) or (s.ret_14d >= 0.22 and ema50_peak_excursion >= 0.15)
