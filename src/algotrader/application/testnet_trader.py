@@ -205,13 +205,22 @@ class TestnetTrader:
     async def get_open_orders(self) -> list[dict[str, Any]]:
         client = self._get_client()
         await client.sync_clock("/fapi/v1/time")
+        orders: list[dict[str, Any]] = []
         try:
             res = await client.request("GET", "/fapi/v1/openOrders", signed=True)
             if isinstance(res, list):
-                return res
+                orders.extend(res)
         except Exception as exc:
             log.warning("testnet_open_orders_query_failed", error=str(exc))
-        return []
+
+        try:
+            algo_res = await client.request("GET", "/fapi/v1/openAlgoOrders", signed=True)
+            if isinstance(algo_res, list):
+                orders.extend(algo_res)
+        except Exception as exc:
+            log.warning("testnet_open_algo_orders_query_failed", error=str(exc))
+
+        return orders
 
     async def get_status(self) -> dict[str, Any]:
         balance = await self.get_account_balance()
@@ -318,43 +327,43 @@ class TestnetTrader:
             log.error("entry_order_failed", symbol=symbol, error=str(exc))
             return None
 
-        # 3. Place Stop Loss Protection (closePosition=true)
+        # 3. Place Stop Loss Protection (via Binance Futures Algo Order API)
         sl_order_id = None
         try:
             sl_params = {
+                "algoType": "CONDITIONAL",
                 "symbol": symbol,
                 "side": exit_side,
                 "positionSide": pos_side,
                 "type": "STOP_MARKET",
-                "stopPrice": str(dec_stop),
-                "closePosition": "true",
+                "triggerPrice": str(dec_stop),
+                "quantity": str(dec_qty),
                 "workingType": "MARK_PRICE",
-                "priceProtect": "true",
-                "newClientOrderId": f"atl-{trade_id[:12]}-sl",
+                "newClientAlgoId": f"atl-{trade_id[:12]}-sl",
             }
-            sl_resp = await client.request("POST", "/fapi/v1/order", params=sl_params, signed=True)
-            sl_order_id = sl_resp.get("orderId") if isinstance(sl_resp, dict) else None
+            sl_resp = await client.request("POST", "/fapi/v1/algoOrder", params=sl_params, signed=True)
+            sl_order_id = sl_resp.get("algoId") if isinstance(sl_resp, dict) else None
         except Exception as sl_err:
-            log.warning("sl_order_failed", symbol=symbol, error=str(sl_err))
+            log.warning("sl_algo_order_failed", symbol=symbol, error=str(sl_err))
 
-        # 4. Place Take Profit Protection (closePosition=true)
+        # 4. Place Take Profit Protection (via Binance Futures Algo Order API)
         tp_order_id = None
         try:
             tp_params = {
+                "algoType": "CONDITIONAL",
                 "symbol": symbol,
                 "side": exit_side,
                 "positionSide": pos_side,
                 "type": "TAKE_PROFIT_MARKET",
-                "stopPrice": str(dec_target),
-                "closePosition": "true",
+                "triggerPrice": str(dec_target),
+                "quantity": str(dec_qty),
                 "workingType": "MARK_PRICE",
-                "priceProtect": "true",
-                "newClientOrderId": f"atl-{trade_id[:12]}-tp",
+                "newClientAlgoId": f"atl-{trade_id[:12]}-tp",
             }
-            tp_resp = await client.request("POST", "/fapi/v1/order", params=tp_params, signed=True)
-            tp_order_id = tp_resp.get("orderId") if isinstance(tp_resp, dict) else None
+            tp_resp = await client.request("POST", "/fapi/v1/algoOrder", params=tp_params, signed=True)
+            tp_order_id = tp_resp.get("algoId") if isinstance(tp_resp, dict) else None
         except Exception as tp_err:
-            log.warning("tp_order_failed", symbol=symbol, error=str(tp_err))
+            log.warning("tp_algo_order_failed", symbol=symbol, error=str(tp_err))
 
         trade_record = {
             "trade_id": trade_id,
@@ -362,7 +371,7 @@ class TestnetTrader:
             "symbol": symbol,
             "direction": direction,
             "setup_label": candidate.get("setup_label", "INSTITUTIONAL_SETUP"),
-            "conviction_score": float(candidate.get("conviction") or candidate.get("score") or 0.0),
+            "conviction_score": float(candidate.get("score") if candidate.get("score") is not None else (candidate.get("conviction") or 0.0)),
             "entry_price": float(dec_entry),
             "stop_loss": float(dec_stop),
             "take_profit": float(dec_target),
@@ -386,6 +395,8 @@ class TestnetTrader:
             entry=float(dec_entry),
             notional=float(actual_notional),
             entry_order_id=entry_order_id,
+            sl_order_id=sl_order_id,
+            tp_order_id=tp_order_id,
         )
         return trade_record
 
@@ -409,7 +420,9 @@ class TestnetTrader:
             # Filter candidates for top conviction
             qualifying: list[dict[str, Any]] = []
             for opp in opportunities:
-                score = float(opp.get("conviction") or opp.get("score") or 0.0)
+                raw_score = opp.get("score")
+                raw_conviction = opp.get("conviction")
+                score = float(raw_score if raw_score is not None else (raw_conviction or 0.0))
                 rr = float(opp.get("risk_reward_ratio") or 0.0)
                 symbol = str(opp.get("symbol", "")).upper()
 
@@ -422,9 +435,12 @@ class TestnetTrader:
 
                 qualifying.append(opp)
 
-            # Sort descending by conviction score
+            # Sort descending by institutional score, then by risk:reward ratio
             qualifying.sort(
-                key=lambda o: float(o.get("conviction") or o.get("score") or 0.0),
+                key=lambda o: (
+                    float(o.get("score") if o.get("score") is not None else (o.get("conviction") or 0.0)),
+                    float(o.get("risk_reward_ratio") or 0.0),
+                ),
                 reverse=True,
             )
 
