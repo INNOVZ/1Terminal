@@ -340,14 +340,14 @@ async def trigger_screener_rescan(
     return await get_live_screener(mode=mode, min_score=min_score, max_symbols=max_symbols, scope=scope, refresh=True, wait=True)
 
 
-# --- Automated 1-Hour Screener Cron Service ---
+# --- Automated 4-Hour Screener Cron Service ---
 _cron_task: asyncio.Task[None] | None = None
 _last_cron_run: datetime | None = None
 _next_cron_run: datetime | None = None
 
 
-def seconds_until_next_cycle(now: datetime, interval_hours: int = 1, grace_seconds: int = 30) -> float:
-    """Calculates seconds until the next aligned UTC cycle (e.g., at XX:00:30 UTC for 1H)."""
+def seconds_until_next_cycle(now: datetime, interval_hours: int = 4, grace_seconds: int = 30) -> float:
+    """Calculates seconds until the next aligned UTC cycle (e.g., at 00:00:30, 04:00:30, 08:00:30 UTC for 4H)."""
     utc_now = now.astimezone(UTC)
     boundary_hour = (utc_now.hour // interval_hours) * interval_hours
     boundary = utc_now.replace(hour=boundary_hour, minute=0, second=0, microsecond=0)
@@ -361,7 +361,7 @@ def seconds_until_next_cycle(now: datetime, interval_hours: int = 1, grace_secon
 seconds_until_next_8h_cycle = seconds_until_next_cycle
 
 
-async def _screener_cron_loop(interval_hours: int = 1) -> None:
+async def _screener_cron_loop(interval_hours: int = 4) -> None:
     global _last_cron_run, _next_cron_run
     while True:
         try:
@@ -382,8 +382,8 @@ async def _screener_cron_loop(interval_hours: int = 1) -> None:
             await asyncio.sleep(60.0)
 
 
-def start_screener_cron(interval_hours: int = 1) -> None:
-    """Starts the 1-hour background screener daemon if not already running."""
+def start_screener_cron(interval_hours: int = 4) -> None:
+    """Starts the 4-hour background screener daemon if not already running."""
     global _cron_task
     if _cron_task is None or _cron_task.done():
         _cron_task = asyncio.create_task(
@@ -395,17 +395,17 @@ def start_screener_cron(interval_hours: int = 1) -> None:
 
 @portal_router.get("/screener/cron/status")
 async def get_cron_status() -> dict[str, Any]:
-    """Returns the current operational status and next run time of the 1-hour screener cron."""
+    """Returns the current operational status and next run time of the 4-hour screener cron."""
     global _last_cron_run, _next_cron_run, _cron_task
     now = datetime.now(UTC)
-    interval_hours = 1
+    interval_hours = 4
     delay = seconds_until_next_cycle(now, interval_hours=interval_hours, grace_seconds=30)
     next_run = _next_cron_run or (now + timedelta(seconds=delay))
     is_running = _cron_task is not None and not _cron_task.done()
     return {
         "status": "running" if is_running else "idle",
         "interval_hours": interval_hours,
-        "schedule": f"Aligned with UTC {interval_hours}H candle closes (XX:00:30 UTC)",
+        "schedule": f"Aligned with UTC {interval_hours}H candle closes (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)",
         "last_run": _last_cron_run.isoformat() if _last_cron_run else None,
         "next_run": next_run.isoformat(),
         "seconds_remaining": int(delay),
@@ -803,6 +803,7 @@ def get_testnet_trader() -> Any:
                 api_key=api_key,
                 api_secret=api_secret,
                 max_trades_24h=5,
+                max_trades_per_cycle=3,
                 max_order_usd=100.0,
                 min_conviction_score=90.0,
                 min_risk_reward=2.0,
@@ -819,6 +820,26 @@ async def get_testnet_status() -> dict[str, Any]:
     if not trader:
         return {"enabled": False, "reason": "Testnet API keys not configured"}
     return await trader.get_status()
+
+
+@portal_router.get("/testnet/watchlist")
+async def get_testnet_watchlist() -> dict[str, Any]:
+    """Returns the multi-cycle 24-48h incubation watchlist."""
+    trader = get_testnet_trader()
+    if not trader:
+        return {"watchlist": [], "count": 0}
+    wl = trader.load_watchlist()
+    return {"watchlist": list(wl.values()), "count": len(wl)}
+
+
+@portal_router.post("/testnet/reset-quota")
+async def reset_testnet_quota() -> dict[str, Any]:
+    """Resets local 24-hour testnet trade tracking for clean testing."""
+    trader = get_testnet_trader()
+    if not trader:
+        return {"reset": False, "reason": "Testnet API keys not configured"}
+    trader.reset_trades()
+    return {"reset": True, "remaining_trades_today": trader.max_trades_24h}
 
 
 @portal_router.post("/testnet/execute-now")

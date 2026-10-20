@@ -12,7 +12,7 @@ from algotrader.api.portal import portal_router, start_screener_cron
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    start_screener_cron()
+    start_screener_cron(interval_hours=4)
     yield
 
 
@@ -49,6 +49,7 @@ async def root() -> dict[str, object]:
             "watchlist": "/api/watchlist",
             "cron_status": "/api/screener/cron/status",
             "testnet_status": "/api/testnet/status",
+            "testnet_watchlist": "/api/testnet/watchlist",
         },
     }
 

@@ -199,11 +199,11 @@ async def execute_screener_job(
 
 
 async def run_cron_daemon(
-    interval_hours: int = 1,
+    interval_hours: int = 4,
     min_score: float = 50.0,
     max_symbols: int = 250,
 ) -> None:
-    """Runs a daemon loop scheduled every 1 hour on UTC candle closes."""
+    """Runs a daemon loop scheduled every 4 hours on UTC candle closes."""
     settings = load_settings()
     runtime = await build_runtime(settings)
     try:
@@ -249,13 +249,13 @@ def main() -> None:
     parser.add_argument(
         "--daemon",
         action="store_true",
-        help="Run persistently as a background daemon waking every 1 hour on UTC candle boundaries",
+        help="Run persistently as a background daemon waking every 4 hours on UTC candle boundaries",
     )
     parser.add_argument(
         "--interval-hours",
         type=int,
-        default=1,
-        help="Cycle interval in hours (divisible into 24: e.g. 1, 4, 8, 12)",
+        default=4,
+        help="Cycle interval in hours (divisible into 24: default 4)",
     )
     parser.add_argument(
         "--min-score",
