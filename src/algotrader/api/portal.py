@@ -267,6 +267,14 @@ async def _do_crypto_screen(
         except Exception:
             pass
 
+        # Trigger automated Binance Testnet execution for highest-conviction setups
+        try:
+            trader = get_testnet_trader()
+            if trader and final_opps:
+                asyncio.create_task(trader.evaluate_and_execute_candidates(final_opps))
+        except Exception:
+            pass
+
         return result
     except Exception as exc:
         if _screener_cache:
@@ -766,4 +774,66 @@ async def get_macro_overextension(refresh: bool = False) -> dict[str, Any]:
     service = get_macro_service()
     report = await service.get_overextension_report(force_refresh=refresh)
     return report.as_dict()
+
+
+# ------------------------------------------------------------------------------
+# Binance Futures Testnet Automated Trader Singleton & Endpoints
+# ------------------------------------------------------------------------------
+_testnet_trader: Any = None
+
+
+def get_testnet_trader() -> Any:
+    global _testnet_trader
+    if _testnet_trader is None:
+        import os
+        api_key = (
+            os.getenv("ATLAS_BINANCE_FUTURES_API_KEY")
+            or os.getenv("BINANCE_FUTURES_API_KEY")
+            or "TOvJbfI2fWMcWK1BDXjsXElId1lOCi52Q5p6UQtk08G9iGvohJ5RdAstsQKivc1E"
+        )
+        api_secret = (
+            os.getenv("ATLAS_BINANCE_FUTURES_API_SECRET")
+            or os.getenv("BINANCE_FUTURES_API_SECRET")
+            or "lwHH9eG6B26klQRkVf21dzC9VEZKDuouUHzo7uwfHPateSPXPecKnMS6gD1ORIUT"
+        )
+        if api_key and api_secret:
+            from algotrader.application.testnet_trader import TestnetTrader
+
+            _testnet_trader = TestnetTrader(
+                api_key=api_key,
+                api_secret=api_secret,
+                max_trades_24h=5,
+                max_order_usd=100.0,
+                min_conviction_score=90.0,
+                min_risk_reward=2.0,
+                leverage=3,
+                data_dir="data",
+            )
+    return _testnet_trader
+
+
+@portal_router.get("/testnet/status")
+async def get_testnet_status() -> dict[str, Any]:
+    """Returns Binance Futures Testnet automation status, 24h quota, balance, and recent trades."""
+    trader = get_testnet_trader()
+    if not trader:
+        return {"enabled": False, "reason": "Testnet API keys not configured"}
+    return await trader.get_status()
+
+
+@portal_router.post("/testnet/execute-now")
+async def trigger_testnet_execution() -> dict[str, Any]:
+    """Manually triggers evaluation and execution of top screener candidates on Binance Testnet."""
+    trader = get_testnet_trader()
+    if not trader:
+        return {"executed": False, "reason": "Testnet API keys not configured"}
+
+    screener_data = _screener_cache or _get_fresh_baseline_opportunities()
+    opportunities = screener_data.get("opportunities", [])
+    trades = await trader.evaluate_and_execute_candidates(opportunities)
+    return {
+        "executed_count": len(trades),
+        "executed_trades": trades,
+        "remaining_trades_today": max(0, trader.max_trades_24h - trader.get_24h_trade_count()),
+    }
 

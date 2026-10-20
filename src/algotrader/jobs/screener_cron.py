@@ -183,6 +183,18 @@ async def execute_screener_job(
         f"persisted to {latest_file}."
     )
     print(f"👉 Next scheduled run: {next_cycle.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+
+    # Trigger automated Binance Testnet execution for top-conviction setups
+    try:
+        from algotrader.api.portal import get_testnet_trader
+        trader = get_testnet_trader()
+        if trader and opps_list:
+            trades = await trader.evaluate_and_execute_candidates(opps_list)
+            if trades:
+                print(f"⚡ [Testnet Auto-Trader] Placed {len(trades)} trades on Binance Testnet!")
+    except Exception as trade_err:
+        print(f"⚠️ [Testnet Auto-Trader] Note: {trade_err}")
+
     return result_payload
 
 

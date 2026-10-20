@@ -48,6 +48,7 @@ async def root() -> dict[str, object]:
             "screener_live": "/api/screener/live",
             "watchlist": "/api/watchlist",
             "cron_status": "/api/screener/cron/status",
+            "testnet_status": "/api/testnet/status",
         },
     }
 
