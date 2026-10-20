@@ -273,7 +273,7 @@ function RadarPageContent() {
       }
 
       // If backend reports an active background scan, poll until it finishes (max 50s)
-      if (isLiveRefresh && data && data.is_scanning) {
+      if (data && data.is_scanning) {
         let pollAttempts = 0;
         const maxPollAttempts = 35;
         while (pollAttempts < maxPollAttempts) {
@@ -459,6 +459,10 @@ function RadarPageContent() {
 
   useEffect(() => {
     fetchScreener(false);
+    const interval = setInterval(() => {
+      fetchScreener(false);
+    }, 60000);
+    return () => clearInterval(interval);
   }, [fetchScreener]);
 
   // Dynamically react if URL symbol changes or candidate was directly linked

@@ -26,6 +26,8 @@ jobs:
             echo "📥 Pulling latest changes from main..."
             git fetch origin main
             git reset --hard origin/main
+            mkdir -p data state
+            chmod -R a+rwX data state || true
             echo "🐳 Building and restarting containers..."
             docker compose down --remove-orphans || true
             docker compose up -d --build

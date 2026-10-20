@@ -12,8 +12,9 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY data ./data
 RUN pip install --no-cache-dir --no-deps .
-RUN mkdir -p /app/state && chown atlas:atlas /app/state
+RUN mkdir -p /app/state /app/data && chown -R atlas:atlas /app/state /app/data
 
 USER atlas
 EXPOSE 8000
