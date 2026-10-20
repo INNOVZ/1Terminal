@@ -248,7 +248,6 @@ class TestnetTrader:
         return orders
 
     async def get_status(self) -> dict[str, Any]:
-        balance = await self.get_account_balance()
         trades_24h = self.get_trades_last_24h()
         open_orders = await self.get_open_orders()
         watchlist = self.load_watchlist()
@@ -266,7 +265,6 @@ class TestnetTrader:
             "min_conviction_score": self.min_conviction_score,
             "min_risk_reward": self.min_risk_reward,
             "leverage": self.leverage,
-            "account_balance": balance,
             "open_orders_count": len(open_orders),
             "watchlist_count": len(watchlist),
             "watchlist": list(watchlist.values())[:15],

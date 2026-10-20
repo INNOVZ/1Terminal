@@ -831,30 +831,3 @@ async def get_testnet_watchlist() -> dict[str, Any]:
     wl = trader.load_watchlist()
     return {"watchlist": list(wl.values()), "count": len(wl)}
 
-
-@portal_router.post("/testnet/reset-quota")
-async def reset_testnet_quota() -> dict[str, Any]:
-    """Resets local 24-hour testnet trade tracking for clean testing."""
-    trader = get_testnet_trader()
-    if not trader:
-        return {"reset": False, "reason": "Testnet API keys not configured"}
-    trader.reset_trades()
-    return {"reset": True, "remaining_trades_today": trader.max_trades_24h}
-
-
-@portal_router.post("/testnet/execute-now")
-async def trigger_testnet_execution() -> dict[str, Any]:
-    """Manually triggers evaluation and execution of top screener candidates on Binance Testnet."""
-    trader = get_testnet_trader()
-    if not trader:
-        return {"executed": False, "reason": "Testnet API keys not configured"}
-
-    screener_data = _screener_cache or _get_fresh_baseline_opportunities()
-    opportunities = screener_data.get("opportunities", [])
-    trades = await trader.evaluate_and_execute_candidates(opportunities)
-    return {
-        "executed_count": len(trades),
-        "executed_trades": trades,
-        "remaining_trades_today": max(0, trader.max_trades_24h - trader.get_24h_trade_count()),
-    }
-
