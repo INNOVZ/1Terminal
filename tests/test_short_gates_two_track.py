@@ -4,6 +4,8 @@ from decimal import Decimal
 import pytest
 
 from algotrader.domain.crypto_screener_models import SetupLabel
+from algotrader.domain.archetypes import ShortArchetypeFeatures, classify_short_archetype
+from algotrader.domain.execution_brackets import build_short_bracket
 from algotrader.domain.screener_gates import (
     GateEvaluationInput,
     evaluate_long_gates as eval_long_ref,
@@ -270,4 +272,175 @@ def test_gate_s3_rejects_oversold_bottom_dump_shorts():
     passed, details = evaluate_short_gates(inputs_exhausted, SetupLabel.COIL_BREAKDOWN_SHORT)
     assert not passed
     assert not details["S3"], "Gate S3 must reject exhausted bottom-scraping short setup"
+
+
+def test_bottom_grinders_rejected_by_archetype_classifier() -> None:
+    """Tokens languishing at multi-month/ATL support (like PLUME, RIVER, PARTI) must be classified as None."""
+    # Simulating PLUMEUSDT: down 80%, scraping range low, pos_in_range=0.08, no recent runup
+    plume_features = ShortArchetypeFeatures(
+        close=Decimal("0.0185"),
+        high_24h=Decimal("0.0195"),
+        high_30d=Decimal("0.0850"),
+        ema50_4h=Decimal("0.0250"),
+        poc_30d=Decimal("0.0240"),
+        atr14_4h=Decimal("0.0012"),
+        has_bearish_div=False,
+        rsi_4h=Decimal("38.0"),
+        rsi_1d=Decimal("34.0"),
+        rsi_1w=Decimal("30.0"),
+        oi_delta_7d=Decimal("-0.05"),
+        upper_wick_ratio_4h=Decimal("0.20"),
+        max_ret_30d=Decimal("0.78"),
+        taker_buy_ratio_24h=Decimal("0.46"),
+        macd_hist_4h=Decimal("-0.0001"),
+        pos_in_range_30d=Decimal("0.08"),  # Bottom 8% of range
+        runup_30d=Decimal("0.02"),  # 0% run-up
+        ret_14d=Decimal("-0.25"),
+    )
+    assert classify_short_archetype(plume_features) is None, "PLUME bottom grinder must be None"
+
+    # Simulating RIVERUSDT: flatlining at ATL floor
+    river_features = ShortArchetypeFeatures(
+        close=Decimal("1.25"),
+        high_24h=Decimal("1.30"),
+        high_30d=Decimal("4.50"),
+        ema50_4h=Decimal("1.80"),
+        poc_30d=Decimal("1.60"),
+        atr14_4h=Decimal("0.05"),
+        has_bearish_div=False,
+        rsi_4h=Decimal("36.0"),
+        rsi_1d=Decimal("32.0"),
+        rsi_1w=Decimal("28.0"),
+        oi_delta_7d=Decimal("0.02"),
+        upper_wick_ratio_4h=Decimal("0.25"),
+        max_ret_30d=Decimal("0.72"),
+        taker_buy_ratio_24h=Decimal("0.47"),
+        macd_hist_4h=Decimal("-0.01"),
+        pos_in_range_30d=Decimal("0.12"),
+        runup_30d=Decimal("0.05"),
+        ret_14d=Decimal("-0.18"),
+    )
+    assert classify_short_archetype(river_features) is None, "RIVER bottom grinder must be None"
+
+
+def test_bottom_grinders_rejected_by_gate_s3() -> None:
+    """Tokens within 8% of 30d low or in lower half (pos < 0.45) must fail Gate S3."""
+    grinder_inputs = ShortGateInputs(
+        close=Decimal("0.0185"),
+        ema50_4h=Decimal("0.0250"),
+        high_7d=Decimal("0.0240"),
+        range_height_30d=Decimal("0.75"),
+        ret_7d=Decimal("-0.08"),
+        ret_14d=Decimal("-0.25"),
+        high_30d=Decimal("0.0850"),
+        low_30d=Decimal("0.0175"),  # dist_to_low = (0.0185 - 0.0175)/0.0175 = 5.7% <= 8.0%
+        days_since_30d_high=Decimal("22.0"),
+        ema20_4h=Decimal("0.0210"),
+        atr14_4h=Decimal("0.0012"),
+        ret_24h=Decimal("-0.02"),
+        rsi_1h=Decimal("36.0"),
+        rsi_4h=Decimal("38.0"),
+        has_bearish_div=False,
+        has_climax_blowoff=False,
+        poc_30d=Decimal("0.0240"),
+        macd_hist_4h=Decimal("-0.0001"),
+        taker_buy_ratio_24h=Decimal("0.46"),
+        funding_rate_8h=Decimal("0.0001"),
+        oi_delta_7d=Decimal("-0.02"),
+        runup_30d=Decimal("0.05"),  # No runup
+    )
+    passed, details = evaluate_short_gates(grinder_inputs)
+    assert not passed
+    assert not details["S1"], "Gate S1 must reject lack of macro run-up"
+    assert not details["S3"], "Gate S3 must reject proximity to 30d floor"
+
+
+def test_parabolic_top_losers_accepted_as_exhaustion_short() -> None:
+    """Empirical parameters from real Binance top dumpers (AGT, STRK, RLC) must pass as EXHAUSTION_REVERSAL_SHORT."""
+    # Simulating AGTUSDT peak: +750% 7d run-up, 4H RSI 88.4, 45% upper rejection wick, trapped longs
+    agt_features = ShortArchetypeFeatures(
+        close=Decimal("0.0082"),
+        high_24h=Decimal("0.0098"),
+        high_30d=Decimal("0.0098"),
+        ema50_4h=Decimal("0.0035"),
+        poc_30d=Decimal("0.0042"),
+        atr14_4h=Decimal("0.0008"),
+        has_bearish_div=True,
+        rsi_4h=Decimal("82.0"),
+        rsi_1d=Decimal("88.4"),
+        rsi_1w=Decimal("85.0"),
+        oi_delta_7d=Decimal("1.80"),  # Massive +180% OI surge
+        upper_wick_ratio_4h=Decimal("0.55"),  # 55% upper wick rejection
+        max_ret_30d=Decimal("7.50"),
+        taker_buy_ratio_24h=Decimal("0.44"),
+        macd_hist_4h=Decimal("-0.0002"),
+        pos_in_range_30d=Decimal("0.85"),  # Upper 85% of range
+        runup_30d=Decimal("7.50"),
+        ret_14d=Decimal("4.20"),
+    )
+    assert classify_short_archetype(agt_features) in (
+        SetupLabel.UTAD_DIVERGENCE_SHORT,
+        SetupLabel.EXHAUSTION_REVERSAL_SHORT,
+    )
+
+    agt_gate_inputs = ShortGateInputs(
+        close=Decimal("0.0082"),
+        ema50_4h=Decimal("0.0035"),
+        high_7d=Decimal("0.0098"),
+        range_height_30d=Decimal("0.85"),
+        ret_7d=Decimal("2.50"),
+        ret_14d=Decimal("4.20"),
+        high_30d=Decimal("0.0098"),
+        low_30d=Decimal("0.0011"),
+        days_since_30d_high=Decimal("0.5"),
+        ema20_4h=Decimal("0.0068"),
+        atr14_4h=Decimal("0.0008"),
+        ret_24h=Decimal("-0.12"),
+        rsi_1h=Decimal("62.0"),
+        rsi_4h=Decimal("82.0"),
+        has_bearish_div=True,
+        has_climax_blowoff=True,
+        poc_30d=Decimal("0.0042"),
+        macd_hist_4h=Decimal("-0.0002"),
+        macd_hist_4h_prev=Decimal("0.0005"),
+        taker_buy_ratio_24h=Decimal("0.44"),
+        funding_rate_8h=Decimal("0.00045"),  # High positive funding (trapped longs)
+        oi_delta_7d=Decimal("1.80"),
+        oi_delta_1h=Decimal("-0.02"),
+        taker_buy_ratio_1h=Decimal("0.42"),
+        high_24h=Decimal("0.0098"),
+        low_72h=Decimal("0.0040"),
+        rsi_1d=Decimal("88.4"),
+        runup_30d=Decimal("7.50"),
+    )
+    passed, details = evaluate_short_gates(agt_gate_inputs, SetupLabel.EXHAUSTION_REVERSAL_SHORT)
+    assert passed, f"AGT parabolic dump setup must pass all gates, got {details}"
+    assert all(details.values())
+
+
+def test_short_bracket_targets_are_realistic_and_positive() -> None:
+    """Execution bracket for low-priced coin must produce realistic structural targets, not near-zero."""
+    tick = Decimal("0.00001")
+    bracket = build_short_bracket(
+        close=Decimal("0.01850"),
+        ema50_4h=Decimal("0.02500"),
+        poc_30d=Decimal("0.02400"),
+        atr14_4h=Decimal("0.00120"),
+        local_consolidation_low_4h=Decimal("0.01780"),
+        swing_high_4h=Decimal("0.02600"),
+        low_30d=Decimal("0.01500"),
+        vah_30d=Decimal("0.02550"),
+        val_30d=Decimal("0.02100"),
+        tick_size=tick,
+    )
+    # Hierarchy must hold
+    assert bracket.invalidation_stop > bracket.retest_entry >= Decimal("0.01850")
+    assert bracket.breakout_trigger < Decimal("0.01850")
+    assert bracket.t1 < bracket.breakout_trigger
+    assert bracket.t2 < bracket.t1
+    assert bracket.t3 < bracket.t2
+    # Floor protection: T3 must never collapse to $0.00018
+    assert bracket.t3 >= Decimal("0.00900"), f"Target 3 {bracket.t3} must remain above floor"
+    assert bracket.asymmetric_rr >= Decimal("2.50")
+
 

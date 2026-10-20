@@ -275,7 +275,7 @@ def evaluate_short_gates(
 
     atr = max(inputs.atr14_4h, EPSILON)
 
-    # 1. Gate S1: Mandatory Macro Run-Up / Prior Structural Base
+    # 1. Gate S1: Mandatory Macro Run-Up (Universal)
     ema50_peak_excursion = (inputs.high_7d - inputs.ema50_4h) / max(inputs.ema50_4h, EPSILON)
     runup_30d = (
         inputs.runup_30d
@@ -285,34 +285,25 @@ def evaluate_short_gates(
     s1 = (
         (runup_30d >= Decimal("0.35"))
         or (inputs.ret_14d >= Decimal("0.22") and ema50_peak_excursion >= Decimal("0.15"))
-        or (runup_30d >= Decimal("0.15") and (inputs.close <= inputs.ema50_4h or inputs.close <= inputs.poc_30d))
-        or (inputs.range_height_30d >= Decimal("0.20"))
     )
 
     # 2. Gate S3: Anti-Capitulation & Floor Protection (Universal)
     low_72h = inputs.low_72h if inputs.low_72h is not None else inputs.low_30d
     dist_72h_low = (inputs.close - low_72h) / max(low_72h, EPSILON)
+    dist_30d_low = (inputs.close - inputs.low_30d) / max(inputs.low_30d, EPSILON)
     pos_in_range_30d = (inputs.close - inputs.low_30d) / max(
         inputs.high_30d - inputs.low_30d, EPSILON
     )
     downward_atr_ext = (inputs.ema20_4h - inputs.close) / atr
 
-    standard_s3 = (
+    s3 = (
         (dist_72h_low > Decimal("0.04"))
+        and (dist_30d_low > Decimal("0.08"))
         and (inputs.rsi_1h >= Decimal("30.0"))
         and (inputs.rsi_4h >= Decimal("38.0"))
         and (pos_in_range_30d >= Decimal("0.45"))
-        and (downward_atr_ext <= Decimal("1.75"))
+        and (downward_atr_ext <= Decimal("2.00"))
     )
-    breakdown_s3 = (
-        (dist_72h_low > Decimal("0.035"))
-        and (pos_in_range_30d >= Decimal("0.28"))
-        and (inputs.rsi_1h >= Decimal("28.0"))
-        and (inputs.rsi_4h >= Decimal("35.0"))
-        and (downward_atr_ext <= Decimal("2.20"))
-        and (inputs.close <= inputs.poc_30d or inputs.close <= inputs.ema50_4h)
-    )
-    s3 = standard_s3 or breakdown_s3
 
     # 3. Gate S2 + S4 Paired Two-Track Evaluation
     high_24h = (

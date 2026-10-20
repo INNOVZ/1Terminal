@@ -261,25 +261,28 @@ def build_short_bracket(
     raw_effective_entry = (
         raw_retest_entry if (close >= raw_breakdown_trigger) else raw_breakdown_trigger
     )
-    swing_range = max(swing_high_4h - low_30d, atr * Decimal("3.0"))
-    raw_t1 = min(poc_30d, val_30d) if close > poc_30d else low_30d
+    risk_unit = max(raw_invalidation_stop - raw_effective_entry, min_short_risk)
+    risk_unit = max(risk_unit, EPSILON)
 
-    # Ensure Target 1 always provides >= 1.20 * atr expansion room below breakdown trigger
+    # Realistic structural short targets
+    # T1: Structural shelf (POC/VAL) or initial expansion below breakdown trigger
+    raw_t1 = min(poc_30d, val_30d) if close > poc_30d else low_30d
     max_t1 = raw_breakdown_trigger - Decimal("1.20") * atr
     raw_t1 = min(raw_t1, max_t1)
 
-    raw_t2 = swing_high_4h - Decimal("1.618") * swing_range
-    if raw_t2 >= raw_t1:
-        raw_t2 = raw_t1 - Decimal("1.0") * atr
+    # T2: Asymmetric R:R target (2.60R) or Lower Structural Shelf
+    t2_candidate = raw_effective_entry - Decimal("2.60") * risk_unit
+    raw_t2 = min(t2_candidate, raw_t1 - max(tick_size, atr * Decimal("0.80")))
 
-    raw_t3 = swing_high_4h - Decimal("2.618") * swing_range
-    if raw_t3 >= raw_t2:
-        raw_t3 = raw_t2 - Decimal("1.0") * atr
+    # T3: Macro Runner (3.80R) or Extended Breakdown
+    t3_candidate = raw_effective_entry - Decimal("3.80") * risk_unit
+    raw_t3 = min(t3_candidate, raw_t2 - max(tick_size, atr * Decimal("0.80")))
 
-    # Ensure non-negative floor
-    raw_t1 = max(raw_t1, close * Decimal("0.05"))
-    raw_t2 = max(raw_t2, close * Decimal("0.03"))
-    raw_t3 = max(raw_t3, close * Decimal("0.01"))
+    # Floor protections: strictly prevent sub-penny / near-zero projections
+    floor_t = max(low_30d * Decimal("0.60"), close * Decimal("0.20"), tick_size * Decimal("10.0"))
+    raw_t1 = max(raw_t1, floor_t + tick_size * Decimal("3.0"))
+    raw_t2 = max(raw_t2, floor_t + tick_size * Decimal("2.0"))
+    raw_t3 = max(raw_t3, floor_t + tick_size)
 
     # Normalize with tick_size
     retest_entry = normalize_price(raw_retest_entry, tick_size)

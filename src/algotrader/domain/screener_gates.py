@@ -164,24 +164,17 @@ def evaluate_short_gates(s: GateEvaluationInput) -> tuple[bool, str | None]:
 
     # Gate S3: Anti-Capitulation & Floor Protection
     dist_72h_low = (s.close - s.low_72h) / max(s.low_72h, 1e-8)
+    dist_30d_low = (s.close - s.low_30d) / max(s.low_30d, 1e-8)
     pos_in_range_30d = (s.close - s.low_30d) / max(s.high_30d - s.low_30d, 1e-8)
     downward_atr_ext = (s.ema20_4h - s.close) / max(s.atr14_4h, 1e-8)
-    standard_s3 = (
+    s3_pass = (
         (dist_72h_low > 0.04)
+        and (dist_30d_low > 0.08)
         and (s.rsi_1h >= 30.0)
         and (s.rsi_4h >= 38.0)
         and (pos_in_range_30d >= 0.45)
-        and (downward_atr_ext <= 1.75)
+        and (downward_atr_ext <= 2.00)
     )
-    breakdown_s3 = (
-        (dist_72h_low > 0.035)
-        and (pos_in_range_30d >= 0.28)
-        and (s.rsi_1h >= 28.0)
-        and (s.rsi_4h >= 35.0)
-        and (downward_atr_ext <= 2.20)
-        and (s.close <= s.poc_30d or s.close <= s.ema50_4h)
-    )
-    s3_pass = standard_s3 or breakdown_s3
     if not s3_pass:
         return False, "REJECT_S3_CAPITULATION_FLOOR"
 

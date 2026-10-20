@@ -1199,9 +1199,9 @@ class CryptoOpportunityScreener:
             and (taker_buy_ratio_24h <= Decimal("0.47"))
         )
         trapped_longs_check = (
-            (funding is not None and funding >= Decimal("0.0001"))
-            or (basis_bps >= Decimal("12.0"))
-        ) and ((oi_change_7d or ZERO) >= Decimal("0.15"))
+            (funding is not None and funding >= Decimal("0.00005"))
+            or (basis_bps >= Decimal("4.0"))
+        ) and ((oi_change_7d or ZERO) >= Decimal("0.10") or taker_buy_ratio_24h <= Decimal("0.48"))
         squeeze_flush_check = (
             (funding is not None and funding <= Decimal("-0.0003"))
             and ((oi_change_7d or ZERO) >= Decimal("0.25"))
@@ -1209,12 +1209,20 @@ class CryptoOpportunityScreener:
             and (taker_buy_ratio_24h <= Decimal("0.46"))
         )
 
+        is_rsi_valid = bool(
+            mtf_rsi_count >= 1 or rsi_1d >= Decimal("68.0") or rsi_4h >= Decimal("65.0")
+        )
+        is_div_valid = bool(has_bearish_divergence)
+        is_macd_valid = bool(is_4h_macd_bearish_cross or is_4h_hist_negative or is_1h_macd_bearish)
+        is_vol_valid = bool(vol_drying or has_climax_wick or is_4h_hist_decelerating)
+        is_deriv_valid = bool(trapped_longs_check or squeeze_flush_check or (funding is not None and funding >= Decimal("0.00005")))
+
         checklist_verification = ChecklistVerification(
-            value_acceptance=bool((close < poc_price and rsi_4h >= Decimal("38.0")) or close <= (high_24h - Decimal("0.50") * atr14)),
+            value_acceptance=bool(close <= (high_24h - Decimal("0.45") * atr14) or (close < poc_price and pos_in_range >= Decimal("0.45"))),
             volatility_structure=bool(track_a_pass or track_b_pass),
             momentum_alignment=bool(macd_hist_4h < macd_hist_4h_prev or macd_hist_4h < ZERO),
-            volume_microstructure=bool(upper_wick_ratio_4h >= Decimal("0.45") or taker_buy_ratio_24h <= Decimal("0.47")),
-            derivatives_positioning=bool(trapped_longs_check or squeeze_flush_check or (funding is None or funding >= ZERO)),
+            volume_microstructure=bool(upper_wick_ratio_4h >= Decimal("0.40") or taker_buy_ratio_24h <= Decimal("0.48")),
+            derivatives_positioning=is_deriv_valid,
         )
 
         # 13. Composite Conviction, 3-Tier EV_R, and Opportunity Grade
@@ -1252,38 +1260,19 @@ class CryptoOpportunityScreener:
         if is_btc_cascade:
             rationale.append(f"Macro Tailwind: BTC Flash Dump Active ({float(btc_ret_1h*100):.1f}%)")
 
-        mtf_desc = "Overbought/Rollover" if mtf_rsi_count >= 1 else "Normal Range"
-        primary_ceiling = max(ema50_4h, poc_price)
-        is_div_valid = bool(has_bearish_divergence or (is_4h_hist_decelerating and close >= (primary_ceiling - atr14)))
-        div_desc = (
-            "Confirmed 4H/1D Bearish Divergence (RSI & MACD)"
-            if has_bearish_divergence
-            else (
-                "Momentum decelerating into resistance"
-                if (is_4h_hist_decelerating and close >= (primary_ceiling - atr14))
-                else "Momentum decelerating"
-            )
-        )
-        macd_desc = "4H MACD crossed below signal line | Hist decelerating" if is_4h_macd_bearish_cross else "Bearish MACD momentum active"
+        mtf_desc = "Overbought/Rollover" if mtf_rsi_count >= 1 else (f"1D: {float(rsi_1d):.1f} | 4H: {float(rsi_4h):.1f}" if is_rsi_valid else "Normal/Neutral")
+        div_desc = "Confirmed 4H/1D Bearish Divergence (RSI & MACD)" if has_bearish_divergence else "No Confirmed Divergence"
+        macd_desc = "4H MACD crossed below signal line | Hist decelerating" if is_4h_macd_bearish_cross else ("MACD histogram negative" if is_4h_hist_negative else "Bearish MACD momentum active")
         vol_desc = "Effort vs Result: Volume drying on push, seller dominance" if (vol_drying or has_climax_wick) else f"Volume ratio {float(vol_contraction_ratio):.2f}"
         deriv_desc = (
             f"7d OI {float((oi_change_7d or Decimal('0'))*100):+.1f}%, funding {float((funding or Decimal('0'))*10000):+.2f} bps"
             if derivatives
             else "Derivatives positioning neutral"
         )
-
-        is_rsi_valid = bool(
-            (mtf_rsi_count >= 1 or rsi_4h >= Decimal("55.0") or rsi_1d >= Decimal("65.0"))
-            or (close < poc_price and rsi_4h >= Decimal("38.0"))
-        )
         rsi_desc = (
             f"1W: {float(rsi_1w):.1f} | 1D: {float(rsi_1d):.1f} | 4H: {float(rsi_4h):.1f} ({mtf_desc})"
-            if (mtf_rsi_count >= 1 or rsi_4h >= Decimal("55.0"))
-            else (
-                f"Value Breakdown below POC (${float(poc_price):.4f})"
-                if (close < poc_price and rsi_4h >= Decimal("38.0"))
-                else f"4H RSI {float(rsi_4h):.1f} (Oversold Extension)"
-            )
+            if is_rsi_valid
+            else f"4H RSI {float(rsi_4h):.1f} (Not Overbought)"
         )
 
         checklist = (
@@ -1299,17 +1288,17 @@ class CryptoOpportunityScreener:
             ),
             (
                 "MACD Bearish Crossover",
-                is_4h_macd_bearish_cross or is_4h_hist_negative or is_1h_macd_bearish,
+                is_macd_valid,
                 macd_desc,
             ),
             (
                 "Volume & Momentum Exhaustion",
-                vol_drying or has_climax_wick or is_4h_hist_decelerating,
+                is_vol_valid,
                 vol_desc,
             ),
             (
                 "Trapped Longs / Funding",
-                (funding is None or funding >= ZERO),
+                is_deriv_valid,
                 deriv_desc,
             ),
         )
