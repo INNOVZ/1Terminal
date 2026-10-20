@@ -1,0 +1,35 @@
+name: Deploy to GCP e2-micro
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to GCP VM via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.GCP_VM_IP }}
+          username: ${{ secrets.GCP_VM_USER || 'deploy' }}
+          key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            echo "🚀 Connecting to GCP e2-micro..."
+            cd /home/deploy/alfa-terminal
+            echo "📥 Pulling latest changes from main..."
+            git fetch origin main
+            git reset --hard origin/main
+            echo "🐳 Building and restarting containers..."
+            docker compose down --remove-orphans || true
+            docker compose up -d --build
+            echo "⏳ Checking container status..."
+            sleep 10
+            docker compose ps
+            echo "✅ Deployment successful!"

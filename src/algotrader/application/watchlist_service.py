@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import os
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import replace
@@ -24,8 +25,11 @@ from algotrader.domain.watchlist_models import (
 class WatchlistService:
     """Manages persistent watchlists of high-probability crypto setups for coming days."""
 
-    def __init__(self, db_path: Path | str = "atlas_state.sqlite3") -> None:
-        self._db_path = Path(db_path)
+    def __init__(self, db_path: Path | str | None = None) -> None:
+        raw_path = db_path or os.environ.get("ATLAS_STATE_DB_PATH", "atlas_state.sqlite3")
+        self._db_path = Path(raw_path)
+        if str(self._db_path.parent) not in (".", ""):
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
         self._audit_lock = asyncio.Lock()
         self._audit_cache: dict[str, WatchlistLiveAudit] = {}

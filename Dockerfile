@@ -17,5 +17,5 @@ RUN mkdir -p /app/state && chown atlas:atlas /app/state
 
 USER atlas
 EXPOSE 8000
-CMD ["uvicorn", "algotrader.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["sh", "-c", "uvicorn ${ATLAS_APP_MODULE:-algotrader.api.portal_app:app} --host 0.0.0.0 --port 8000 --workers 1"]
  
