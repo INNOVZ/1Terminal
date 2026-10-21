@@ -830,9 +830,23 @@ class CryptoOpportunityScreener:
 
         final_score = factor_scores.final_composite_score
 
-        # 5-Point Institutional Checklist badges
+        # 5-Point Institutional Checklist badges (Auction Market Theory Value Acceptance)
+        is_breakout_arch = (
+            archetype == SetupLabel.BREAKOUT_LONG
+            if isinstance(archetype, SetupLabel)
+            else str(archetype) == "BREAKOUT_LONG"
+        )
+        va_accepted = bool(
+            (close >= poc_price * Decimal("0.97") or pos_in_range >= Decimal("0.35"))
+            if is_breakout_arch
+            else (
+                (close >= val_price * Decimal("0.96"))
+                or (close >= poc_price * Decimal("0.975"))
+                or (pos_in_range >= Decimal("0.18"))
+            )
+        )
         checklist_verification = ChecklistVerification(
-            value_acceptance=(close >= poc_price),
+            value_acceptance=va_accepted,
             volatility_structure=(bb_inside_kc or bandwidth_current <= Decimal("0.24")),
             momentum_alignment=(ema20_4h >= ema50_4h and macd_hist_4h >= macd_hist_4h_prev),
             volume_microstructure=(vol_contraction_ratio <= Decimal("1.0") or rvol_4h >= Decimal("1.25")),
@@ -1985,10 +1999,37 @@ class CryptoOpportunityScreener:
             pullback_entry = (close + (atr14 * Decimal("0.4"))).quantize(close)
             breakout_trigger = (close - (atr14 * Decimal("0.2"))).quantize(close)
 
+        is_breakout_mode = (
+            setup == SetupLabel.BREAKOUT_LONG
+            if isinstance(setup, SetupLabel)
+            else str(setup) == "BREAKOUT_LONG"
+        )
+        if is_long:
+            va_pass = bool(
+                (close >= vp.poc_price * Decimal("0.97"))
+                if is_breakout_mode
+                else (
+                    (close >= vp.val_price * Decimal("0.96"))
+                    or (close >= vp.poc_price * Decimal("0.975"))
+                )
+            )
+            va_badge_desc = (
+                f"Accepted above POC: ${float(vp.poc_price):.4f}"
+                if close >= vp.poc_price
+                else f"Value Base: VAL ${float(vp.val_price):.4f}"
+            )
+        else:
+            va_pass = bool(close <= vp.poc_price * Decimal("1.025") or close <= vp.vah_price * Decimal("1.04"))
+            va_badge_desc = (
+                f"Accepted below POC: ${float(vp.poc_price):.4f}"
+                if close <= vp.poc_price
+                else f"Value Ceiling: VAH ${float(vp.vah_price):.4f}"
+            )
+
         breakout_checklist = (
             ("Trend Baseline", trend_score >= Decimal("50"), f"Trend Score {trend_score:.0f}/100"),
             ("Momentum Impulse", mom_score >= Decimal("50"), f"Momentum Score {mom_score:.0f}/100"),
-            ("Value Acceptance", close >= vp.poc_price if is_long else close <= vp.poc_price, f"POC: ${float(vp.poc_price):.4f}"),
+            ("Value Acceptance", va_pass, va_badge_desc),
             ("Volume Expansion", vol_score >= Decimal("50"), f"Volume Score {vol_score:.0f}/100"),
             ("Derivatives Flow", deriv_score >= Decimal("40"), f"Derivatives Score {deriv_score:.0f}/100"),
         )
@@ -2013,7 +2054,7 @@ class CryptoOpportunityScreener:
             checklist_passed=pass_count,
         )
         checklist_verification = ChecklistVerification(
-            value_acceptance=bool(close >= vp.poc_price if is_long else close <= vp.poc_price),
+            value_acceptance=va_pass,
             volatility_structure=bool(trend_score >= Decimal("50")),
             momentum_alignment=bool(mom_score >= Decimal("50")),
             volume_microstructure=bool(vol_score >= Decimal("50")),
