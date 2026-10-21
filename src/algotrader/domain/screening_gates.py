@@ -274,32 +274,35 @@ def evaluate_short_gates(
         return False, {"S1": False, "S2": False, "S3": False, "S4": False, "S5": False}
 
     atr = max(inputs.atr14_4h, EPSILON)
-
-    # 1. Gate S1: Mandatory Macro Run-Up (Universal)
-    ema50_peak_excursion = (inputs.high_7d - inputs.ema50_4h) / max(inputs.ema50_4h, EPSILON)
-    runup_30d = (
-        inputs.runup_30d
-        if inputs.runup_30d is not None
-        else (inputs.high_30d - inputs.low_30d) / max(inputs.low_30d, EPSILON)
-    )
-    s1 = (
-        (runup_30d >= Decimal("0.35"))
-        or (inputs.ret_14d >= Decimal("0.22") and ema50_peak_excursion >= Decimal("0.15"))
-    )
-
-    # 2. Gate S3: Anti-Capitulation & Floor Protection (Universal)
-    low_72h = inputs.low_72h if inputs.low_72h is not None else inputs.low_30d
-    dist_72h_low = (inputs.close - low_72h) / max(low_72h, EPSILON)
-    dist_30d_low = (inputs.close - inputs.low_30d) / max(inputs.low_30d, EPSILON)
     pos_in_range_30d = (inputs.close - inputs.low_30d) / max(
         inputs.high_30d - inputs.low_30d, EPSILON
     )
+
+    # 1. Gate S1: Mandatory Macro Run-Up (Universal)
+    # Token must have demonstrated a genuine upward expansion into highs.
+    # Excludes tokens whose price has simply plummeted over the last 14 to 30 days.
+    ema50_peak_excursion = (inputs.high_7d - inputs.ema50_4h) / max(inputs.ema50_4h, EPSILON)
+    has_recent_surge = (inputs.ret_14d >= Decimal("0.18")) or (
+        inputs.high_7d >= inputs.close * Decimal("1.08") and inputs.ret_14d >= Decimal("0.08")
+    )
+    has_macro_high = (
+        pos_in_range_30d >= Decimal("0.60")
+        and (inputs.high_30d - inputs.low_30d) / max(inputs.low_30d, EPSILON) >= Decimal("0.30")
+        and inputs.ret_14d >= Decimal("-0.05")
+    )
+    s1 = has_recent_surge or has_macro_high
+
+    # 2. Gate S3: Anti-Capitulation & Floor Protection (Universal)
+    # Strictly forbids shorting into horizontal support floors or near 30-day lows
+    low_72h = inputs.low_72h if inputs.low_72h is not None else inputs.low_30d
+    dist_72h_low = (inputs.close - low_72h) / max(low_72h, EPSILON)
+    dist_30d_low = (inputs.close - inputs.low_30d) / max(inputs.low_30d, EPSILON)
     downward_atr_ext = (inputs.ema20_4h - inputs.close) / atr
 
     s3 = (
-        (dist_72h_low > Decimal("0.04"))
-        and (dist_30d_low > Decimal("0.08"))
-        and (inputs.rsi_1h >= Decimal("30.0"))
+        (dist_72h_low >= Decimal("0.04"))
+        and (dist_30d_low >= Decimal("0.10"))
+        and (inputs.rsi_1h >= Decimal("32.0"))
         and (inputs.rsi_4h >= Decimal("38.0"))
         and (pos_in_range_30d >= Decimal("0.45"))
         and (downward_atr_ext <= Decimal("2.00"))
@@ -323,7 +326,7 @@ def evaluate_short_gates(
     rsi_1d = inputs.rsi_1d if inputs.rsi_1d is not None else inputs.rsi_4h
     is_climax_blowoff = (
         inputs.has_climax_blowoff
-        or ((rsi_1d >= Decimal("76.0")) and (upper_wick_ratio_4h >= Decimal("0.45")))
+        or ((rsi_1d >= Decimal("72.0")) and (upper_wick_ratio_4h >= Decimal("0.35")))
     )
 
     macd_prev = (
@@ -335,7 +338,6 @@ def evaluate_short_gates(
 
     # Track A: Upper-Range Climax Blowoff / Wyckoff UTAD
     # Strictly require either price breaking below 4H EMA20 OR verified taker seller dominance (<= 0.48)
-    # to prevent counter-trend suicide shorts during parabolic trend markups
     track_a_pass = (
         (pos_in_range_30d >= Decimal("0.65"))
         and rejected_from_high
@@ -344,9 +346,19 @@ def evaluate_short_gates(
     )
 
     # Track B: Structural Breakdown / Macro Distribution Rollover
-    below_key_structure = (inputs.close <= inputs.ema50_4h * Decimal("1.01")) and (
-        inputs.close <= inputs.poc_30d * Decimal("1.01")
-    )
+    # Must be actively retesting an overhead resistance ceiling (EMA20, EMA50, or POC) within 5.0%
+    overhead_levels = [
+        lvl for lvl in (inputs.ema20_4h, inputs.ema50_4h, inputs.poc_30d)
+        if lvl is not None and lvl >= inputs.close * Decimal("0.985")
+    ]
+    if overhead_levels:
+        closest_ceiling = min(overhead_levels)
+        dist_to_ceiling = (closest_ceiling - inputs.close) / max(inputs.close, EPSILON)
+        is_active_retest = dist_to_ceiling <= Decimal("0.050")
+    else:
+        dist_to_ceiling = Decimal("1.0")
+        is_active_retest = False
+
     momentum_and_orderflow_decay = (
         (inputs.macd_hist_4h <= Decimal("0.05"))
         and (
@@ -355,12 +367,12 @@ def evaluate_short_gates(
             or inputs.close <= inputs.ema20_4h
         )
     )
-    track_b_pass = below_key_structure and momentum_and_orderflow_decay
+    track_b_pass = is_active_retest and momentum_and_orderflow_decay and (pos_in_range_30d >= Decimal("0.45"))
 
     # S2 and S4 pass if either Track A or Track B passes
     s2_s4_passed = track_a_pass or track_b_pass
-    s2 = track_a_pass or (pos_in_range_30d >= Decimal("0.45") and below_key_structure) or track_b_pass
-    s4 = track_a_pass or momentum_and_orderflow_decay or track_b_pass
+    s2 = s2_s4_passed
+    s4 = s2_s4_passed
 
     # 4. Gate S5: Bimodal Derivatives Crowding (Trapped Longs OR Short-Squeeze Flush)
     if inputs.funding_rate_8h is None and inputs.oi_delta_7d is None:

@@ -289,12 +289,17 @@ class CryptoOpportunityScreener:
                 deduped_shorts.append(o)
 
         if target_direction is None:
-            # Dynamic regime-adaptive allocation: allow up to 8 shorts while allocating remaining capacity to top longs
-            short_quota = min(len(deduped_shorts), max(6, top_n // 4))
-            long_quota = min(len(deduped_longs), top_n - short_quota)
-            balanced = deduped_longs[:long_quota] + deduped_shorts[:short_quota]
-            balanced.sort(key=_conviction, reverse=True)
-            return balanced
+            # Institutional Conviction Qualification: Zero forced quotas.
+            # Only include shorts that meet institutional conviction standards (conviction >= 55.0, score >= 60.0, checklist >= 3)
+            qualified_shorts = [
+                s for s in deduped_shorts
+                if (s.conviction is None or s.conviction >= Decimal("55.0"))
+                and s.score >= Decimal("60.0")
+                and (s.checklist_verification is None or s.checklist_verification.passed_count >= 3)
+            ]
+            all_opps = deduped_longs + qualified_shorts
+            all_opps.sort(key=_conviction, reverse=True)
+            return all_opps[:top_n]
 
         final_opps = deduped_longs if target_direction is Direction.LONG else deduped_shorts
         return final_opps[:top_n]
@@ -969,9 +974,9 @@ class CryptoOpportunityScreener:
         rsi_1w_series = rsi(closes_1w, 14) if len(closes_1w) >= 15 else []
         rsi_1w = rsi_1w_series[-1] if rsi_1w_series else (rsi_1d if rsi_1d else rsi_4h)
 
-        is_4h_rsi_overbought = rsi_4h >= Decimal("62.0") or (prev_rsi_4h >= Decimal("65.0") and rsi_4h < prev_rsi_4h)
-        is_1d_rsi_overbought = rsi_1d >= Decimal("65.0") or (prev_rsi_1d >= Decimal("68.0") and rsi_1d < prev_rsi_1d)
-        is_1w_rsi_overbought = rsi_1w >= Decimal("60.0") or is_1d_rsi_overbought
+        is_4h_rsi_overbought = rsi_4h >= Decimal("65.0") or (prev_rsi_4h >= Decimal("68.0") and rsi_4h < prev_rsi_4h)
+        is_1d_rsi_overbought = rsi_1d >= Decimal("68.0") or (prev_rsi_1d >= Decimal("70.0") and rsi_1d < prev_rsi_1d)
+        is_1w_rsi_overbought = rsi_1w >= Decimal("70.0")
 
         mtf_rsi_count = sum([1 if is_4h_rsi_overbought else 0, 1 if is_1d_rsi_overbought else 0, 1 if is_1w_rsi_overbought else 0])
 
@@ -1153,6 +1158,10 @@ class CryptoOpportunityScreener:
         ema200_4h = ema(closes_4h_calc, 200)[-1] if len(closes_4h_calc) >= 200 else ema50_4h
         dist_to_trigger = (close - bracket.breakout_trigger) / max(close, Decimal("1e-8"))
         dist_to_entry = abs(close - bracket.suggested_entry) / max(close, Decimal("1e-8"))
+        if dist_to_entry > Decimal("0.045"):
+            return None
+        if bracket.asymmetric_rr < Decimal("1.40"):
+            return None
         cvd_val = Decimal(str(quote.cvd_zscore)) if hasattr(quote, "cvd_zscore") and quote.cvd_zscore is not None else Decimal("0.0")
 
         factor_scores = calculate_continuous_short_factor_scores(
@@ -1189,18 +1198,23 @@ class CryptoOpportunityScreener:
         final_score = factor_scores.final_composite_score
 
         # 12. 5-Point Institutional Checklist Badges (Section 8)
+        primary_ceiling = max(ema50_4h, poc_price)
+        dist_to_ceiling = (primary_ceiling - close) / max(close, Decimal("1e-8"))
+        is_active_retest = Decimal("-0.015") <= dist_to_ceiling <= Decimal("0.050")
+
         track_a_pass = (
             (pos_in_range >= Decimal("0.65"))
-            and (close <= high_24h - Decimal("0.50") * atr14)
+            and (close <= high_24h - Decimal("0.45") * atr14)
             and (
-                (rsi_1d >= Decimal("76.0") and upper_wick_ratio_4h >= Decimal("0.45"))
+                (rsi_1d >= Decimal("72.0") and upper_wick_ratio_4h >= Decimal("0.35"))
                 or (has_bearish_divergence and macd_hist_4h < macd_hist_4h_prev)
             )
         )
         track_b_pass = (
-            (close < ema50_4h and close < poc_price)
+            (close <= primary_ceiling * Decimal("1.01"))
+            and is_active_retest
             and (macd_hist_4h < ZERO and macd_hist_4h <= macd_hist_4h_prev)
-            and (taker_buy_ratio_24h <= Decimal("0.47"))
+            and (taker_buy_ratio_24h <= Decimal("0.48"))
         )
         trapped_longs_check = (
             (funding is not None and funding >= Decimal("0.00005"))
@@ -1213,19 +1227,36 @@ class CryptoOpportunityScreener:
             and (taker_buy_ratio_24h <= Decimal("0.46"))
         )
 
-        is_rsi_valid = bool(
-            mtf_rsi_count >= 1 or rsi_1d >= Decimal("68.0") or rsi_4h >= Decimal("65.0")
-        )
+        is_utad_or_climax = archetype in (SetupLabel.UTAD_DIVERGENCE_SHORT, SetupLabel.EXHAUSTION_REVERSAL_SHORT)
+        if is_utad_or_climax:
+            item1_title = "MTF Overbought Exhaustion"
+            is_item1_valid = bool(
+                rsi_4h >= Decimal("65.0") or rsi_1d >= Decimal("68.0") or (rsi_4h >= Decimal("58.0") and has_bearish_divergence)
+            )
+            item1_desc = (
+                f"4H: {float(rsi_4h):.1f} | 1D: {float(rsi_1d):.1f} (Exhaustion confirmed)"
+                if is_item1_valid
+                else f"4H: {float(rsi_4h):.1f} | 1D: {float(rsi_1d):.1f} (Not Overbought)"
+            )
+        else:
+            item1_title = "Resistance Retest Ceiling"
+            is_item1_valid = bool(is_active_retest)
+            item1_desc = (
+                f"Retesting 30d POC (${float(poc_price):.4f}) / EMA50 (${float(ema50_4h):.4f}) ceiling (within {float(dist_to_ceiling*100):.1f}%)"
+                if is_item1_valid
+                else f"Ceiling distance {float(dist_to_ceiling*100):.1f}% outside retest corridor"
+            )
+
         is_div_valid = bool(has_bearish_divergence)
         is_macd_valid = bool(is_4h_macd_bearish_cross or is_4h_hist_negative or is_1h_macd_bearish)
         is_vol_valid = bool(vol_drying or has_climax_wick or is_4h_hist_decelerating)
         is_deriv_valid = bool(trapped_longs_check or squeeze_flush_check or (funding is not None and funding >= Decimal("0.00005")))
 
         checklist_verification = ChecklistVerification(
-            value_acceptance=bool(close <= (high_24h - Decimal("0.45") * atr14) or (close < poc_price and pos_in_range >= Decimal("0.45"))),
+            value_acceptance=bool(close <= (high_24h - Decimal("0.45") * atr14) or (close <= primary_ceiling * Decimal("1.01") and pos_in_range >= Decimal("0.45"))),
             volatility_structure=bool(track_a_pass or track_b_pass),
             momentum_alignment=bool(macd_hist_4h < macd_hist_4h_prev or macd_hist_4h < ZERO),
-            volume_microstructure=bool(upper_wick_ratio_4h >= Decimal("0.40") or taker_buy_ratio_24h <= Decimal("0.48")),
+            volume_microstructure=bool(upper_wick_ratio_4h >= Decimal("0.35") or taker_buy_ratio_24h <= Decimal("0.48")),
             derivatives_positioning=is_deriv_valid,
         )
 
@@ -1264,7 +1295,6 @@ class CryptoOpportunityScreener:
         if is_btc_cascade:
             rationale.append(f"Macro Tailwind: BTC Flash Dump Active ({float(btc_ret_1h*100):.1f}%)")
 
-        mtf_desc = "Overbought/Rollover" if mtf_rsi_count >= 1 else (f"1D: {float(rsi_1d):.1f} | 4H: {float(rsi_4h):.1f}" if is_rsi_valid else "Normal/Neutral")
         div_desc = "Confirmed 4H/1D Bearish Divergence (RSI & MACD)" if has_bearish_divergence else "No Confirmed Divergence"
         macd_desc = "4H MACD crossed below signal line | Hist decelerating" if is_4h_macd_bearish_cross else ("MACD histogram negative" if is_4h_hist_negative else "Bearish MACD momentum active")
         vol_desc = "Effort vs Result: Volume drying on push, seller dominance" if (vol_drying or has_climax_wick) else f"Volume ratio {float(vol_contraction_ratio):.2f}"
@@ -1273,38 +1303,13 @@ class CryptoOpportunityScreener:
             if derivatives
             else "Derivatives positioning neutral"
         )
-        rsi_desc = (
-            f"1W: {float(rsi_1w):.1f} | 1D: {float(rsi_1d):.1f} | 4H: {float(rsi_4h):.1f} ({mtf_desc})"
-            if is_rsi_valid
-            else f"4H RSI {float(rsi_4h):.1f} (Not Overbought)"
-        )
 
         checklist = (
-            (
-                "MTF RSI Overbought",
-                is_rsi_valid,
-                rsi_desc,
-            ),
-            (
-                "Bearish Divergence",
-                is_div_valid,
-                div_desc,
-            ),
-            (
-                "MACD Bearish Crossover",
-                is_macd_valid,
-                macd_desc,
-            ),
-            (
-                "Volume & Momentum Exhaustion",
-                is_vol_valid,
-                vol_desc,
-            ),
-            (
-                "Trapped Longs / Funding",
-                is_deriv_valid,
-                deriv_desc,
-            ),
+            (item1_title, is_item1_valid, item1_desc),
+            ("Bearish Divergence", is_div_valid, div_desc),
+            ("MACD Bearish Crossover", is_macd_valid, macd_desc),
+            ("Volume & Momentum Exhaustion", is_vol_valid, vol_desc),
+            ("Trapped Longs / Funding", is_deriv_valid, deriv_desc),
         )
 
         breakdown = CryptoScreenerScoreBreakdown(

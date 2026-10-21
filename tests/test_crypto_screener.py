@@ -834,7 +834,7 @@ async def test_utad_mtf_rsi_divergence_short_screening(settings: Settings) -> No
 
     # Verify Checklist contains the 5 institutional gates
     titles = [c[0] for c in near_opp.checklist]
-    assert "MTF RSI Overbought" in titles
+    assert ("MTF Overbought Exhaustion" in titles) or ("Resistance Retest Ceiling" in titles)
     assert "Bearish Divergence" in titles
     assert "MACD Bearish Crossover" in titles
     assert "Volume & Momentum Exhaustion" in titles

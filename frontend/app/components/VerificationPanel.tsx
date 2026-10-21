@@ -240,7 +240,7 @@ function VerificationPanel({
       {/* Header with Institutional Grade */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
         <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.05em", textTransform: "uppercase" }}>
-          Institutional Verification
+          Alfa Verification
         </span>
         <span className={isGradeAPlus ? "badge-grade-a-plus" : isHighRejection ? "badge-grade-b" : "badge-grade-a"}>
           <ShieldCheck size={12} />
@@ -288,23 +288,7 @@ function VerificationPanel({
                 Absorption: {isHighRejection ? Math.min(Number(opportunity.resistance_absorption_score), 44.0).toFixed(1) : Number(opportunity.resistance_absorption_score).toFixed(1)}/100
               </span>
             )}
-            {opportunity.estimated_win_rate_pct !== undefined && (
-              <span
-                style={{
-                  fontSize: "10px",
-                  fontFamily: "var(--font-mono)",
-                  color: "#f49d0d",
-                  background: "rgba(244, 157, 13, 0.12)",
-                  border: "1px solid rgba(244, 157, 13, 0.25)",
-                  padding: "1px 6px",
-                  borderRadius: "4px",
-                  fontWeight: 700,
-                }}
-                title="Empirical institutional win rate calibrated for this setup"
-              >
-                Win: {opportunity.estimated_win_rate_pct}%
-              </span>
-            )}
+            
             {opportunity.expected_value_r !== undefined && (
               <span
                 style={{
@@ -588,7 +572,7 @@ function VerificationPanel({
             </>
           ) : (
             <>
-              <BookmarkPlus size={16} /> Add to Watchlist (Coming Days)
+              <BookmarkPlus size={16} /> Add to Watchlist
             </>
           )}
         </button>

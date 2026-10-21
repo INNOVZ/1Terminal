@@ -26,7 +26,10 @@ function BottomDock({
       .then((data) => {
         if (data && data.next_run) {
           const nextDate = new Date(data.next_run);
-          const timeStr = nextDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          const timeStr = nextDate.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
           const interval = data.interval_hours || 1;
           setCronInfo(`Auto-Scan: Every ${interval}h (Next: ${timeStr})`);
         }
@@ -68,13 +71,15 @@ function BottomDock({
     setInternalRefreshing(true);
     window.dispatchEvent(new CustomEvent("atlas:scan-start"));
     try {
-      const res = await fetch("/api/screener/live?refresh=true").catch(() => null);
+      const res = await fetch("/api/screener/live?refresh=true").catch(
+        () => null,
+      );
       if (res && res.ok) {
         const data = await res.json();
         window.dispatchEvent(
           new CustomEvent("atlas:scan-complete", {
             detail: { count: data.qualifying_count, timestamp: data.timestamp },
-          })
+          }),
         );
       } else {
         window.dispatchEvent(new CustomEvent("atlas:scan-error"));
@@ -89,7 +94,11 @@ function BottomDock({
   const refreshing = isRefreshing || internalRefreshing;
 
   return (
-    <div className="floating-dock-container" role="navigation" aria-label="Quick App Navigation">
+    <div
+      className="floating-dock-container"
+      role="navigation"
+      aria-label="Quick App Navigation"
+    >
       <nav className="floating-dock">
         {/* Radar Screener */}
         <Link
@@ -98,7 +107,7 @@ function BottomDock({
           id="dock-radar"
           aria-label="Radar Screener Dashboard"
         >
-          <Radar size={22} strokeWidth={2} />
+          <Radar size={18} strokeWidth={1} />
           {pathname === "/" && <span className="dock-active-dot" />}
           <span className="dock-tooltip">Pre-Breakout Radar</span>
         </Link>
@@ -110,27 +119,10 @@ function BottomDock({
           id="dock-watchlist"
           aria-label="Multi-Day Watchlist"
         >
-          <BookmarkCheck size={22} strokeWidth={2} />
-          {watchlistCount > 0 && (
-            <span
-              style={{
-                position: "absolute",
-                top: "4px",
-                right: "4px",
-                background: "#f49d0d",
-                color: "#07090e",
-                borderRadius: "10px",
-                fontSize: "9px",
-                fontWeight: 800,
-                padding: "1px 5px",
-                lineHeight: "1.2",
-              }}
-            >
-              {watchlistCount}
-            </span>
-          )}
+          <BookmarkCheck size={18} strokeWidth={1} />
+          {watchlistCount > 0 && <span></span>}
           {pathname === "/watchlist" && <span className="dock-active-dot" />}
-          <span className="dock-tooltip">Watchlist (Coming Days)</span>
+          <span className="dock-tooltip">Watchlist</span>
         </Link>
 
         {/* Macro Regime & Metrics */}
@@ -140,7 +132,7 @@ function BottomDock({
           id="dock-macro"
           aria-label="Macro Intelligence"
         >
-          <Globe2 size={22} strokeWidth={2} />
+          <Globe2 size={18} strokeWidth={1} />
           {pathname === "/macro" && <span className="dock-active-dot" />}
           <span className="dock-tooltip">Macro & Liquidity</span>
         </Link>
@@ -158,15 +150,17 @@ function BottomDock({
           style={{ background: "transparent" }}
         >
           <RefreshCw
-            size={20}
-            strokeWidth={2}
+            size={18}
+            strokeWidth={1}
             className={refreshing ? "animate-spin" : ""}
             style={{
               animation: refreshing ? "spin 1s linear infinite" : undefined,
             }}
           />
           <span className="dock-tooltip">
-            {refreshing ? "Scanning Liquid Futures Universe..." : `Deep Rescan • ${cronInfo}`}
+            {refreshing
+              ? "Scanning Liquid Futures Universe..."
+              : `Deep Rescan • ${cronInfo}`}
           </span>
         </button>
       </nav>

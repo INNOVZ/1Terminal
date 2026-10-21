@@ -243,18 +243,27 @@ def build_short_bracket(
     atr = max(atr14_4h, EPSILON)
     primary_ceiling = max(ema50_4h, poc_30d)
 
-    raw_retest_entry = max(primary_ceiling - Decimal("0.15") * atr, close)
+    # Realistic actionable limit entry: strictly bounded within 1.0% to 3.5% above market price
+    # Prevents anchoring limit orders to a distant POC that sits 60% above a collapsed coin.
+    ceiling_cand = primary_ceiling - Decimal("0.15") * atr
+    if close <= ceiling_cand <= close * Decimal("1.040"):
+        raw_retest_entry = ceiling_cand
+    elif close <= swing_high_4h <= close * Decimal("1.040"):
+        raw_retest_entry = swing_high_4h
+    else:
+        raw_retest_entry = min(close * Decimal("1.025"), close + atr * Decimal("0.75"))
+
     raw_breakdown_trigger = local_consolidation_low_4h - Decimal("0.05") * atr
     if raw_breakdown_trigger >= close:
         raw_breakdown_trigger = close - Decimal("0.10") * atr
+    raw_breakdown_trigger = max(raw_breakdown_trigger, close * Decimal("0.975"))
 
     # Invariant 2: Symmetric structural stop distance for SHORT setup
     min_short_risk = max(Decimal("1.20") * atr, raw_retest_entry * Decimal("0.035"))
-    raw_invalidation_stop = max(
-        swing_high_4h + Decimal("0.80") * atr,
-        vah_30d + Decimal("0.60") * atr,
-        raw_retest_entry + min_short_risk,
-    )
+    raw_invalidation_stop = raw_retest_entry + min_short_risk
+    if swing_high_4h > raw_retest_entry and swing_high_4h <= raw_retest_entry * Decimal("1.06"):
+        raw_invalidation_stop = max(raw_invalidation_stop, swing_high_4h + Decimal("0.40") * atr)
+
     if raw_invalidation_stop <= raw_retest_entry:
         raw_invalidation_stop = raw_retest_entry + min_short_risk
 

@@ -173,15 +173,17 @@ async def _do_crypto_screen(
                     return float(x.conviction)
                 return float(x.estimated_win_rate_pct) * 0.4 + float(x.score) * 0.6
 
-            ranked_opps = sorted(opportunities, key=_conviction, reverse=True)
-            long_opps = [opp for opp in ranked_opps if opp.direction.value == "long"]
-            short_opps = [opp for opp in ranked_opps if opp.direction.value == "short"]
+            def _is_qualified(x: Any) -> bool:
+                if x.direction.value == "short":
+                    c_val = float(getattr(x, "conviction", x.score))
+                    chk = getattr(x, "checklist_verification", None)
+                    passed = chk.passed_count if chk is not None else 5
+                    return c_val >= 55.0 and float(x.score) >= 60.0 and passed >= 3
+                return True
 
-            if long_opps and short_opps:
-                top_picks = long_opps[:24] + short_opps[:8]
-                top_picks.sort(key=_conviction, reverse=True)
-            else:
-                top_picks = ranked_opps[:32]
+            qualified_opps = [opp for opp in opportunities if _is_qualified(opp)]
+            ranked_opps = sorted(qualified_opps, key=_conviction, reverse=True)
+            top_picks = ranked_opps[:32]
 
             # Pre-fetch 1H candles for top opportunities concurrently
             async def _fetch_pick_candles(opp: Any) -> dict[str, Any]:

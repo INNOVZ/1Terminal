@@ -10,6 +10,8 @@ from algotrader.domain.crypto_screener_models import (
 )
 from algotrader.domain.models import Direction
 
+EPSILON = Decimal("1e-8")
+
 W_BASE: dict[SetupLabel | str, Decimal] = {
     SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG: Decimal("0.60"),
     SetupLabel.COIL_SPRING_LONG: Decimal("0.58"),
@@ -314,45 +316,60 @@ def calculate_continuous_short_factor_scores(
     )
     volatility_score = clip(base_vol + kc_bonus + vcr_bonus, Decimal("0.0"), Decimal("100.0"))
 
-    # 2. Value Rejection & POC/VAL Breakdown (0 to 100)
+    # 2. Value Rejection & Resistance Geometry (0 to 100)
+    # Institutional shorts require price to be rejecting resistance (VAH, POC, or 4H EMA50),
+    # strictly penalizing selling into value area exhaustion/floor below VAL.
     poc_denom = max(poc_30d, Decimal("1e-8"))
     val_denom = max(val_30d, Decimal("1e-8"))
-    if close <= val_30d * Decimal("1.01"):
-        dist_val = (val_30d - close) / val_denom
-        base_val = Decimal("80.0") + min(Decimal("20.0"), dist_val * Decimal("100.0"))
-    elif close <= poc_30d * Decimal("1.01"):
-        dist_poc = (poc_30d - close) / poc_denom
-        base_val = Decimal("70.0") + min(Decimal("20.0"), dist_poc * Decimal("100.0"))
-    elif close >= vah_30d * Decimal("0.98") and (has_bearish_div or upper_wick_ratio_4h >= Decimal("0.35")):
-        # UTAD top distribution rejection from range highs
-        base_val = Decimal("85.0")
+    if close >= vah_30d * Decimal("0.96") and (has_bearish_div or upper_wick_ratio_4h >= Decimal("0.30")):
+        # Premium: Wyckoff UTAD or range high rejection with supply confirmation
+        base_val = Decimal("82.0") + min(Decimal("18.0"), upper_wick_ratio_4h * Decimal("30.0"))
+    elif abs(close - poc_30d) / poc_denom <= Decimal("0.040") and close <= poc_30d * Decimal("1.015"):
+        # Retest of POC resistance ceiling from below
+        dist_poc = abs(poc_30d - close) / poc_denom
+        base_val = Decimal("72.0") + (Decimal("0.04") - dist_poc) * Decimal("200.0")
+    elif abs(close - ema50_4h) / max(ema50_4h, EPSILON) <= Decimal("0.035") and close <= ema50_4h * Decimal("1.015"):
+        # Retest of 4H EMA50 resistance ceiling
+        base_val = Decimal("65.0")
+    elif close < val_30d:
+        # Severe penalty for bottom-shorting: price is already below VAL
+        dist_below_val = (val_30d - close) / val_denom
+        base_val = max(Decimal("15.0"), Decimal("40.0") - dist_below_val * Decimal("150.0"))
     else:
+        # Inside value area without clear resistance test
         base_val = Decimal("45.0")
 
     stage4_bonus = (
-        Decimal("15.0") if (close <= ema50_4h and ema50_4h <= ema200_4h * Decimal("1.02")) else Decimal("0.0")
+        Decimal("10.0") if (close <= ema50_4h and ema50_4h <= ema200_4h * Decimal("1.02")) else Decimal("0.0")
     )
     value_rejection_score = clip(base_val + stage4_bonus, Decimal("0.0"), Decimal("100.0"))
 
     # 3. Smart Money Distribution & Trapped Longs (0 to 100)
-    base_dist = Decimal("50.0")
+    base_dist = Decimal("40.0")
     # Taker sell flow (taker buy ratio < 0.50 means sellers dominate)
-    if taker_buy_ratio_4h <= Decimal("0.47"):
-        base_dist += Decimal("20.0")
-    elif taker_buy_ratio_4h <= Decimal("0.50"):
+    if taker_buy_ratio_4h <= Decimal("0.46"):
+        base_dist += Decimal("18.0")
+    elif taker_buy_ratio_4h <= Decimal("0.49"):
         base_dist += Decimal("10.0")
+    elif taker_buy_ratio_4h >= Decimal("0.53"):
+        base_dist -= Decimal("15.0")
 
     # CVD Selling Pressure
-    if cvd_zscore <= Decimal("-0.50"):
+    if cvd_zscore <= Decimal("-0.75"):
         base_dist += Decimal("15.0")
-    elif cvd_zscore <= Decimal("0.0"):
+    elif cvd_zscore <= Decimal("-0.15"):
         base_dist += Decimal("8.0")
+    elif cvd_zscore >= Decimal("0.40"):
+        base_dist -= Decimal("12.0")
 
-    # Trapped Longs / Funding Squeeze Fuel (Positive funding during dump = trapped longs paying shorts)
-    if funding_rate is not None and funding_rate >= Decimal("0.00008"):
-        base_dist += Decimal("15.0")
+    # Trapped Longs / Funding: positive funding during dump = trapped longs paying shorts
+    # Negative funding = crowded short squeeze risk (heavy penalty)
+    if funding_rate is not None and funding_rate <= Decimal("-0.0001"):
+        base_dist -= Decimal("25.0")
+    elif funding_rate is not None and funding_rate >= Decimal("0.00008"):
+        base_dist += Decimal("12.0")
     elif funding_rate is not None and funding_rate >= Decimal("0.0"):
-        base_dist += Decimal("8.0")
+        base_dist += Decimal("6.0")
 
     wick_pts = min(Decimal("15.0"), upper_wick_ratio_4h * Decimal("30.0"))
     div_pts = Decimal("15.0") if has_bearish_div else Decimal("0.0")
@@ -360,23 +377,28 @@ def calculate_continuous_short_factor_scores(
 
     # 4. Trend Breakdown & Momentum Deceleration (0 to 100)
     if close <= ema20_4h <= ema50_4h:
-        ema_score = Decimal("85.0")
+        # Check for oversold extension below EMA20
+        dist_below_ema20 = (ema20_4h - close) / max(ema20_4h, EPSILON)
+        if dist_below_ema20 > Decimal("0.07"):
+            ema_score = Decimal("45.0")  # Overextended dump, high snapback risk
+        else:
+            ema_score = Decimal("68.0")
     elif close <= ema50_4h:
-        ema_score = Decimal("70.0")
+        ema_score = Decimal("55.0")
     else:
-        ema_score = Decimal("50.0")
+        ema_score = Decimal("35.0")
 
     macd_bonus = (
-        Decimal("15.0")
+        Decimal("12.0")
         if (macd_hist_4h < macd_hist_4h_prev or macd_hist_4h < Decimal("0.0"))
         else Decimal("0.0")
     )
     # Relative weakness vs BTC (negative residual alpha means underperforming market)
     alpha_bonus = min(
-        Decimal("15.0"),
-        max(Decimal("0.0"), -btc_residual_alpha * Decimal("300.0")),
+        Decimal("12.0"),
+        max(Decimal("0.0"), -btc_residual_alpha * Decimal("250.0")),
     )
-    rvol_bonus = Decimal("10.0") if rvol_4h >= Decimal("1.25") else Decimal("0.0")
+    rvol_bonus = Decimal("8.0") if rvol_4h >= Decimal("1.25") else Decimal("0.0")
     trend_raw = ema_score + macd_bonus + alpha_bonus + rvol_bonus
     trend_breakdown_score = clip(
         Decimal("0.30") * adx_subscore + Decimal("0.70") * trend_raw,

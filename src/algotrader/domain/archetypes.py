@@ -202,14 +202,15 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
     atr = max(features.atr14_4h, Decimal("1e-8"))
 
     # Hard Exclusion: tokens languishing in the lower range cannot be shorted
-    if features.pos_in_range_30d < Decimal("0.40"):
+    if features.pos_in_range_30d < Decimal("0.45"):
         return None
 
-    # Prior markup verification
+    # Prior markup verification: must have actually expanded upward into the highs
     has_prior_markup = (
-        features.runup_30d >= Decimal("0.35")
-        or features.ret_14d >= Decimal("0.22")
+        features.ret_14d >= Decimal("0.15")
         or features.max_ret_30d >= Decimal("0.35")
+        or features.runup_30d >= Decimal("0.35")
+        or (features.high_24h >= features.high_30d * Decimal("0.96") and (features.ret_14d >= Decimal("0.05") or features.max_ret_30d >= Decimal("0.20")))
     )
 
     # 1. UTAD_DIVERGENCE_SHORT (Wyckoff Phase C Upthrust After Distribution)
@@ -232,22 +233,36 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
     # 2. EXHAUSTION_REVERSAL_SHORT (Multi-Timeframe Overbought Climax)
     oi_7d = features.oi_delta_7d or Decimal("0")
     mtf_rsi_overbought = (
-        features.rsi_1d >= Decimal("74.0") or features.rsi_1w >= Decimal("74.0") or features.rsi_4h >= Decimal("74.0")
+        features.rsi_1d >= Decimal("72.0") or features.rsi_1w >= Decimal("72.0") or features.rsi_4h >= Decimal("72.0")
     )
     has_climax_runup = (
-        features.runup_30d >= Decimal("0.40")
-        or features.ret_14d >= Decimal("0.25")
-        or features.max_ret_30d >= Decimal("0.50")
+        features.ret_14d >= Decimal("0.25")
+        or features.max_ret_30d >= Decimal("0.40")
+        or features.runup_30d >= Decimal("0.40")
+        or (features.high_24h >= features.high_30d * Decimal("0.97") and (features.ret_14d >= Decimal("0.15") or features.max_ret_30d >= Decimal("0.25")))
     )
     if (
-        features.pos_in_range_30d >= Decimal("0.60")
+        features.pos_in_range_30d >= Decimal("0.65")
         and features.close <= (features.high_24h - Decimal("0.45") * atr)
         and mtf_rsi_overbought
-        and features.upper_wick_ratio_4h >= Decimal("0.40")
+        and features.upper_wick_ratio_4h >= Decimal("0.35")
         and has_climax_runup
-        and (oi_7d >= Decimal("0.15") or features.taker_buy_ratio_24h <= Decimal("0.49"))
+        and (oi_7d >= Decimal("0.10") or features.taker_buy_ratio_24h <= Decimal("0.49"))
     ):
         return SetupLabel.EXHAUSTION_REVERSAL_SHORT
+
+    # Resistance Breakdown Proximity: price must be actively testing the breakdown level within 5.0%
+    overhead_levels = [
+        lvl for lvl in (features.ema50_4h, features.poc_30d)
+        if lvl is not None and lvl >= features.close * Decimal("0.985")
+    ]
+    if overhead_levels:
+        ceiling = min(overhead_levels)
+        dist_to_ceiling = abs(ceiling - features.close) / max(features.close, Decimal("1e-8"))
+        is_near_breakdown_level = dist_to_ceiling <= Decimal("0.050")
+    else:
+        dist_to_ceiling = Decimal("1.0")
+        is_near_breakdown_level = False
 
     # 3. DISTRIBUTION_SHORT (Macro Rollover Breakdown from Upper Shelf)
     is_macd_decaying = (
@@ -260,6 +275,7 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
     )
     if (
         has_prior_markup
+        and is_near_breakdown_level
         and features.pos_in_range_30d >= Decimal("0.45")
         and features.close < features.ema50_4h
         and features.close < features.poc_30d
@@ -271,6 +287,7 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
     # 4. VCP_DISTRIBUTION_SHORT (Volatility Contraction Breakdown below 50 EMA from Upper Shelf)
     if (
         has_prior_markup
+        and is_near_breakdown_level
         and features.pos_in_range_30d >= Decimal("0.45")
         and features.close <= features.ema50_4h
         and is_macd_rolling
@@ -278,7 +295,7 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
     ):
         return SetupLabel.VCP_DISTRIBUTION_SHORT
 
-    # Strictly no fallback to COIL_BREAKDOWN_SHORT or VCP_DISTRIBUTION_SHORT for unaligned tokens
+    # Strictly no fallback: bottom-scraping dead tokens are never labeled shorts
     return None
 
 

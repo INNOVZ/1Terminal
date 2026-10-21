@@ -233,9 +233,7 @@ const CandidateCard = memo(function CandidateCard({
               Win {opp.estimated_win_rate_pct}%
             </span>
           )}
-          <span>
-            R:R: <strong style={{ color: "var(--accent-emerald)" }}>{Math.min(Number(opp.risk_reward_ratio || 0), 8.0).toFixed(2)}:1</strong>
-          </span>
+          
         </div>
       </div>
     </div>
