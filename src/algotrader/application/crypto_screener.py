@@ -198,7 +198,8 @@ class CryptoOpportunityScreener:
                 continue
             q = quotes_by_symbol.get(sym)
             if q is not None:
-                if q.quote_volume_24h >= Decimal("2000000") or abs(q.price_change_percent_24h) >= Decimal("2.5"):
+                chg = abs(q.price_change_pct_24h) if q.price_change_pct_24h is not None else Decimal("0")
+                if q.quote_volume_24h >= Decimal("2000000") or chg >= Decimal("2.5"):
                     selected_set.add(sym)
                     if len(selected_set) >= 360:
                         break
