@@ -439,6 +439,89 @@ def test_long_gates_pass_and_fail() -> None:
     assert not passed_chasing
     assert not details_chasing["L2"]
 
+    # Fail Gate L2: Daily RSI >= 70.0 (Anti-Chasing HTF Elimination)
+    daily_overbought_inputs = LongGateInputs(
+        close=valid_inputs.close,
+        ema50_4h=valid_inputs.ema50_4h,
+        ema20_1h=valid_inputs.ema20_1h,
+        ema200_4h=valid_inputs.ema200_4h,
+        low_24h=valid_inputs.low_24h,
+        atr14_4h=valid_inputs.atr14_4h,
+        vcr_4h=valid_inputs.vcr_4h,
+        ema20_4h=valid_inputs.ema20_4h,
+        excursion_72h=valid_inputs.excursion_72h,
+        ret_24h=valid_inputs.ret_24h,
+        rsi_1h=valid_inputs.rsi_1h,
+        rsi_4h=valid_inputs.rsi_4h,
+        rsi_1d=Decimal("71.5"),  # >= 70.0 -> Eliminated
+        high_30d=valid_inputs.high_30d,
+        low_30d=valid_inputs.low_30d,
+        poc_30d=valid_inputs.poc_30d,
+        val_30d=valid_inputs.val_30d,
+        vah_30d=valid_inputs.vah_30d,
+        bb_inside_kc_4h=valid_inputs.bb_inside_kc_4h,
+        bb_bandwidth_4h=valid_inputs.bb_bandwidth_4h,
+    )
+    passed_1d, details_1d = evaluate_long_gates(daily_overbought_inputs, SetupLabel.COIL_SPRING_LONG)
+    assert not passed_1d
+    assert not details_1d["L2"]
+
+    # Fail Gate L2: Weekly RSI >= 70.0 (Anti-Chasing HTF Elimination)
+    weekly_overbought_inputs = LongGateInputs(
+        close=valid_inputs.close,
+        ema50_4h=valid_inputs.ema50_4h,
+        ema20_1h=valid_inputs.ema20_1h,
+        ema200_4h=valid_inputs.ema200_4h,
+        low_24h=valid_inputs.low_24h,
+        atr14_4h=valid_inputs.atr14_4h,
+        vcr_4h=valid_inputs.vcr_4h,
+        ema20_4h=valid_inputs.ema20_4h,
+        excursion_72h=valid_inputs.excursion_72h,
+        ret_24h=valid_inputs.ret_24h,
+        rsi_1h=valid_inputs.rsi_1h,
+        rsi_4h=valid_inputs.rsi_4h,
+        rsi_1d=Decimal("62.0"),
+        rsi_1w=Decimal("74.2"),  # >= 70.0 -> Eliminated
+        high_30d=valid_inputs.high_30d,
+        low_30d=valid_inputs.low_30d,
+        poc_30d=valid_inputs.poc_30d,
+        val_30d=valid_inputs.val_30d,
+        vah_30d=valid_inputs.vah_30d,
+        bb_inside_kc_4h=valid_inputs.bb_inside_kc_4h,
+        bb_bandwidth_4h=valid_inputs.bb_bandwidth_4h,
+    )
+    passed_1w, details_1w = evaluate_long_gates(weekly_overbought_inputs, SetupLabel.COIL_SPRING_LONG)
+    assert not passed_1w
+    assert not details_1w["L2"]
+
+    # Pass Gate L2: Daily RSI and Weekly RSI < 70.0
+    safe_htf_inputs = LongGateInputs(
+        close=valid_inputs.close,
+        ema50_4h=valid_inputs.ema50_4h,
+        ema20_1h=valid_inputs.ema20_1h,
+        ema200_4h=valid_inputs.ema200_4h,
+        low_24h=valid_inputs.low_24h,
+        atr14_4h=valid_inputs.atr14_4h,
+        vcr_4h=valid_inputs.vcr_4h,
+        ema20_4h=valid_inputs.ema20_4h,
+        excursion_72h=valid_inputs.excursion_72h,
+        ret_24h=valid_inputs.ret_24h,
+        rsi_1h=valid_inputs.rsi_1h,
+        rsi_4h=valid_inputs.rsi_4h,
+        rsi_1d=Decimal("58.0"),
+        rsi_1w=Decimal("52.0"),
+        high_30d=valid_inputs.high_30d,
+        low_30d=valid_inputs.low_30d,
+        poc_30d=valid_inputs.poc_30d,
+        val_30d=valid_inputs.val_30d,
+        vah_30d=valid_inputs.vah_30d,
+        bb_inside_kc_4h=valid_inputs.bb_inside_kc_4h,
+        bb_bandwidth_4h=valid_inputs.bb_bandwidth_4h,
+    )
+    passed_safe, details_safe = evaluate_long_gates(safe_htf_inputs, SetupLabel.COIL_SPRING_LONG)
+    assert passed_safe
+    assert details_safe["L2"]
+
 
 def test_short_gates_pass_and_fail() -> None:
     # Track A: UTAD divergence short at upper range
@@ -937,6 +1020,80 @@ def test_multi_system_confluence_scoring_and_penalization() -> None:
         checklist_passed=1,
     )
     assert conv_5sys > conv_1sys + Decimal("7.0")
+
+
+def test_continuous_volume_momentum_and_oi_confirmation_scoring() -> None:
+    """Verify that confirmed volume dry-up/surge, accelerating MACD/alpha, and expanding OI drive scores."""
+    # Confirmed setup: Strong OI growth (+12%), heavy taker buying (55%), low funding (0.00001),
+    # volume dry-up (0.80) + breakout volume surge (rvol 1.6), accelerating positive MACD, positive alpha
+    confirmed = calculate_continuous_long_factor_scores(
+        bandwidth_4h=Decimal("0.10"),
+        bb_inside_kc=True,
+        vol_contraction_ratio=Decimal("0.80"),
+        close=Decimal("100.00"),
+        poc_30d=Decimal("99.00"),
+        val_30d=Decimal("94.00"),
+        vah_30d=Decimal("103.00"),
+        pos_in_range_30d=Decimal("0.75"),
+        ema50_4h=Decimal("96.00"),
+        ema200_4h=Decimal("90.00"),
+        resistance_absorption_score=Decimal("80.0"),
+        cvd_zscore=Decimal("1.8"),
+        oi_change_7d=Decimal("0.12"),
+        oi_change_4h=Decimal("0.02"),
+        taker_buy_ratio_4h=Decimal("0.55"),
+        funding_rate=Decimal("0.00001"),
+        ema20_4h=Decimal("98.00"),
+        macd_hist_4h=Decimal("0.20"),
+        macd_hist_4h_prev=Decimal("0.05"),
+        adx_subscore=Decimal("80.0"),
+        btc_residual_alpha=Decimal("0.03"),
+        rvol_4h=Decimal("1.60"),
+        asymmetric_rr=Decimal("3.00"),
+        dist_to_trigger=Decimal("0.02"),
+        macro_multiplier=Decimal("1.0"),
+    )
+
+    assert confirmed.volume_score >= Decimal("80.0")
+    assert confirmed.momentum_score >= Decimal("75.0")
+    assert confirmed.derivatives_score >= Decimal("75.0")
+    assert confirmed.absorption_score >= Decimal("85.0")
+
+    # Unconfirmed setup: OI capital flight (-8%), seller taker dominance (44%), overheated funding (0.00025),
+    # weak volume (rvol 0.50, vol contraction 1.35), decelerating negative MACD, negative alpha
+    unconfirmed = calculate_continuous_long_factor_scores(
+        bandwidth_4h=Decimal("0.10"),
+        bb_inside_kc=True,
+        vol_contraction_ratio=Decimal("1.35"),
+        close=Decimal("100.00"),
+        poc_30d=Decimal("99.00"),
+        val_30d=Decimal("94.00"),
+        vah_30d=Decimal("103.00"),
+        pos_in_range_30d=Decimal("0.75"),
+        ema50_4h=Decimal("96.00"),
+        ema200_4h=Decimal("90.00"),
+        resistance_absorption_score=Decimal("60.0"),
+        cvd_zscore=Decimal("-1.5"),
+        oi_change_7d=Decimal("-0.08"),
+        oi_change_4h=Decimal("-0.04"),
+        taker_buy_ratio_4h=Decimal("0.44"),
+        funding_rate=Decimal("0.00025"),
+        ema20_4h=Decimal("98.00"),
+        macd_hist_4h=Decimal("-0.20"),
+        macd_hist_4h_prev=Decimal("-0.05"),
+        adx_subscore=Decimal("40.0"),
+        btc_residual_alpha=Decimal("-0.04"),
+        rvol_4h=Decimal("0.50"),
+        asymmetric_rr=Decimal("3.00"),
+        dist_to_trigger=Decimal("0.02"),
+        macro_multiplier=Decimal("1.0"),
+    )
+
+    assert unconfirmed.volume_score <= Decimal("40.0")
+    assert unconfirmed.momentum_score <= Decimal("40.0")
+    assert unconfirmed.derivatives_score <= Decimal("40.0")
+    assert confirmed.final_composite_score > unconfirmed.final_composite_score + Decimal("20.0")
+
 
 
 

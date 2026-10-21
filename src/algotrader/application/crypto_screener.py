@@ -647,6 +647,16 @@ class CryptoOpportunityScreener:
         if archetype is None:
             return None
 
+        # Multi-Timeframe Candle Resampling & HTF RSI (Anti-Chasing Gates)
+        closed_1d = resample_candles(closed_4h, "1d")
+        closed_1w = resample_candles(closed_1d, "1w") if closed_1d else []
+        closes_1d = [c.close for c in closed_1d]
+        closes_1w = [c.close for c in closed_1w]
+        rsi_1d_series = rsi(closes_1d, 14) if len(closes_1d) >= 15 else []
+        rsi_1d = rsi_1d_series[-1] if rsi_1d_series else None
+        rsi_1w_series = rsi(closes_1w, 14) if len(closes_1w) >= 15 else []
+        rsi_1w = rsi_1w_series[-1] if rsi_1w_series else None
+
         # Mandatory Domain Gates L1-L6
         gate_inputs = LongGateInputs(
             close=close,
@@ -661,6 +671,8 @@ class CryptoOpportunityScreener:
             ret_24h=ret_24h,
             rsi_1h=snap_1h.rsi14,
             rsi_4h=rsi_4h,
+            rsi_1d=rsi_1d,
+            rsi_1w=rsi_1w,
             high_30d=high_30d,
             low_30d=low_30d,
             poc_30d=poc_price,
@@ -810,11 +822,17 @@ class CryptoOpportunityScreener:
             else f"Holding Value Area Base: VAL ${float(val_price):.4f} | POC ${float(poc_price):.4f}"
         )
 
+        anti_chase_str = f"Anti-Chasing Validated: 72h excursion {float(exc_72h*100):.1f}%, dist from high {float(dist_high_72h*100):.1f}%"
+        if rsi_1d is not None:
+            anti_chase_str += f", 1D RSI {float(rsi_1d):.1f}"
+        if rsi_1w is not None:
+            anti_chase_str += f", 1W RSI {float(rsi_1w):.1f}"
+
         # Rationale construction
         rationale: list[str] = [
             f"Archetype: {archetype.value} | Conviction: {float(conviction):.1f} | Grade: {grade.value}",
             f"Execution Mode: {bracket.execution_mode} | Resistance Absorption: {absorption_score:.1f}/100 ({breakout_status})",
-            f"Anti-Chasing Validated: 72h excursion {float(exc_72h*100):.1f}%, dist from high {float(dist_high_72h*100):.1f}%",
+            anti_chase_str,
             poc_desc,
         ]
         if vol_contraction_ratio <= Decimal("0.90"):
@@ -833,7 +851,9 @@ class CryptoOpportunityScreener:
             (
                 "Anti-Chasing Validated",
                 gate_details.get("L2", True),
-                f"72h range tight ({float(exc_72h*100):.1f}%), within {float(dist_high_72h*100):.1f}% of ceiling",
+                f"72h range tight ({float(exc_72h*100):.1f}%)"
+                + (f" | 1D RSI {float(rsi_1d):.1f}" if rsi_1d is not None else "")
+                + (f" | 1W RSI {float(rsi_1w):.1f}" if rsi_1w is not None else ""),
             ),
             (
                 "Value Acceptance",
@@ -857,10 +877,10 @@ class CryptoOpportunityScreener:
 
         breakdown = CryptoScreenerScoreBreakdown(
             trend_score=factor_scores.trend_momentum_score,
-            momentum_score=factor_scores.volatility_score,
-            derivatives_score=factor_scores.absorption_score,
+            momentum_score=factor_scores.momentum_score,
+            derivatives_score=factor_scores.derivatives_score,
             alpha_score=factor_scores.asymmetry_score,
-            volume_score=factor_scores.volatility_score,
+            volume_score=factor_scores.volume_score,
             structure_score=factor_scores.value_score,
             macro_multiplier=factor_scores.macro_multiplier,
             final_composite_score=factor_scores.final_composite_score,
@@ -1318,10 +1338,10 @@ class CryptoOpportunityScreener:
 
         breakdown = CryptoScreenerScoreBreakdown(
             trend_score=factor_scores.trend_breakdown_score,
-            momentum_score=factor_scores.volatility_score,
-            derivatives_score=factor_scores.distribution_score,
+            momentum_score=factor_scores.momentum_score,
+            derivatives_score=factor_scores.derivatives_score,
             alpha_score=factor_scores.asymmetry_score,
-            volume_score=factor_scores.volatility_score,
+            volume_score=factor_scores.volume_score,
             structure_score=factor_scores.value_rejection_score,
             macro_multiplier=factor_scores.macro_multiplier,
             final_composite_score=factor_scores.final_composite_score,

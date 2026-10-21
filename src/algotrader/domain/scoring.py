@@ -55,6 +55,9 @@ class LongContinuousFactorScores:
     raw_score: Decimal  # Weighted combination
     macro_multiplier: Decimal  # Sentiment & macro market multiplier
     final_composite_score: Decimal  # Final scaled score (0.0 to 100.0)
+    volume_score: Decimal = Decimal("50.0")  # Dedicated Volume confirmation score
+    momentum_score: Decimal = Decimal("50.0")  # Dedicated Momentum confirmation score
+    derivatives_score: Decimal = Decimal("50.0")  # Dedicated Derivatives & OI confirmation score
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +72,9 @@ class ShortContinuousFactorScores:
     raw_score: Decimal  # Weighted combination
     macro_multiplier: Decimal  # Sentiment & macro market multiplier
     final_composite_score: Decimal  # Final scaled score (0.0 to 100.0)
+    volume_score: Decimal = Decimal("50.0")
+    momentum_score: Decimal = Decimal("50.0")
+    derivatives_score: Decimal = Decimal("50.0")
 
 
 def clip(value: Decimal, lower: Decimal, upper: Decimal) -> Decimal:
@@ -146,12 +152,109 @@ def calculate_continuous_long_factor_scores(
     )
     value_score = clip(base_val + stage2_bonus, Decimal("0.0"), Decimal("100.0"))
 
+    # Dedicated Volume Confirmation Score (0 to 100)
+    # Rewards Wyckoff base supply dry-up + breakout relative volume surge
+    base_volume = Decimal("50.0")
+    if vol_contraction_ratio <= Decimal("0.80"):
+        dryup_pts = Decimal("25.0")
+    elif vol_contraction_ratio <= Decimal("0.90"):
+        dryup_pts = Decimal("15.0")
+    elif vol_contraction_ratio <= Decimal("1.05"):
+        dryup_pts = Decimal("5.0")
+    elif vol_contraction_ratio >= Decimal("1.30"):
+        dryup_pts = Decimal("-15.0")
+    else:
+        dryup_pts = Decimal("0.0")
+
+    if rvol_4h >= Decimal("1.50"):
+        rvol_pts = Decimal("25.0")
+    elif rvol_4h >= Decimal("1.25"):
+        rvol_pts = Decimal("15.0")
+    elif rvol_4h >= Decimal("1.00"):
+        rvol_pts = Decimal("5.0")
+    elif rvol_4h <= Decimal("0.65"):
+        rvol_pts = Decimal("-15.0")
+    else:
+        rvol_pts = Decimal("0.0")
+
+    synergy_bonus = (
+        Decimal("5.0")
+        if (vol_contraction_ratio <= Decimal("0.90") and rvol_4h >= Decimal("1.20"))
+        else Decimal("0.0")
+    )
+    volume_score = clip(base_volume + dryup_pts + rvol_pts + synergy_bonus, Decimal("0.0"), Decimal("100.0")).quantize(Decimal("0.1"))
+
     # 3. Smart Money & Orderflow Absorption (0 to 100)
     base_abs = resistance_absorption_score
-    oi_7d_pts = Decimal("8.0") if (oi_change_7d is not None and oi_change_7d >= Decimal("0.05")) else Decimal("0.0")
-    taker_pts = Decimal("8.0") if taker_buy_ratio_4h >= Decimal("0.52") else Decimal("0.0")
-    funding_pts = Decimal("5.0") if (funding_rate is not None and funding_rate <= Decimal("0.00005")) else Decimal("0.0")
-    absorption_score = clip(base_abs + oi_7d_pts + taker_pts + funding_pts, Decimal("0.0"), Decimal("100.0"))
+    # OI Macro confirmation
+    if oi_change_7d is not None:
+        if oi_change_7d >= Decimal("0.05"):
+            oi_7d_pts = Decimal("10.0")
+        elif oi_change_7d >= Decimal("0.0"):
+            oi_7d_pts = Decimal("5.0")
+        elif oi_change_7d <= Decimal("-0.05"):
+            oi_7d_pts = Decimal("-10.0")
+        else:
+            oi_7d_pts = Decimal("-3.0")
+    else:
+        oi_7d_pts = Decimal("0.0")
+
+    # OI Intraday confirmation
+    if oi_change_4h is not None:
+        if oi_change_4h >= Decimal("0.01"):
+            oi_4h_pts = Decimal("5.0")
+        elif oi_change_4h <= Decimal("-0.03"):
+            oi_4h_pts = Decimal("-5.0")
+        else:
+            oi_4h_pts = Decimal("0.0")
+    else:
+        oi_4h_pts = Decimal("0.0")
+
+    # Taker buy flow confirmation
+    if taker_buy_ratio_4h >= Decimal("0.54"):
+        taker_pts = Decimal("10.0")
+    elif taker_buy_ratio_4h >= Decimal("0.51"):
+        taker_pts = Decimal("5.0")
+    elif taker_buy_ratio_4h <= Decimal("0.46"):
+        taker_pts = Decimal("-8.0")
+    else:
+        taker_pts = Decimal("0.0")
+
+    # Funding rate crowding guard
+    if funding_rate is not None:
+        if funding_rate <= Decimal("0.00005"):
+            funding_pts = Decimal("5.0")
+        elif funding_rate >= Decimal("0.00020"):
+            funding_pts = Decimal("-8.0")
+        else:
+            funding_pts = Decimal("0.0")
+    else:
+        funding_pts = Decimal("0.0")
+
+    # CVD flow confirmation
+    if cvd_zscore >= Decimal("1.0"):
+        cvd_pts = Decimal("6.0")
+    elif cvd_zscore <= Decimal("-1.0"):
+        cvd_pts = Decimal("-6.0")
+    else:
+        cvd_pts = Decimal("0.0")
+
+    absorption_score = clip(
+        base_abs + oi_7d_pts + oi_4h_pts + taker_pts + funding_pts + cvd_pts,
+        Decimal("0.0"),
+        Decimal("100.0"),
+    )
+
+    # Dedicated Derivatives Confirmation Score (0 to 100)
+    base_deriv = Decimal("50.0")
+    oi_macro_delta = min(Decimal("25.0"), max(Decimal("-25.0"), (oi_change_7d or Decimal("0")) * Decimal("150.0"))) if oi_change_7d is not None else Decimal("0.0")
+    oi_intra_delta = min(Decimal("15.0"), max(Decimal("-15.0"), (oi_change_4h or Decimal("0")) * Decimal("300.0"))) if oi_change_4h is not None else Decimal("0.0")
+    taker_delta = min(Decimal("20.0"), max(Decimal("-20.0"), (taker_buy_ratio_4h - Decimal("0.50")) * Decimal("200.0")))
+    derivatives_score = clip(
+        base_deriv + oi_macro_delta + oi_intra_delta + taker_delta + funding_pts + cvd_pts,
+        Decimal("0.0"),
+        Decimal("100.0"),
+    ).quantize(Decimal("0.1"))
 
     # 4. Trend Alignment & Momentum Expansion (0 to 100)
     if close >= ema20_4h >= ema50_4h:
@@ -161,8 +264,20 @@ def calculate_continuous_long_factor_scores(
     else:
         ema_score = Decimal("50.0")
 
-    macd_bonus = Decimal("15.0") if macd_hist_4h > macd_hist_4h_prev else Decimal("0.0")
-    alpha_bonus = min(Decimal("15.0"), max(Decimal("0.0"), btc_residual_alpha * Decimal("300.0")))
+    # MACD momentum expansion vs negative deceleration
+    if macd_hist_4h > macd_hist_4h_prev:
+        macd_bonus = Decimal("15.0")
+    elif macd_hist_4h < Decimal("0.0") and macd_hist_4h < macd_hist_4h_prev:
+        macd_bonus = Decimal("-8.0")
+    else:
+        macd_bonus = Decimal("0.0")
+
+    # Alpha vs BTC
+    if btc_residual_alpha >= Decimal("0.0"):
+        alpha_bonus = min(Decimal("15.0"), btc_residual_alpha * Decimal("300.0"))
+    else:
+        alpha_bonus = max(Decimal("-10.0"), btc_residual_alpha * Decimal("200.0"))
+
     rvol_bonus = Decimal("10.0") if rvol_4h >= Decimal("1.25") else Decimal("0.0")
     trend_raw = ema_score + macd_bonus + alpha_bonus + rvol_bonus
     trend_momentum_score = clip(
@@ -170,6 +285,13 @@ def calculate_continuous_long_factor_scores(
         Decimal("0.0"),
         Decimal("100.0"),
     )
+
+    # Dedicated Momentum Confirmation Score (0 to 100)
+    base_mom = Decimal("50.0")
+    mom_macd = Decimal("20.0") if macd_hist_4h > macd_hist_4h_prev else (Decimal("-15.0") if macd_hist_4h < Decimal("0.0") else Decimal("0.0"))
+    mom_alpha = min(Decimal("20.0"), max(Decimal("-20.0"), btc_residual_alpha * Decimal("400.0")))
+    mom_adx = (adx_subscore - Decimal("50.0")) * Decimal("0.30")
+    momentum_score = clip(base_mom + mom_macd + mom_alpha + mom_adx, Decimal("0.0"), Decimal("100.0")).quantize(Decimal("0.1"))
 
     # 5. Payoff Asymmetry & Structural Risk-Reward (0 to 100)
     if asymmetric_rr >= Decimal("3.5"):
@@ -258,6 +380,9 @@ def calculate_continuous_long_factor_scores(
         raw_score=raw_score,
         macro_multiplier=mult.quantize(Decimal("0.01")),
         final_composite_score=final_composite_score,
+        volume_score=volume_score,
+        momentum_score=momentum_score,
+        derivatives_score=derivatives_score,
     )
 
 
@@ -485,6 +610,29 @@ def calculate_continuous_short_factor_scores(
         Decimal("100.0"),
     )
 
+    # Dedicated Short Volume Score (Distribution Volume Confirmation)
+    base_short_vol = Decimal("50.0")
+    if rvol_4h >= Decimal("1.50"):
+        short_rvol_pts = Decimal("25.0")
+    elif rvol_4h >= Decimal("1.25"):
+        short_rvol_pts = Decimal("15.0")
+    elif rvol_4h <= Decimal("0.65"):
+        short_rvol_pts = Decimal("-10.0")
+    else:
+        short_rvol_pts = Decimal("0.0")
+    short_volume_score = clip(base_short_vol + short_rvol_pts, Decimal("0.0"), Decimal("100.0")).quantize(Decimal("0.1"))
+
+    # Dedicated Short Momentum Score
+    base_short_mom = Decimal("50.0")
+    mom_macd_short = Decimal("20.0") if (macd_hist_4h < macd_hist_4h_prev or macd_hist_4h < Decimal("0.0")) else Decimal("-10.0")
+    mom_alpha_short = min(Decimal("20.0"), max(Decimal("-20.0"), -btc_residual_alpha * Decimal("350.0")))
+    short_momentum_score = clip(base_short_mom + mom_macd_short + mom_alpha_short, Decimal("0.0"), Decimal("100.0")).quantize(Decimal("0.1"))
+
+    # Dedicated Short Derivatives Score
+    base_short_deriv = Decimal("50.0")
+    short_deriv_pts = (distribution_score - Decimal("50.0"))
+    short_derivatives_score = clip(base_short_deriv + short_deriv_pts, Decimal("0.0"), Decimal("100.0")).quantize(Decimal("0.1"))
+
     return ShortContinuousFactorScores(
         volatility_score=volatility_score.quantize(Decimal("0.1")),
         value_rejection_score=value_rejection_score.quantize(Decimal("0.1")),
@@ -494,6 +642,9 @@ def calculate_continuous_short_factor_scores(
         raw_score=raw_score,
         macro_multiplier=mult.quantize(Decimal("0.01")),
         final_composite_score=final_composite_score,
+        volume_score=short_volume_score,
+        momentum_score=short_momentum_score,
+        derivatives_score=short_derivatives_score,
     )
 
 

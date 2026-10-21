@@ -48,6 +48,8 @@ class LongGateInputs:
     atr14_1h: Decimal | None = None
     funding_rate_8h: Decimal | None = None
     oi_delta_24h: Decimal | None = None
+    rsi_1d: Decimal | None = None
+    rsi_1w: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +168,13 @@ def evaluate_long_gates(
             and (inputs.ret_24h <= Decimal("0.35"))
             and (inputs.rsi_1h <= Decimal("78.0"))
         )
-    l2 = standard_l2 or flag_l2
+
+    # Anti-Chasing HTF Check: daily or weekly RSI >= 70.0 immediately eliminates the candidate
+    is_htf_overbought = (
+        (inputs.rsi_1d is not None and inputs.rsi_1d >= Decimal("70.0"))
+        or (inputs.rsi_1w is not None and inputs.rsi_1w >= Decimal("70.0"))
+    )
+    l2 = (standard_l2 or flag_l2) and not is_htf_overbought
 
     # Gate L3: Multi-Week Base Duration & Ceiling Proximity
     range_height_30d = (inputs.high_30d - inputs.low_30d) / max(inputs.low_30d, EPSILON)

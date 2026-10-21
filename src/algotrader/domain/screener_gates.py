@@ -57,6 +57,7 @@ class GateEvaluationInput:
     taker_buy_ratio_4h: float
     taker_buy_ratio_24h: float
     has_4h_bearish_rsi_div: bool
+    rsi_1w: float = 50.0
 
 
 def evaluate_long_gates(s: GateEvaluationInput, archetype: str) -> tuple[bool, str | None]:
@@ -99,7 +100,8 @@ def evaluate_long_gates(s: GateEvaluationInput, archetype: str) -> tuple[bool, s
         and (s.ret_24h <= 0.35)
         and (s.rsi_1h <= 78.0)
     )
-    if not (standard_l2 or flag_l2):
+    is_htf_overbought = (s.rsi_1d >= 70.0) or (getattr(s, "rsi_1w", 50.0) >= 70.0)
+    if not (standard_l2 or flag_l2) or is_htf_overbought:
         return False, "REJECT_L2_ANTI_CHASING"
 
     # Gate L3: Base Duration & Ceiling Proximity
