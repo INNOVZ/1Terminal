@@ -156,3 +156,52 @@ async def test_retry_after_header_cannot_break_or_stall_the_client(retry_after: 
         assert transport.calls == 2
     finally:
         await client.close()
+
+
+class NetworkErrorThenOk(httpx.AsyncBaseTransport):
+    """Raises httpx.NetworkError for the first `fails` calls, then succeeds."""
+
+    def __init__(self, fails: int) -> None:
+        self.fails = fails
+        self.calls = 0
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        if self.calls <= self.fails:
+            raise httpx.NetworkError("Simulated socket connection reset")
+        return httpx.Response(200, json={"ok": True})
+
+
+async def test_read_request_is_retried_on_transient_network_error() -> None:
+    transport = NetworkErrorThenOk(fails=2)
+    client = BinanceHttpClient(
+        "https://x",
+        SecretStr(""),
+        SecretStr(""),
+        transport=transport,
+        transport_backoff_seconds=0.001,
+    )
+    try:
+        res = await client.request("GET", "/fapi/v1/klines")
+        assert res == {"ok": True}
+        assert transport.calls == 3, "initial failure + 2 retries = 3 calls"
+    finally:
+        await client.close()
+
+
+async def test_order_request_is_not_retried_on_network_error() -> None:
+    transport = NetworkErrorThenOk(fails=2)
+    client = BinanceHttpClient(
+        "https://x",
+        SecretStr("key"),
+        SecretStr("secret"),
+        transport=transport,
+        transport_backoff_seconds=0.001,
+    )
+    try:
+        with pytest.raises(UnknownExecutionStatus):
+            await client.request("POST", "/fapi/v1/order", order_submission=True, signed=True)
+        assert transport.calls == 1, "order submissions must NEVER retry on network failure"
+    finally:
+        await client.close()
+

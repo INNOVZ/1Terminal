@@ -39,20 +39,30 @@ class BinanceHttpClient:
         max_rate_limit_retries: int = 5,
         rate_limit_backoff_seconds: float = 1.0,
         max_rate_limit_backoff_seconds: float = 30.0,
+        max_transport_retries: int = 3,
+        transport_backoff_seconds: float = 0.4,
     ) -> None:
         self._api_key = api_key
         self._api_secret = api_secret
         self._max_rate_limit_retries = max_rate_limit_retries
         self._rate_limit_backoff_seconds = rate_limit_backoff_seconds
         self._max_rate_limit_backoff_seconds = max_rate_limit_backoff_seconds
+        self._max_transport_retries = max_transport_retries
+        self._transport_backoff_seconds = transport_backoff_seconds
         headers = {"User-Agent": "atlas-algotrader/0.1"}
         if api_key.get_secret_value():
             headers["X-MBX-APIKEY"] = api_key.get_secret_value()
+        limits = httpx.Limits(
+            max_connections=250,
+            max_keepalive_connections=100,
+            keepalive_expiry=60.0,
+        )
         self._http = httpx.AsyncClient(
             base_url=base_url,
             timeout=httpx.Timeout(timeout_seconds),
             transport=transport,
             headers=headers,
+            limits=limits,
         )
         self._clock_offset_ms = 0
         self._used_weight_1m = 0
@@ -91,22 +101,23 @@ class BinanceHttpClient:
         safe in principle, but re-sending is not worth the ambiguity when the caller can
         reconcile by client order ID.
         """
-        attempt = 0
+        rate_attempt = 0
+        transport_attempt = 0
         while True:
             try:
                 return await self._attempt(
                     method, path, params, signed, order_submission=order_submission
                 )
             except RateLimitError as exc:
-                attempt += 1
-                if order_submission or attempt > self._max_rate_limit_retries:
+                rate_attempt += 1
+                if order_submission or rate_attempt > self._max_rate_limit_retries:
                     raise
                 venue_delay = exc.retry_after_seconds
                 delay = (
                     min(venue_delay, self._max_rate_limit_backoff_seconds)
                     if venue_delay is not None and math.isfinite(venue_delay) and venue_delay > 0
                     else min(
-                        self._rate_limit_backoff_seconds * (2 ** (attempt - 1)),
+                        self._rate_limit_backoff_seconds * (2 ** (rate_attempt - 1)),
                         self._max_rate_limit_backoff_seconds,
                     )
                 )
@@ -114,8 +125,25 @@ class BinanceHttpClient:
                 log.warning(
                     "binance_rate_limited",
                     path=path,
-                    attempt=attempt,
+                    attempt=rate_attempt,
                     sleeping_seconds=round(delay, 2),
+                )
+                await asyncio.sleep(delay)
+            except VenueError as exc:
+                # Strictly isolate order submissions from retry (never re-send orders)
+                # But retry read-only market data queries on transient socket timeouts / network glitches
+                if order_submission or "Binance transport failure" not in str(exc):
+                    raise
+                transport_attempt += 1
+                if transport_attempt > self._max_transport_retries:
+                    raise
+                delay = self._transport_backoff_seconds * (2 ** (transport_attempt - 1)) + random.uniform(0.05, 0.25)
+                log.warning(
+                    "binance_transport_retrying",
+                    path=path,
+                    attempt=transport_attempt,
+                    sleeping_seconds=round(delay, 2),
+                    error=str(exc),
                 )
                 await asyncio.sleep(delay)
 

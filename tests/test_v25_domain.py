@@ -1159,5 +1159,67 @@ def test_continuous_volume_momentum_and_oi_confirmation_scoring() -> None:
     assert confirmed.final_composite_score > unconfirmed.final_composite_score + Decimal("20.0")
 
 
+def test_amt_value_area_acceptance_gate_l4() -> None:
+    from algotrader.domain.screening_gates import evaluate_long_gates, LongGateInputs
+
+    # Standard inputs where candidate is comfortably accepted inside Value Area (between VAL and POC)
+    inputs_in_va = LongGateInputs(
+        close=Decimal("100.00"),
+        ema50_4h=Decimal("98.00"),
+        ema20_1h=Decimal("99.00"),
+        ema200_4h=Decimal("95.00"),
+        low_24h=Decimal("98.50"),
+        atr14_4h=Decimal("2.00"),
+        vcr_4h=Decimal("0.80"),
+        ema20_4h=Decimal("98.50"),
+        excursion_72h=Decimal("0.10"),
+        ret_24h=Decimal("0.02"),
+        rsi_1h=Decimal("55.0"),
+        rsi_4h=Decimal("52.0"),
+        rsi_1d=Decimal("50.0"),
+        rsi_1w=Decimal("48.0"),
+        high_30d=Decimal("115.00"),
+        low_30d=Decimal("92.00"),
+        poc_30d=Decimal("108.00"),  # Close (100) is below POC (108), but above VAL (96)
+        val_30d=Decimal("96.00"),
+        vah_30d=Decimal("112.00"),
+        bb_inside_kc_4h=True,
+        bb_bandwidth_4h=Decimal("0.12"),
+    )
+
+    # Any accumulation or emerging momentum archetype must pass Gate L4 when accepted in value
+    for arch in ("OI_ACCUMULATION_LONG", "VCP_COMPRESSION_LONG", "COIL_SPRING_LONG", "MOMENTUM_EMERGING_LONG", "RANGE_BOTTOM_ACCUMULATION_LONG"):
+        passed, details = evaluate_long_gates(inputs_in_va, archetype=arch)
+        assert details["L4"] is True, f"Archetype {arch} must pass Gate L4 when accepted in Value Area"
+
+    # Failed acceptance: price collapsed below Value Area Low and below 30d swing low
+    inputs_breakdown = LongGateInputs(
+        close=Decimal("85.00"),  # Far below val (96.0) and low (92.00)
+        ema50_4h=Decimal("98.00"),
+        ema20_1h=Decimal("90.00"),
+        ema200_4h=Decimal("95.00"),
+        low_24h=Decimal("84.00"),
+        atr14_4h=Decimal("2.00"),
+        vcr_4h=Decimal("0.80"),
+        ema20_4h=Decimal("92.00"),
+        excursion_72h=Decimal("0.10"),
+        ret_24h=Decimal("-0.10"),
+        rsi_1h=Decimal("35.0"),
+        rsi_4h=Decimal("32.0"),
+        rsi_1d=Decimal("30.0"),
+        rsi_1w=Decimal("38.0"),
+        high_30d=Decimal("115.00"),
+        low_30d=Decimal("92.00"),
+        poc_30d=Decimal("108.00"),
+        val_30d=Decimal("96.00"),
+        vah_30d=Decimal("112.00"),
+        bb_inside_kc_4h=True,
+        bb_bandwidth_4h=Decimal("0.12"),
+    )
+    passed, details = evaluate_long_gates(inputs_breakdown, archetype="OI_ACCUMULATION_LONG")
+    assert details["L4"] is False, "Collapsing below VAL and 30d low must fail Gate L4"
+
+
+
 
 

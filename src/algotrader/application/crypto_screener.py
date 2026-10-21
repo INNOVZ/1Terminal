@@ -343,12 +343,12 @@ class CryptoOpportunityScreener:
     ) -> list[CryptoOpportunity]:
         """Evaluate a single instrument across 1h, 4h, derivatives, and alpha factors."""
         async def _fetch_candles(interval: str, limit: int) -> Sequence[Candle]:
-            for attempt in range(2):
+            for attempt in range(3):
                 try:
                     return await market.candles(inst, interval, limit)
                 except Exception:
-                    if attempt == 0:
-                        await asyncio.sleep(0.25)
+                    if attempt < 2:
+                        await asyncio.sleep(0.35 * (attempt + 1))
                     else:
                         return ()
             return ()
@@ -409,7 +409,7 @@ class CryptoOpportunityScreener:
         if derivatives_port is not None:
             try:
                 deriv_res = await asyncio.wait_for(
-                    derivatives_port.derivatives_snapshot(inst), timeout=2.5
+                    derivatives_port.derivatives_snapshot(inst), timeout=5.0
                 )
                 if isinstance(deriv_res, DerivativesSnapshot):
                     derivatives = deriv_res

@@ -210,40 +210,39 @@ def evaluate_long_gates(
     # Gate L3: Multi-Week Base Duration & Ceiling Proximity
     range_height_30d = (inputs.high_30d - inputs.low_30d) / max(inputs.low_30d, EPSILON)
     dist_to_ceiling = (inputs.high_30d - inputs.close) / max(inputs.close, EPSILON)
-    max_range = (
-        Decimal("2.20")
-        if arch_val in ("BREAKOUT_LONG", "MOMENTUM_EMERGING_LONG", "SHORT_SQUEEZE_ABSORPTION_LONG")
-        else Decimal("0.85")
-    )
-    max_dist = Decimal("0.45") if arch_val == "SHORT_SQUEEZE_ABSORPTION_LONG" else Decimal("0.35")
+    is_expansion_archetype = arch_val in ("BREAKOUT_LONG", "MOMENTUM_EMERGING_LONG")
+    max_range = Decimal("2.50") if is_expansion_archetype else Decimal("1.80")
+    max_dist = Decimal("0.45") if arch_val in ("SHORT_SQUEEZE_ABSORPTION_LONG", "RANGE_BOTTOM_ACCUMULATION_LONG") else Decimal("0.38")
     standard_l3 = (range_height_30d <= max_range) and (
         Decimal("-0.05") <= dist_to_ceiling <= max_dist
     )
-    flag_l3 = flag_l2 and (range_height_30d <= Decimal("1.20")) and (
-        Decimal("-0.05") <= dist_to_ceiling <= Decimal("0.35")
+    flag_l3 = flag_l2 and (range_height_30d <= Decimal("1.50")) and (
+        Decimal("-0.05") <= dist_to_ceiling <= Decimal("0.38")
     )
     l3 = standard_l3 or flag_l3
 
-    # Gate L4: 30-Day VPVR Value Area Acceptance
+    # Gate L4: 30-Day VPVR Value Area Acceptance (Auction Market Theory)
+    # Principle: Candidate must be accepted within or above the institutional Value Profile,
+    # rather than breaking down into liquidation discovery below multi-week support.
     va_span = max(inputs.vah_30d - inputs.val_30d, EPSILON)
     va_position = (inputs.close - inputs.val_30d) / va_span
-    if arch_val in (
-        "RANGE_BOTTOM_ACCUMULATION_LONG",
-        "COIL_SPRING_LONG",
-        "SHORT_SQUEEZE_ABSORPTION_LONG",
-        "OI_ACCUMULATION_LONG",
-        "VCP_COMPRESSION_LONG",
-    ):
-        # For base accumulation at range bottom, squeeze absorption, or coil compression,
-        # validate support holding in lower value area, range low, or POC
-        l4 = (
-            (inputs.close >= inputs.val_30d * Decimal("0.96"))
-            or (inputs.close >= inputs.low_30d * Decimal("0.98"))
-            or (inputs.close >= inputs.poc_30d * Decimal("0.975"))
-            or (va_position >= Decimal("0.20"))
+    
+    is_va_supported = (
+        (inputs.close >= inputs.val_30d * Decimal("0.96"))
+        or (inputs.close >= inputs.low_30d * Decimal("0.98"))
+        or (inputs.close >= inputs.poc_30d * Decimal("0.975"))
+        or (va_position >= Decimal("0.18"))
+    )
+
+    if arch_val == "BREAKOUT_LONG":
+        # For active ceiling breakout expansion, price must also be challenging/exceeding POC
+        l4 = is_va_supported and (
+            (inputs.close >= inputs.poc_30d * Decimal("0.97")) or (va_position >= Decimal("0.35"))
         )
     else:
-        l4 = (inputs.close >= inputs.poc_30d * Decimal("0.985")) and (va_position >= Decimal("0.25"))
+        # All accumulation, coil, squeeze, emerging momentum, and absorption setups
+        # build positions throughout the Value Area (from VAL to POC)
+        l4 = is_va_supported
 
     # Gate L5: Archetype-Conditional Volatility Compression
     in_current_squeeze = inputs.bb_inside_kc_4h or (inputs.bb_bandwidth_4h <= Decimal("0.22"))
