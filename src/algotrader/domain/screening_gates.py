@@ -149,10 +149,20 @@ def evaluate_long_gates(
 
     # Gate L2: Anti-Chasing 2.0 & High-Tight Flag Continuation
     atr_ext_4h = (inputs.close - inputs.ema20_4h) / atr
-    atr_ext_ok = (atr_ext_4h <= Decimal("2.50")) or (
-        atr_ext_4h <= Decimal("3.20")
-        and inputs.rsi_4h <= Decimal("65.0")
-        and inputs.rsi_1h <= Decimal("74.0")
+    atr_ext_ok = (
+        (atr_ext_4h <= Decimal("2.50"))
+        or (
+            atr_ext_4h <= Decimal("3.20")
+            and inputs.rsi_4h <= Decimal("65.0")
+            and inputs.rsi_1h <= Decimal("74.0")
+        )
+        or (
+            # Allow high-momentum breakout coil ignition up to 4.0 ATRs if HTF daily and 4H RSI remain non-overbought (<= 65.0)
+            atr_ext_4h <= Decimal("4.00")
+            and inputs.rsi_4h <= Decimal("65.0")
+            and (inputs.rsi_1d is None or inputs.rsi_1d <= Decimal("65.0"))
+            and inputs.rsi_1h <= Decimal("75.0")
+        )
     )
     standard_l2 = (
         inputs.excursion_72h <= Decimal("0.36")
@@ -217,12 +227,20 @@ def evaluate_long_gates(
     # Gate L4: 30-Day VPVR Value Area Acceptance
     va_span = max(inputs.vah_30d - inputs.val_30d, EPSILON)
     va_position = (inputs.close - inputs.val_30d) / va_span
-    if arch_val in ("RANGE_BOTTOM_ACCUMULATION_LONG", "COIL_SPRING_LONG", "SHORT_SQUEEZE_ABSORPTION_LONG"):
-        # For base accumulation at range bottom or squeeze absorption, validate support holding in lower value area or POC
+    if arch_val in (
+        "RANGE_BOTTOM_ACCUMULATION_LONG",
+        "COIL_SPRING_LONG",
+        "SHORT_SQUEEZE_ABSORPTION_LONG",
+        "OI_ACCUMULATION_LONG",
+        "VCP_COMPRESSION_LONG",
+    ):
+        # For base accumulation at range bottom, squeeze absorption, or coil compression,
+        # validate support holding in lower value area, range low, or POC
         l4 = (
             (inputs.close >= inputs.val_30d * Decimal("0.96"))
             or (inputs.close >= inputs.low_30d * Decimal("0.98"))
             or (inputs.close >= inputs.poc_30d * Decimal("0.975"))
+            or (va_position >= Decimal("0.20"))
         )
     else:
         l4 = (inputs.close >= inputs.poc_30d * Decimal("0.985")) and (va_position >= Decimal("0.25"))

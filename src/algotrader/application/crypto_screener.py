@@ -322,12 +322,22 @@ class CryptoOpportunityScreener:
         btc_ret_1h: Decimal = ZERO,
     ) -> list[CryptoOpportunity]:
         """Evaluate a single instrument across 1h, 4h, derivatives, and alpha factors."""
-        # Fetch 1h, 4h, 1d, and 1w candles concurrently (750 1h = 30 days for 1H VPVR, 250 4h = 41 days for genuine 4H EMA200, 100 1d = ~100 days for native 1D RSI, 50 1w = ~1 year for HTF weekly RSI)
-        c1h, c4h, c1d, c1w = await asyncio.gather(
-            market.candles(inst, "1h", 750),
-            market.candles(inst, "4h", 250),
-            market.candles(inst, "1d", 100),
-            market.candles(inst, "1w", 50),
+        async def _fetch_candles(interval: str, limit: int) -> Sequence[Candle]:
+            for attempt in range(2):
+                try:
+                    return await market.candles(inst, interval, limit)
+                except Exception:
+                    if attempt == 0:
+                        await asyncio.sleep(0.25)
+                    else:
+                        return ()
+            return ()
+
+        # Concurrently fetch 1h (750 bars = 30d VPVR), 4h (250 bars = 41d EMA200 & resampled 1D), and 1w (50 bars = ~1yr HTF RSI)
+        c1h, c4h, c1w = await asyncio.gather(
+            _fetch_candles("1h", 750),
+            _fetch_candles("4h", 250),
+            _fetch_candles("1w", 50),
             return_exceptions=True,
         )
 
@@ -338,11 +348,7 @@ class CryptoOpportunityScreener:
 
         closed_1h = sorted([c for c in c1h if c.closed], key=lambda x: x.closed_at)
         closed_4h = sorted([c for c in c4h if c.closed], key=lambda x: x.closed_at)
-        candles_1d = (
-            sorted(list(c1d), key=lambda x: x.closed_at)
-            if (not isinstance(c1d, BaseException) and c1d)
-            else []
-        )
+        candles_1d = resample_candles(closed_4h, "1d")
         candles_1w = (
             sorted(list(c1w), key=lambda x: x.closed_at)
             if (not isinstance(c1w, BaseException) and c1w)
@@ -450,56 +456,57 @@ class CryptoOpportunityScreener:
         if dist_opp is not None and dist_opp.setup_label is not SetupLabel.NO_SETUP:
             opps.append(dist_opp)
 
-        # 3. Active Breakout & Trend Evaluation (AFTER ignition - ONLY for ScreenerMode.BREAKOUT)
-        if mode is ScreenerMode.BREAKOUT and not opps:
-            long_opp = self._score_setup(
-                direction=Direction.LONG,
-                inst=inst,
-                quote=quote,
-                snap_1h=snap_1h,
-                ema20_4h=ema20_4h,
-                ema50_4h=ema50_4h,
-                rsi_4h=rsi_4h,
-                regime=regime,
-                support=support,
-                resistance=resistance,
-                struct_trend=struct.trend,
-                beta=beta,
-                residual_24h=residual_24h,
-                residual_6h=residual_6h,
-                residual_7d=residual_7d,
-                derivatives=derivatives,
-                macro_context=macro_context,
-                closed_1h=closed_1h,
-                closed_4h=closed_4h,
-            )
+        # 3. Active Breakout & Trend Evaluation (AFTER ignition - available in BREAKOUT and ALL modes)
+        if mode in (ScreenerMode.BREAKOUT, ScreenerMode.ALL, None) and not opps:
+            if target_direction is None or target_direction is Direction.LONG:
+                long_opp = self._score_setup(
+                    direction=Direction.LONG,
+                    inst=inst,
+                    quote=quote,
+                    snap_1h=snap_1h,
+                    ema20_4h=ema20_4h,
+                    ema50_4h=ema50_4h,
+                    rsi_4h=rsi_4h,
+                    regime=regime,
+                    support=support,
+                    resistance=resistance,
+                    struct_trend=struct.trend,
+                    beta=beta,
+                    residual_24h=residual_24h,
+                    residual_6h=residual_6h,
+                    residual_7d=residual_7d,
+                    derivatives=derivatives,
+                    macro_context=macro_context,
+                    closed_1h=closed_1h,
+                    closed_4h=closed_4h,
+                )
+                if long_opp and long_opp.setup_label is not SetupLabel.NO_SETUP:
+                    opps.append(long_opp)
 
-            short_opp = self._score_setup(
-                direction=Direction.SHORT,
-                inst=inst,
-                quote=quote,
-                snap_1h=snap_1h,
-                ema20_4h=ema20_4h,
-                ema50_4h=ema50_4h,
-                rsi_4h=rsi_4h,
-                regime=regime,
-                support=support,
-                resistance=resistance,
-                struct_trend=struct.trend,
-                beta=beta,
-                residual_24h=residual_24h,
-                residual_6h=residual_6h,
-                residual_7d=residual_7d,
-                derivatives=derivatives,
-                macro_context=macro_context,
-                closed_1h=closed_1h,
-                closed_4h=closed_4h,
-            )
-
-            if long_opp and long_opp.setup_label is not SetupLabel.NO_SETUP:
-                opps.append(long_opp)
-            if short_opp and short_opp.setup_label is not SetupLabel.NO_SETUP:
-                opps.append(short_opp)
+            if target_direction is None or target_direction is Direction.SHORT:
+                short_opp = self._score_setup(
+                    direction=Direction.SHORT,
+                    inst=inst,
+                    quote=quote,
+                    snap_1h=snap_1h,
+                    ema20_4h=ema20_4h,
+                    ema50_4h=ema50_4h,
+                    rsi_4h=rsi_4h,
+                    regime=regime,
+                    support=support,
+                    resistance=resistance,
+                    struct_trend=struct.trend,
+                    beta=beta,
+                    residual_24h=residual_24h,
+                    residual_6h=residual_6h,
+                    residual_7d=residual_7d,
+                    derivatives=derivatives,
+                    macro_context=macro_context,
+                    closed_1h=closed_1h,
+                    closed_4h=closed_4h,
+                )
+                if short_opp and short_opp.setup_label is not SetupLabel.NO_SETUP:
+                    opps.append(short_opp)
 
         return opps
 
@@ -1950,6 +1957,25 @@ class CryptoOpportunityScreener:
             taker_ratio=taker_ratio,
             macro_multiplier=macro_multiplier,
         )
+        _, conviction = compute_p_win_and_conviction(
+            direction=direction,
+            archetype=setup,
+            quantitative_score=composite_score,
+            checklist_passed=pass_count,
+        )
+        checklist_verification = ChecklistVerification(
+            value_acceptance=bool(close >= vp.poc_price if is_long else close <= vp.poc_price),
+            volatility_structure=bool(trend_score >= Decimal("50")),
+            momentum_alignment=bool(mom_score >= Decimal("50")),
+            volume_microstructure=bool(vol_score >= Decimal("50")),
+            derivatives_positioning=bool(deriv_score >= Decimal("40")),
+        )
+        grade = classify_opportunity_grade(
+            ev_r=ev_r,
+            conviction=conviction,
+            asymmetric_rr=rr,
+            checklist_passed=pass_count,
+        )
 
         return CryptoOpportunity(
             instrument=inst,
@@ -1966,6 +1992,10 @@ class CryptoOpportunityScreener:
             risk_reward_ratio=rr,
             estimated_win_rate_pct=win_rate,
             expected_value_r=ev_r,
+            conviction=conviction,
+            grade=grade.value if hasattr(grade, "value") else str(grade),
+            checklist_verification=checklist_verification,
+            execution_mode="BREAKOUT_EXPANSION" if is_long else "BREAKDOWN_EXPANSION",
             btc_beta=beta.quantize(Decimal("0.01")),
             residual_return_24h=residual_24h.quantize(Decimal("0.0001")),
             funding_rate=funding_rate,

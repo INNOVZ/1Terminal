@@ -523,6 +523,70 @@ def test_long_gates_pass_and_fail() -> None:
     assert details_safe["L2"]
 
 
+def test_oi_accumulation_passes_gate_l4_in_value_area() -> None:
+    # Test that OI_ACCUMULATION_LONG and VCP_COMPRESSION_LONG pass Gate L4 when above VAL
+    inputs = LongGateInputs(
+        close=Decimal("100.00"),
+        ema50_4h=Decimal("98.00"),
+        ema20_1h=Decimal("99.00"),
+        ema200_4h=Decimal("95.00"),
+        low_24h=Decimal("98.50"),
+        atr14_4h=Decimal("2.00"),
+        vcr_4h=Decimal("0.80"),
+        ema20_4h=Decimal("98.50"),
+        excursion_72h=Decimal("0.10"),
+        ret_24h=Decimal("0.02"),
+        rsi_1h=Decimal("55.0"),
+        rsi_4h=Decimal("52.0"),
+        rsi_1d=Decimal("50.0"),
+        rsi_1w=Decimal("48.0"),
+        high_30d=Decimal("115.00"),
+        low_30d=Decimal("92.00"),
+        poc_30d=Decimal("108.00"),  # Close (100) is below POC (108), but above VAL (96)
+        val_30d=Decimal("96.00"),
+        vah_30d=Decimal("112.00"),
+        bb_inside_kc_4h=True,
+        bb_bandwidth_4h=Decimal("0.12"),
+    )
+    passed_oi, details_oi = evaluate_long_gates(inputs, SetupLabel.OI_ACCUMULATION_LONG)
+    assert details_oi["L4"]
+    assert passed_oi
+
+    passed_vcp, details_vcp = evaluate_long_gates(inputs, SetupLabel.VCP_COMPRESSION_LONG)
+    assert details_vcp["L4"]
+
+
+def test_breakout_extension_gate_l2_with_healthy_rsi() -> None:
+    # Test that high-momentum breakout coil ignition (up to 4.0 ATRs) passes Gate L2 when RSI is non-overbought
+    inputs = LongGateInputs(
+        close=Decimal("107.50"),  # (107.50 - 100) / 2.0 = 3.75 ATRs above EMA20
+        ema50_4h=Decimal("96.00"),
+        ema20_1h=Decimal("105.00"),
+        ema200_4h=Decimal("92.00"),
+        low_24h=Decimal("101.00"),
+        atr14_4h=Decimal("2.00"),
+        vcr_4h=Decimal("0.85"),
+        ema20_4h=Decimal("100.00"),
+        excursion_72h=Decimal("0.18"),
+        ret_24h=Decimal("0.07"),
+        rsi_1h=Decimal("70.0"),  # <= 75.0
+        rsi_4h=Decimal("60.0"),  # <= 65.0
+        rsi_1d=Decimal("55.0"),  # <= 65.0
+        rsi_1w=Decimal("64.0"),  # < 70.0
+        high_30d=Decimal("112.00"),
+        low_30d=Decimal("90.00"),
+        poc_30d=Decimal("98.00"),
+        val_30d=Decimal("94.00"),
+        vah_30d=Decimal("106.00"),
+        bb_inside_kc_4h=True,
+        bb_bandwidth_4h=Decimal("0.15"),
+    )
+    passed, details = evaluate_long_gates(inputs, SetupLabel.COIL_SPRING_LONG)
+    assert details["L2"]
+    assert passed
+
+
+
 def test_short_gates_pass_and_fail() -> None:
     # Track A: UTAD divergence short at upper range
     valid_inputs = ShortGateInputs(
