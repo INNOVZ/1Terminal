@@ -174,16 +174,31 @@ async def _do_crypto_screen(
                 return float(x.estimated_win_rate_pct) * 0.4 + float(x.score) * 0.6
 
             def _is_qualified(x: Any) -> bool:
-                if x.direction.value == "short":
-                    c_val = float(getattr(x, "conviction", x.score))
-                    chk = getattr(x, "checklist_verification", None)
-                    passed = chk.passed_count if chk is not None else 5
-                    return c_val >= 55.0 and float(x.score) >= 60.0 and passed >= 3
+                # 1. Hard veto on Below Threshold setups
+                gr = getattr(x, "grade", None)
+                gr_val = gr.value if hasattr(gr, "value") else str(gr or "")
+                if "Below" in gr_val or gr_val == "BELOW_THRESHOLD":
+                    return False
+                # 2. Strict score and conviction floor (minimum Grade B standard)
+                c_val = float(getattr(x, "conviction", x.score or 0))
+                sc = float(x.score or 0)
+                if c_val < 65.0 or sc < 68.0:
+                    return False
+                # 3. Minimum 3 of 5 checklist consensus
+                chk = getattr(x, "checklist_verification", None)
+                passed = chk.passed_count if chk is not None else 5
+                if passed < 3:
+                    return False
+                # 4. Asymmetric R:R >= 2.0 and positive EV
+                rr = float(getattr(x, "risk_reward_ratio", 0))
+                ev = float(getattr(x, "expected_value_r", 0))
+                if rr < 2.0 or ev < 0.20:
+                    return False
                 return True
 
             qualified_opps = [opp for opp in opportunities if _is_qualified(opp)]
             ranked_opps = sorted(qualified_opps, key=_conviction, reverse=True)
-            top_picks = ranked_opps
+            top_picks = ranked_opps[:16]
 
             # Pre-fetch 1H candles for top opportunities concurrently (paced with semaphore)
             candle_sem = asyncio.Semaphore(10)

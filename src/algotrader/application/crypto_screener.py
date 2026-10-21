@@ -104,8 +104,8 @@ class CryptoOpportunityScreener:
         max_symbols: int | None = None,
         mode: ScreenerMode = ScreenerMode.ACCUMULATION,
     ) -> list[CryptoOpportunity]:
-        """Screen the universe for high-probability crypto setups."""
-        cutoff_score = min_score if min_score is not None else Decimal("50.0")
+        # Institutional Grade Floor: Setups must achieve at least Grade B standard (>= 68.0)
+        cutoff_score = min_score if min_score is not None else Decimal("68.0")
 
         # 1. Fetch Macro Context Concurrently
         macro_context = await self._macro_provider.get_context()
@@ -264,11 +264,27 @@ class CryptoOpportunityScreener:
             if isinstance(res, list):
                 for opp in res:
                     eff_score = opp.conviction if opp.conviction is not None else opp.score
-                    if eff_score >= cutoff_score and (target_direction is None or opp.direction is target_direction):
-                        # Candidates must demonstrate institutional multi-system validation (minimum 3 of 5 confluences)
+                    # When min_score is explicitly provided (e.g. testing or lower-bound research):
+                    if min_score is not None:
+                        if eff_score < min_score:
+                            continue
+                    else:
+                        # Institutional Quality Gating:
+                        # 1. Strictly eliminate below-threshold setups
+                        if opp.grade is OpportunityGrade.BELOW_THRESHOLD or str(opp.grade) == "Below Threshold":
+                            continue
+                        # 2. Strict score floor (minimum 68.0 for Grade B)
+                        if eff_score < Decimal("68.0") or opp.score < Decimal("68.0"):
+                            continue
+                        # 3. Minimum 3 of 5 multi-system checklist consensus
                         if opp.checklist_verification is not None and opp.checklist_verification.passed_count < 3:
                             continue
-                        opportunities.append(opp)
+                        # 4. Mandatory positive mathematical expectancy and asymmetric R/R
+                        if opp.risk_reward_ratio < Decimal("2.0") or opp.expected_value_r < Decimal("0.20"):
+                            continue
+                    if target_direction is not None and opp.direction is not target_direction:
+                        continue
+                    opportunities.append(opp)
             elif isinstance(res, Exception):
                 log.debug("instrument_eval_exception", error=str(res))
 
@@ -308,25 +324,19 @@ class CryptoOpportunityScreener:
                 seen_bases.add(o.instrument.base_asset)
                 deduped_shorts.append(o)
 
+        effective_top_n = top_n if top_n is not None else 16
+
         if target_direction is None:
-            # Institutional Conviction Qualification: Zero forced quotas.
-            # Only include shorts that meet institutional conviction standards (conviction >= 55.0, score >= 60.0, checklist >= 3)
-            qualified_shorts = [
-                s for s in deduped_shorts
-                if (s.conviction is None or s.conviction >= Decimal("55.0"))
-                and s.score >= Decimal("60.0")
-                and (s.checklist_verification is None or s.checklist_verification.passed_count >= 3)
-            ]
-            all_opps = deduped_longs + qualified_shorts
+            # Curated Institutional Top Picks:
+            # Balanced selection: up to 12 Longs and up to 6 Shorts, capped at effective_top_n
+            max_shorts = min(6, len(deduped_shorts))
+            max_longs = min(effective_top_n - max_shorts, len(deduped_longs))
+            all_opps = deduped_longs[:max_longs] + deduped_shorts[:max_shorts]
             all_opps.sort(key=_conviction, reverse=True)
-            if top_n is not None:
-                return all_opps[:top_n]
-            return all_opps
+            return all_opps[:effective_top_n]
 
         final_opps = deduped_longs if target_direction is Direction.LONG else deduped_shorts
-        if top_n is not None:
-            return final_opps[:top_n]
-        return final_opps
+        return final_opps[:effective_top_n]
 
     async def _evaluate_single(
         self,
@@ -422,6 +432,7 @@ class CryptoOpportunityScreener:
         accum_opp = None
         if (target_direction is None or target_direction is Direction.LONG) and mode in (
             ScreenerMode.ACCUMULATION,
+            ScreenerMode.BREAKOUT,
             ScreenerMode.ALL,
             None,
         ):
@@ -479,8 +490,8 @@ class CryptoOpportunityScreener:
         if dist_opp is not None and dist_opp.setup_label is not SetupLabel.NO_SETUP:
             opps.append(dist_opp)
 
-        # 3. Active Breakout & Trend Evaluation (AFTER ignition - available in BREAKOUT and ALL modes)
-        if mode in (ScreenerMode.BREAKOUT, ScreenerMode.ALL, None) and not opps:
+        # 3. Active Breakout Mode (Strictly isolated to explicit BREAKOUT mode for squeeze/expansion ignition)
+        if mode == ScreenerMode.BREAKOUT and not opps:
             if target_direction is None or target_direction is Direction.LONG:
                 long_opp = self._score_setup(
                     direction=Direction.LONG,

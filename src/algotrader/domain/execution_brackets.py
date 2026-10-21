@@ -273,11 +273,23 @@ def build_short_bracket(
     risk_unit = max(raw_invalidation_stop - raw_effective_entry, min_short_risk)
     risk_unit = max(risk_unit, EPSILON)
 
-    # Realistic structural short targets
-    # T1: Structural shelf (POC/VAL) or initial expansion below breakdown trigger
-    raw_t1 = min(poc_30d, val_30d) if close > poc_30d else low_30d
+    # Realistic structural short targets scaled by volatility and risk
+    # T1: Nearest structural shelf (VAL/POC) or 1.75R expansion, bounded to avoid excessive depth
+    structural_shelf = min(poc_30d, val_30d) if close > poc_30d else val_30d
+    t1_by_shelf = (
+        structural_shelf
+        if (raw_effective_entry - Decimal("2.50") * risk_unit) <= structural_shelf <= (raw_breakdown_trigger - Decimal("1.00") * atr)
+        else None
+    )
+    t1_by_risk = raw_effective_entry - Decimal("1.75") * risk_unit
+    raw_t1 = t1_by_shelf if t1_by_shelf is not None else t1_by_risk
+
+    # Ensure T1 is at least 1.20*atr below breakdown trigger
     max_t1 = raw_breakdown_trigger - Decimal("1.20") * atr
     raw_t1 = min(raw_t1, max_t1)
+    # Ensure T1 is not excessively deep (cap at max 14% drop or 2.2*risk_unit)
+    min_t1 = raw_effective_entry - max(Decimal("2.20") * risk_unit, raw_effective_entry * Decimal("0.14"))
+    raw_t1 = max(raw_t1, min_t1)
 
     # T2: Asymmetric R:R target (2.60R) or Lower Structural Shelf
     t2_candidate = raw_effective_entry - Decimal("2.60") * risk_unit
