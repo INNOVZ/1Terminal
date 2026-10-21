@@ -518,6 +518,65 @@ function VerificationPanel({
         </div>
       </div>
 
+      {/* Factor Confirmation Breakdown */}
+      {opportunity.score_breakdown && (
+        <div style={{ marginBottom: "20px" }}>
+          <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: "8px" }}>
+            Factor Confirmation Scores
+          </div>
+          <div
+            style={{
+              background: "rgba(255, 255, 255, 0.02)",
+              borderRadius: "8px",
+              border: "1px solid var(--border-subtle)",
+              padding: "10px 12px",
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "8px 12px",
+              fontFamily: "var(--font-mono)",
+              fontSize: "11px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--text-muted)" }}>Volume Flow:</span>
+              <span style={{ fontWeight: 700, color: Number(opportunity.score_breakdown.volume || 0) >= 60 ? "var(--accent-emerald)" : "var(--text-primary)" }}>
+                {opportunity.score_breakdown.volume ?? "N/A"}
+              </span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--text-muted)" }}>Momentum:</span>
+              <span style={{ fontWeight: 700, color: Number(opportunity.score_breakdown.momentum || 0) >= 60 ? "var(--accent-emerald)" : "var(--text-primary)" }}>
+                {opportunity.score_breakdown.momentum ?? "N/A"}
+              </span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--text-muted)" }}>Derivatives &amp; OI:</span>
+              <span style={{ fontWeight: 700, color: Number(opportunity.score_breakdown.derivatives || 0) >= 50 ? "var(--accent-emerald)" : "var(--accent-crimson)" }}>
+                {opportunity.score_breakdown.derivatives ?? "N/A"}
+              </span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--text-muted)" }}>Trend Regime:</span>
+              <span style={{ fontWeight: 700, color: Number(opportunity.score_breakdown.trend || 0) >= 70 ? "var(--accent-emerald)" : "var(--text-primary)" }}>
+                {opportunity.score_breakdown.trend ?? "N/A"}
+              </span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--text-muted)" }}>Alpha Outperf:</span>
+              <span style={{ fontWeight: 700, color: Number(opportunity.score_breakdown.alpha || 0) >= 70 ? "var(--accent-emerald)" : "var(--text-primary)" }}>
+                {opportunity.score_breakdown.alpha ?? "N/A"}
+              </span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--text-muted)" }}>Structure:</span>
+              <span style={{ fontWeight: 700, color: Number(opportunity.score_breakdown.structure || 0) >= 80 ? "var(--accent-emerald)" : "var(--text-primary)" }}>
+                {opportunity.score_breakdown.structure ?? "N/A"}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Quantitative Rationale */}
       <div style={{ marginBottom: "20px" }}>
         <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: "8px" }}>

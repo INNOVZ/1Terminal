@@ -5,9 +5,9 @@ import "./globals.css";
 const BottomDock = dynamic(() => import("./components/BottomDock"));
 
 export const metadata: Metadata = {
-  title: "Alfa Terminal — Quant Crypto Screener | Multi-Day Watchlist",
+  title: "Alfa Terminal — Crypto Screener | Multi-Day breakout Watchlist",
   description:
-    "Institutional Wyckoff accumulation screener, Volume Profile value acceptance engine, and multi-day crypto watchlist for Binance USD-M markets.",
+    "Institutional crypto screener, Wyckoff accumulation, Volume Profile value acceptance engine, and multi-day crypto watchlist",
   icons: {
     icon: [
       {

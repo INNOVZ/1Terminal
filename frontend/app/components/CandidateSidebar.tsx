@@ -39,6 +39,15 @@ export interface Opportunity {
   resistance_absorption_score?: number | string;
   breakout_readiness_status?: "BREAKOUT_CONFIRMED" | "RETEST_ONLY_WAIT_FOR_DIP" | "HIGH_REJECTION_RISK" | string;
   tick_size?: string | number;
+  score_breakdown?: {
+    trend?: string;
+    momentum?: string;
+    derivatives?: string;
+    alpha?: string;
+    volume?: string;
+    structure?: string;
+    macro_multiplier?: string;
+  };
 }
 
 export function formatCandidatePrice(price: number, tickSize?: string | number | null): string {
