@@ -82,13 +82,14 @@ class ChecklistVerification:
             ]
         )
 
-    def as_dict(self) -> dict[str, bool]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "value_acceptance": self.value_acceptance,
             "volatility_structure": self.volatility_structure,
             "momentum_alignment": self.momentum_alignment,
             "volume_microstructure": self.volume_microstructure,
             "derivatives_positioning": self.derivatives_positioning,
+            "passed_count": self.passed_count,
         }
 
 

@@ -125,13 +125,14 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
 
     # 4. RANGE_BOTTOM_ACCUMULATION_LONG (Wyckoff Value Area Base Accumulation)
     if (
-        (features.close >= features.poc_30d * Decimal("0.85") or features.close >= features.val_30d * Decimal("0.98"))
+        features.close >= features.val_30d * Decimal("0.98")
         and features.range_height_30d <= Decimal("0.55")
         and (is_compressed or features.bb_bandwidth_4h <= Decimal("0.24"))
         and is_mom_up
         and features.close >= features.ema50_4h * Decimal("0.975")
         and features.pos_in_range_30d <= Decimal("0.60")
-        and features.vcr_4h <= Decimal("1.25")
+        and features.vcr_4h <= Decimal("1.20")
+        and features.taker_buy_ratio_4h >= Decimal("0.48")
     ):
         return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
 
@@ -162,14 +163,24 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
 
     # 7. Structural Market-Profile Affinity Fallback
     # Classifies valid consolidation into closest structural archetype only if compressed
-    if at_or_above_resistance:
+    if at_or_above_resistance and has_breakout_volume:
         return SetupLabel.BREAKOUT_LONG
-    if oi_7d >= Decimal("0.05") and is_compressed:
+    if oi_7d >= Decimal("0.05") and is_compressed and is_mom_up:
         return SetupLabel.OI_ACCUMULATION_LONG
     if is_compressed or features.bb_bandwidth_4h <= Decimal("0.22"):
-        if features.pos_in_range_30d > Decimal("0.60") and has_supply_exhaustion:
+        if features.pos_in_range_30d > Decimal("0.60") and has_supply_exhaustion and is_mom_up:
             return SetupLabel.VCP_COMPRESSION_LONG
-        return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
+        is_val_support_holding = (
+            features.close >= features.val_30d * Decimal("0.98")
+            and features.close >= features.ema50_4h * Decimal("0.975")
+        )
+        if (
+            features.pos_in_range_30d <= Decimal("0.60")
+            and is_val_support_holding
+            and is_mom_up
+            and features.taker_buy_ratio_4h >= Decimal("0.48")
+        ):
+            return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
     return None
 
 

@@ -139,10 +139,10 @@ class TestnetTrader:
     def get_24h_trade_count(self) -> int:
         return len(self.get_trades_last_24h())
 
-    def has_active_symbol_trade(self, symbol: str) -> bool:
-        """Check if symbol was entered in the last 12 hours to avoid duplicate stacking."""
+    def has_active_symbol_trade(self, symbol: str, hours: int = 48) -> bool:
+        """Check if symbol was entered in the last rolling period to avoid duplicate stacking."""
         trades = self.load_trades()
-        cutoff = datetime.now(UTC) - timedelta(hours=12)
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
         for t in trades:
             if t.get("symbol") == symbol:
                 ts_str = t.get("timestamp")
@@ -245,11 +245,35 @@ class TestnetTrader:
         except Exception as exc:
             log.warning("testnet_open_algo_orders_query_failed", error=str(exc))
 
-        return orders
+    async def get_active_positions(self) -> list[dict[str, Any]]:
+        """Fetch all currently open positions directly from Binance Futures."""
+        client = self._get_client()
+        await client.sync_clock("/fapi/v1/time")
+        try:
+            res = await client.request("GET", "/fapi/v2/positionRisk", signed=True)
+            if isinstance(res, list):
+                active = []
+                for p in res:
+                    amt = float(p.get("positionAmt", 0.0))
+                    if amt != 0.0:
+                        active.append({
+                            "symbol": p.get("symbol"),
+                            "position_amt": amt,
+                            "entry_price": float(p.get("entryPrice", 0.0)),
+                            "mark_price": float(p.get("markPrice", 0.0)),
+                            "unrealized_profit": float(p.get("unRealizedProfit", 0.0)),
+                            "side": "SHORT" if amt < 0 else "LONG",
+                            "leverage": int(p.get("leverage", 1)),
+                        })
+                return active
+        except Exception as exc:
+            log.warning("testnet_positions_query_failed", error=str(exc))
+        return []
 
     async def get_status(self) -> dict[str, Any]:
         trades_24h = self.get_trades_last_24h()
         open_orders = await self.get_open_orders()
+        active_positions = await self.get_active_positions()
         watchlist = self.load_watchlist()
 
         return {
@@ -265,6 +289,8 @@ class TestnetTrader:
             "min_conviction_score": self.min_conviction_score,
             "min_risk_reward": self.min_risk_reward,
             "leverage": self.leverage,
+            "active_positions_count": len(active_positions),
+            "active_positions": active_positions,
             "open_orders_count": len(open_orders),
             "watchlist_count": len(watchlist),
             "watchlist": list(watchlist.values())[:15],
@@ -638,14 +664,48 @@ class TestnetTrader:
                 log.warning("testnet_no_trade_hours_active", reason=market_condition.get("reason"))
                 return []
 
+            # Query live positions & open orders directly from Binance to prevent conflicting/duplicate trades
+            active_positions = await self.get_active_positions()
+            active_positions_by_symbol = {p["symbol"]: p for p in active_positions}
+            open_orders = await self.get_open_orders()
+            open_order_symbols = {o.get("symbol") for o in open_orders if o.get("symbol")}
+
             # Filter viable candidates
             viable: list[tuple[dict[str, Any], dict[str, Any]]] = []
             for opp in opportunities:
                 sym = str(opp.get("symbol", "")).upper()
+                opp_dir = str(opp.get("direction", "long")).upper()
                 analysis = analyses.get(sym)
                 if not analysis or not analysis["is_viable"]:
                     continue
-                if self.has_active_symbol_trade(sym):
+
+                # 1. Exchange Open Position Conflict & Stacking Protection
+                if sym in active_positions_by_symbol:
+                    pos = active_positions_by_symbol[sym]
+                    pos_side = pos["side"]  # "LONG" or "SHORT"
+                    if pos_side != opp_dir:
+                        log.warning(
+                            "opposing_position_conflict_blocked",
+                            symbol=sym,
+                            active_position_side=pos_side,
+                            candidate_direction=opp_dir,
+                            reason="Critical: Cannot open trade opposing active exchange position",
+                        )
+                    else:
+                        log.info(
+                            "position_already_active_skipped",
+                            symbol=sym,
+                            active_position_side=pos_side,
+                        )
+                    continue
+
+                # 2. Exchange Open Order Protection (prevent duplicate pending limits)
+                if sym in open_order_symbols:
+                    log.info("symbol_has_open_orders_skipped", symbol=sym)
+                    continue
+
+                # 3. Local Trade History Lookback (48h rolling swing window)
+                if self.has_active_symbol_trade(sym, hours=48):
                     continue
 
                 viable.append((opp, analysis))

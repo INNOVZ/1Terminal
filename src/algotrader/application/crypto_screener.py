@@ -245,10 +245,8 @@ class CryptoOpportunityScreener:
                 for opp in res:
                     eff_score = opp.conviction if opp.conviction is not None else opp.score
                     if eff_score >= cutoff_score and (target_direction is None or opp.direction is target_direction):
-                        if cutoff_score >= Decimal("50.0") and opp.grade == OpportunityGrade.SUB_GRADE:
-                            continue
-                        # Candidates must demonstrate institutional multi-system validation, not just 1 isolated system
-                        if opp.checklist_verification is not None and opp.checklist_verification.passed_count < 2:
+                        # Candidates must demonstrate institutional multi-system validation (minimum 3 of 5 confluences)
+                        if opp.checklist_verification is not None and opp.checklist_verification.passed_count < 3:
                             continue
                         opportunities.append(opp)
             elif isinstance(res, Exception):
@@ -797,12 +795,18 @@ class CryptoOpportunityScreener:
             if grade == OpportunityGrade.GRADE_A:
                 grade = OpportunityGrade.GRADE_B
 
+        poc_desc = (
+            f"Accepted above 30d POC (${float(poc_price):.4f}) | VAH: ${float(vah_price):.4f}"
+            if close >= poc_price
+            else f"Holding Value Area Base: VAL ${float(val_price):.4f} | POC ${float(poc_price):.4f}"
+        )
+
         # Rationale construction
         rationale: list[str] = [
             f"Archetype: {archetype.value} | Conviction: {float(conviction):.1f} | Grade: {grade.value}",
             f"Execution Mode: {bracket.execution_mode} | Resistance Absorption: {absorption_score:.1f}/100 ({breakout_status})",
             f"Anti-Chasing Validated: 72h excursion {float(exc_72h*100):.1f}%, dist from high {float(dist_high_72h*100):.1f}%",
-            f"Accepted above 30d POC (${float(poc_price):.4f}) | VAH: ${float(vah_price):.4f}",
+            poc_desc,
         ]
         if vol_contraction_ratio <= Decimal("0.90"):
             rationale.append(f"Volume Dry-Up (7d/14d: {float(vol_contraction_ratio):.2f}x)")
@@ -825,7 +829,7 @@ class CryptoOpportunityScreener:
             (
                 "Value Acceptance",
                 gate_details.get("L4", True),
-                f"Accepted above 30d POC (${float(poc_price):.4f}) | VAH: ${float(vah_price):.4f}",
+                poc_desc,
             ),
             (
                 "Volatility Compression",
