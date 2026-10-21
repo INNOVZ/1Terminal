@@ -245,6 +245,8 @@ class TestnetTrader:
         except Exception as exc:
             log.warning("testnet_open_algo_orders_query_failed", error=str(exc))
 
+        return orders
+
     async def get_active_positions(self) -> list[dict[str, Any]]:
         """Fetch all currently open positions directly from Binance Futures."""
         client = self._get_client()
