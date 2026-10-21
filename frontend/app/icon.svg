@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Satin Silver Gradient -->
+    <linearGradient id="satinSilver" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#B8BCC2" />
+      <stop offset="35%" stop-color="#F5F7FA" />
+      <stop offset="50%" stop-color="#FFFFFF" />
+      <stop offset="65%" stop-color="#D1D5DB" />
+      <stop offset="100%" stop-color="#8E939E" />
+    </linearGradient>
+
+    <!-- Outer Rounded Triangle & Inner Cutout Mask -->
+    <clipPath id="alfaSilhouette">
+      <path d="M 242 68 
+               Q 256 44 270 68 
+               L 452 418 
+               Q 465 444 436 444 
+               L 336 444 
+               Q 318 444 310 428 
+               L 256 312 
+               L 202 428 
+               Q 194 444 176 444 
+               L 76 444 
+               Q 47 444 60 418 Z" />
+    </clipPath>
+  </defs>
+
+  <!-- Pure #000000 Background with Rounded App Corners -->
+  <rect width="512" height="512" rx="96" fill="#000000" />
+
+  <!-- 4 Bold Horizontal Bars (Optimized for 16px/32px Favicon Legibility) -->
+  <g clip-path="url(#alfaSilhouette)" fill="url(#satinSilver)">
+    <!-- Top Peak -->
+    <rect x="40" y="44" width="432" height="82" rx="8" />
+    <!-- Upper Mid Bar -->
+    <rect x="40" y="152" width="432" height="78" rx="8" />
+    <!-- Lower Mid Bar (Split by A Cutout) -->
+    <rect x="40" y="256" width="432" height="78" rx="8" />
+    <!-- Base Bar -->
+    <rect x="40" y="360" width="432" height="84" rx="8" />
+  </g>
+</svg>

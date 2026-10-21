@@ -5,9 +5,19 @@ import "./globals.css";
 const BottomDock = dynamic(() => import("./components/BottomDock"));
 
 export const metadata: Metadata = {
-  title: "ALFA Terminal — Pre-Breakout Radar & Multi-Day Watchlist",
+  title: "Alfa Terminal — Quant Crypto Screener | Multi-Day Watchlist",
   description:
     "Institutional Wyckoff accumulation screener, Volume Profile value acceptance engine, and multi-day crypto watchlist for Binance USD-M markets.",
+  icons: {
+    icon: [
+      {
+        url: "/favicon.svg",
+        type: "image/svg+xml",
+      },
+    ],
+    shortcut: "/favicon.svg",
+    apple: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
