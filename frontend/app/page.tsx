@@ -281,12 +281,12 @@ function RadarPageContent() {
         data = (await res.json()) as ScreenerResponse;
       }
 
-      // If backend reports an active background scan, poll until it finishes (max 50s)
+      // If backend reports an active background scan, poll until it finishes
       if (data && data.is_scanning) {
         let pollAttempts = 0;
-        const maxPollAttempts = 35;
+        const maxPollAttempts = 150; // Allow up to 5 minutes for full universe analysis
         while (pollAttempts < maxPollAttempts) {
-          await new Promise((r) => setTimeout(r, 1500));
+          await new Promise((r) => setTimeout(r, 2000));
           pollAttempts++;
           try {
             const pollRes = await fetch("/api/screener/live").catch(() => null);
@@ -1017,19 +1017,6 @@ function RadarPageContent() {
             >
               ALFA TERMINAL
             </span>
-            <span
-              style={{
-                background: "rgba(244, 157, 13, 0.1)",
-                color: "#f49d0d",
-                border: "1px solid rgba(244, 157, 13, 0.3)",
-                borderRadius: "4px",
-                fontSize: "10px",
-                fontWeight: 700,
-                padding: "1px 6px",
-              }}
-            >
-              BINANCE USD-M
-            </span>
           </div>
 
           <div
@@ -1218,7 +1205,7 @@ function RadarPageContent() {
                   gap: "4px",
                 }}
               >
-                <Zap size={11} /> COIL ACTIVE
+                <Zap size={11} />
               </div>
             </div>
           )}
