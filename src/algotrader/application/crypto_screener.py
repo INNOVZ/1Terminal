@@ -233,12 +233,12 @@ class CryptoOpportunityScreener:
         btc_ret_4h = _return_over(btc_candles_1h, 4) if len(btc_candles_1h) >= 5 else ZERO
         is_btc_cascade = btc_ret_1h <= Decimal("-0.025") or btc_ret_4h <= Decimal("-0.045")
 
-        # 4. Evaluate Candidates Concurrently (paced to strictly respect Binance weight limit)
-        semaphore = asyncio.Semaphore(5)
+        # 4. Evaluate Candidates Concurrently (paced with tuned connection pool to respect Binance limits)
+        semaphore = asyncio.Semaphore(15)
 
         async def eval_instrument(inst: Instrument) -> list[CryptoOpportunity]:
             async with semaphore:
-                await asyncio.sleep(0.05)  # Polite pacing: keeps request rate well below Binance 2400-wt ceiling
+                await asyncio.sleep(0.01)  # High-throughput pacing well within Binance 2400-wt ceiling
                 res = await self._evaluate_single(
                     inst=inst,
                     quote=quotes_by_symbol[inst.id.symbol],

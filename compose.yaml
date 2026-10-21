@@ -7,8 +7,10 @@ services:
     volumes:
       - atlas-state:/app/state
       - ./data:/app/data
+      - ./src:/app/src:ro
     environment:
       ATLAS_STATE_DB_PATH: /app/state/atlas_state.sqlite3
+      PYTHONPATH: /app/src
     read_only: true
     tmpfs:
       - /tmp:size=64m,noexec,nosuid
