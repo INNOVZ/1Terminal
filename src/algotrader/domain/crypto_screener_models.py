@@ -153,6 +153,7 @@ class CryptoOpportunity:
     execution_mode: str = "RETEST_ACCUMULATION"
     resistance_absorption_score: Decimal | None = None
     breakout_readiness_status: str = "RETEST_ONLY_WAIT_FOR_DIP"
+    candles: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
     def as_dict(self) -> dict[str, object]:
         tick = self.instrument.price_tick
@@ -223,6 +224,7 @@ class CryptoOpportunity:
             "rationale": list(self.rationale),
             "macro_narrative": self.macro_narrative,
             "evaluated_at": self.evaluated_at.isoformat(),
+            "candles": list(self.candles),
         }
 
 

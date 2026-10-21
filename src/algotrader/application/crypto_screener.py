@@ -172,7 +172,7 @@ class CryptoOpportunityScreener:
         liquid_instruments = list(best_by_base.values())
 
         # Stage 5: Institutional Liquidity Index (ILI) Stratification (Top liquid descending)
-        limit_symbols = max_symbols if max_symbols is not None else 250
+        limit_symbols = max_symbols if max_symbols is not None else 320
         limit_symbols = min(limit_symbols, len(liquid_instruments))
 
         ili_inputs = [
@@ -184,10 +184,27 @@ class CryptoOpportunityScreener:
         ]
         ranked_symbols = compute_ili_ranks(ili_inputs)
         inst_by_symbol = {inst.id.symbol: inst for inst in liquid_instruments}
+
+        # Primary selection: Top liquid by ILI
+        selected_set: set[str] = {
+            r.symbol for r in ranked_symbols[:limit_symbols] if r.symbol in inst_by_symbol
+        }
+
+        # Priority inclusion: Any contract demonstrating active volume/expansion
+        # (e.g. 24h volume >= $2M or absolute 24h price change >= 2.5%) even if ranked near boundary
+        for inst in liquid_instruments:
+            sym = inst.id.symbol
+            if sym in selected_set:
+                continue
+            q = quotes_by_symbol.get(sym)
+            if q is not None:
+                if q.quote_volume_24h >= Decimal("2000000") or abs(q.price_change_percent_24h) >= Decimal("2.5"):
+                    selected_set.add(sym)
+                    if len(selected_set) >= 360:
+                        break
+
         selected_instruments = [
-            inst_by_symbol[r.symbol]
-            for r in ranked_symbols[:limit_symbols]
-            if r.symbol in inst_by_symbol
+            inst_by_symbol[s] for s in [r.symbol for r in ranked_symbols] if s in selected_set
         ]
         if not selected_instruments:
             selected_instruments = liquid_instruments[:limit_symbols]
@@ -220,8 +237,8 @@ class CryptoOpportunityScreener:
 
         async def eval_instrument(inst: Instrument) -> list[CryptoOpportunity]:
             async with semaphore:
-                await asyncio.sleep(0.065)  # Polite pacing: keeps request rate well below Binance 2400-wt ceiling
-                return await self._evaluate_single(
+                await asyncio.sleep(0.05)  # Polite pacing: keeps request rate well below Binance 2400-wt ceiling
+                res = await self._evaluate_single(
                     inst=inst,
                     quote=quotes_by_symbol[inst.id.symbol],
                     market=market,
@@ -233,6 +250,8 @@ class CryptoOpportunityScreener:
                     is_btc_cascade=is_btc_cascade,
                     btc_ret_1h=btc_ret_1h,
                 )
+                await asyncio.sleep(0)  # Cooperative yield to event loop for healthchecks
+                return res
 
         results = await asyncio.gather(
             *(eval_instrument(inst) for inst in selected_instruments),
@@ -359,6 +378,7 @@ class CryptoOpportunityScreener:
             return []
 
         # Indicators
+        await asyncio.sleep(0)  # Cooperative yield to event loop for healthchecks
         snap_1h = snapshot(closed_1h)
         closes_4h = [c.close for c in closed_4h]
         ema20_4h = ema(closes_4h, 20)[-1]
@@ -394,6 +414,8 @@ class CryptoOpportunityScreener:
                     derivatives = deriv_res
             except Exception:
                 derivatives = None
+
+        await asyncio.sleep(0)  # Cooperative yield before intensive scoring checks
 
         # 1. Pre-Breakout Accumulation Evaluation (BEFORE the move - LONG)
         accum_opp = None
@@ -923,6 +945,18 @@ class CryptoOpportunityScreener:
             inst.quantity_step,
         )
 
+        recent_candles = tuple(
+            {
+                "time": int(c.closed_at.timestamp()),
+                "open": float(c.open),
+                "high": float(c.high),
+                "low": float(c.low),
+                "close": float(c.close),
+                "volume": float(c.volume),
+            }
+            for c in closed_1h[-200:]
+        )
+
         return CryptoOpportunity(
             instrument=inst,
             direction=Direction.LONG,
@@ -965,6 +999,7 @@ class CryptoOpportunityScreener:
             cvd_z_score=cvd_metrics.cvd_z_score,
             orderflow_absorption=cvd_metrics.is_bullish_absorption,
             max_recommended_size_usd=max_size_usd,
+            candles=recent_candles,
         )
 
     def _score_distribution_setup(
@@ -1391,6 +1426,18 @@ class CryptoOpportunityScreener:
         if cvd_metrics.is_bearish_distribution:
             rationale.append(f"Institutional Distribution Footprint: 24h CVD negative ({cvd_metrics.cvd_z_score:+.1f}z) with price compressed")
 
+        recent_candles = tuple(
+            {
+                "time": int(c.closed_at.timestamp()),
+                "open": float(c.open),
+                "high": float(c.high),
+                "low": float(c.low),
+                "close": float(c.close),
+                "volume": float(c.volume),
+            }
+            for c in closed_1h[-200:]
+        )
+
         return CryptoOpportunity(
             instrument=inst,
             direction=Direction.SHORT,
@@ -1430,6 +1477,7 @@ class CryptoOpportunityScreener:
             cvd_z_score=cvd_metrics.cvd_z_score,
             orderflow_absorption=cvd_metrics.is_bearish_distribution,
             max_recommended_size_usd=max_size_usd,
+            candles=recent_candles,
         )
 
     def _calc_residual_alpha(
@@ -1977,6 +2025,18 @@ class CryptoOpportunityScreener:
             checklist_passed=pass_count,
         )
 
+        recent_candles = tuple(
+            {
+                "time": int(c.closed_at.timestamp()),
+                "open": float(c.open),
+                "high": float(c.high),
+                "low": float(c.low),
+                "close": float(c.close),
+                "volume": float(c.volume),
+            }
+            for c in closed_1h[-200:]
+        )
+
         return CryptoOpportunity(
             instrument=inst,
             direction=direction,
@@ -2017,4 +2077,5 @@ class CryptoOpportunityScreener:
             cvd_z_score=cvd_metrics.cvd_z_score,
             orderflow_absorption=cvd_metrics.is_bullish_absorption if direction is Direction.LONG else cvd_metrics.is_bearish_distribution,
             max_recommended_size_usd=max_size_usd,
+            candles=recent_candles,
         )

@@ -143,7 +143,7 @@ _screener_task_lock = asyncio.Lock()
 async def _do_crypto_screen(
     mode: str = "all",
     min_score: float = 50.0,
-    max_symbols: int = 250,
+    max_symbols: int = 320,
 ) -> dict[str, Any]:
     global _screener_cache, _cache_timestamp, _is_refreshing
     _is_refreshing = True
@@ -190,6 +190,8 @@ async def _do_crypto_screen(
 
             async def _fetch_pick_candles(opp: Any) -> dict[str, Any]:
                 opp_dict = cast(dict[str, Any], opp.as_dict())
+                if opp_dict.get("candles"):
+                    return opp_dict
                 sym = opp.instrument.id.symbol
                 inst = inst_map.get(sym)
                 candles_payload = []
@@ -379,7 +381,7 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
             await asyncio.sleep(delay)
             _last_cron_run = datetime.now(UTC)
             print(f"🚀 [Cron] Waking up for aligned {interval_hours}-hour USD-M screener sweep (all liquid contracts)...")
-            await _do_crypto_screen(mode="all", min_score=50.0, max_symbols=500)
+            await _do_crypto_screen(mode="all", min_score=50.0, max_symbols=320)
         except asyncio.CancelledError:
             break
         except Exception as exc:
