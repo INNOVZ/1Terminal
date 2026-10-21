@@ -257,7 +257,9 @@ def calculate_continuous_long_factor_scores(
     ).quantize(Decimal("0.1"))
 
     # 4. Trend Alignment & Momentum Expansion (0 to 100)
-    if close >= ema20_4h >= ema50_4h:
+    if close < ema200_4h and ema50_4h < ema200_4h * Decimal("0.98"):
+        ema_score = Decimal("25.0")
+    elif close >= ema20_4h >= ema50_4h:
         ema_score = Decimal("85.0")
     elif close >= ema50_4h:
         ema_score = Decimal("70.0")

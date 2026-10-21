@@ -74,7 +74,22 @@ def evaluate_long_gates(s: GateEvaluationInput, archetype: str) -> tuple[bool, s
         and (s.close >= s.ema50_4h)
         and (s.vcr_4h <= 0.90)
     )
-    if not (is_standard_trend or is_wyckoff_spring):
+    # Macro Death Cross Veto: Price and EMA50 must not be submerged in a severe macro downtrend under EMA200
+    has_macro_death_cross = (
+        (s.ema50_4h < s.ema200_4h * 0.95)
+        and (s.close < s.ema200_4h * 0.96)
+    )
+
+    # Post-Crash Markdown Filter: Exclude tokens that dumped severely over 7 days while bleeding OI or deeply below EMA200
+    is_post_crash_markdown = (
+        (s.ret_7d <= -0.20)
+        and (
+            (s.oi_delta_7d <= -0.08)
+            or (s.close < s.ema200_4h * 0.95)
+        )
+    )
+
+    if not (is_standard_trend or is_wyckoff_spring) or has_macro_death_cross or is_post_crash_markdown:
         return False, "REJECT_L1_TREND_OR_SPRING_BASELINE"
 
     # Gate L2: Anti-Chasing 2.0 & High-Tight Flag Continuation

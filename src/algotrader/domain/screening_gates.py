@@ -50,6 +50,7 @@ class LongGateInputs:
     oi_delta_24h: Decimal | None = None
     rsi_1d: Decimal | None = None
     rsi_1w: Decimal | None = None
+    ret_7d: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +125,27 @@ def evaluate_long_gates(
             or inputs.close >= inputs.poc_30d * Decimal("0.975")
         )
     )
-    l1 = is_standard_trend or is_wyckoff_spring or is_base_consolidation or is_squeeze_absorption
+
+    # Macro Death Cross Veto: Price and EMA50 must not be submerged in a severe macro downtrend under EMA200
+    has_macro_death_cross = (
+        (inputs.ema50_4h < inputs.ema200_4h * Decimal("0.95"))
+        and (inputs.close < inputs.ema200_4h * Decimal("0.96"))
+    )
+
+    # Post-Crash Markdown Filter: Exclude tokens that dumped severely over 7 days while bleeding OI or deeply below EMA200
+    is_post_crash_markdown = (
+        (inputs.ret_7d <= Decimal("-0.20"))
+        and (
+            (inputs.oi_delta_7d is not None and inputs.oi_delta_7d <= Decimal("-0.08"))
+            or (inputs.close < inputs.ema200_4h * Decimal("0.95"))
+        )
+    )
+
+    l1 = (
+        (is_standard_trend or is_wyckoff_spring or is_base_consolidation or is_squeeze_absorption)
+        and not has_macro_death_cross
+        and not is_post_crash_markdown
+    )
 
     # Gate L2: Anti-Chasing 2.0 & High-Tight Flag Continuation
     atr_ext_4h = (inputs.close - inputs.ema20_4h) / atr

@@ -322,10 +322,11 @@ class CryptoOpportunityScreener:
         btc_ret_1h: Decimal = ZERO,
     ) -> list[CryptoOpportunity]:
         """Evaluate a single instrument across 1h, 4h, derivatives, and alpha factors."""
-        # Fetch 1h, 4h, and 1w candles concurrently (750 1h = 30 days for 1H VPVR, 180 4h = 30 days, 50 1w = ~1 year for HTF weekly RSI)
-        c1h, c4h, c1w = await asyncio.gather(
+        # Fetch 1h, 4h, 1d, and 1w candles concurrently (750 1h = 30 days for 1H VPVR, 250 4h = 41 days for genuine 4H EMA200, 100 1d = ~100 days for native 1D RSI, 50 1w = ~1 year for HTF weekly RSI)
+        c1h, c4h, c1d, c1w = await asyncio.gather(
             market.candles(inst, "1h", 750),
-            market.candles(inst, "4h", 180),
+            market.candles(inst, "4h", 250),
+            market.candles(inst, "1d", 100),
             market.candles(inst, "1w", 50),
             return_exceptions=True,
         )
@@ -337,6 +338,11 @@ class CryptoOpportunityScreener:
 
         closed_1h = sorted([c for c in c1h if c.closed], key=lambda x: x.closed_at)
         closed_4h = sorted([c for c in c4h if c.closed], key=lambda x: x.closed_at)
+        candles_1d = (
+            sorted(list(c1d), key=lambda x: x.closed_at)
+            if (not isinstance(c1d, BaseException) and c1d)
+            else []
+        )
         candles_1w = (
             sorted(list(c1w), key=lambda x: x.closed_at)
             if (not isinstance(c1w, BaseException) and c1w)
@@ -401,6 +407,7 @@ class CryptoOpportunityScreener:
                 is_btc_cascade=is_btc_cascade,
                 btc_ret_1h=btc_ret_1h,
                 residual_24h=residual_24h,
+                candles_1d=candles_1d,
                 candles_1w=candles_1w,
             )
 
@@ -422,6 +429,7 @@ class CryptoOpportunityScreener:
                 is_btc_cascade=is_btc_cascade,
                 btc_ret_1h=btc_ret_1h,
                 residual_24h=residual_24h,
+                candles_1d=candles_1d,
                 candles_1w=candles_1w,
             )
 
@@ -507,6 +515,7 @@ class CryptoOpportunityScreener:
         is_btc_cascade: bool = False,
         btc_ret_1h: Decimal = ZERO,
         residual_24h: Decimal = ZERO,
+        candles_1d: Sequence[Candle] | None = None,
         candles_1w: Sequence[Candle] | None = None,
     ) -> CryptoOpportunity | None:
         """Score pre-breakout volatility squeeze, base coiling, and silent accumulation BEFORE expansion (V2.5)."""
@@ -518,7 +527,7 @@ class CryptoOpportunityScreener:
             return None
         ema20_4h = ema(closes_4h, 20)[-1]
         ema50_4h = ema(closes_4h, 50)[-1] if len(closes_4h) >= 50 else ema20_4h
-        ema200_4h = ema(closes_4h, 200)[-1] if len(closes_4h) >= 200 else (ema50_4h * Decimal("0.96"))
+        ema200_4h = ema(closes_4h, 200)[-1] if len(closes_4h) >= 200 else ema(closes_4h, len(closes_4h))[-1]
         rsi_4h = rsi(closes_4h, 14)[-1]
 
         # Returns & Excursions
@@ -654,10 +663,14 @@ class CryptoOpportunityScreener:
         )
         archetype = classify_long_archetype(long_features)
         if archetype is None:
-            return None
-
-        # Multi-Timeframe Candle Resampling & HTF RSI (Anti-Chasing Gates)
-        closed_1d = resample_candles(closed_4h, "1d")
+            return None        # Multi-Timeframe Candle Handling & HTF RSI (Anti-Chasing Gates)
+        # Daily candles: prefer direct 1D candles (>= 15 bars), fallback to resampled 1D
+        d_bars = (
+            [c for c in candles_1d if c.closed]
+            if (candles_1d and len(candles_1d) >= 15)
+            else (resample_candles(closed_4h, "1d") if closed_4h else [])
+        )
+        closed_1d = d_bars
         closes_1d = [c.close for c in closed_1d]
         rsi_1d_series = rsi(closes_1d, 14) if len(closes_1d) >= 15 else []
         rsi_1d = rsi_1d_series[-1] if rsi_1d_series else None
@@ -700,6 +713,7 @@ class CryptoOpportunityScreener:
             low_4h=closed_4h[-1].low if closed_4h else close,
             atr14_1h=snap_1h.atr14,
             funding_rate_8h=funding,
+            ret_7d=ret_7d,
         )
         gates_passed, gate_details = evaluate_long_gates(gate_inputs, archetype)
         if not gates_passed:
@@ -958,6 +972,7 @@ class CryptoOpportunityScreener:
         is_btc_cascade: bool = False,
         btc_ret_1h: Decimal = ZERO,
         residual_24h: Decimal = ZERO,
+        candles_1d: Sequence[Candle] | None = None,
         candles_1w: Sequence[Candle] | None = None,
     ) -> CryptoOpportunity | None:
         """Deep institutional short screening engine according to AGENT.md V2.5:
@@ -994,7 +1009,12 @@ class CryptoOpportunityScreener:
         range_height_30d = (high_30d - low_30d) / max(low_30d, Decimal("1e-8"))
 
         # 2. Multi-Timeframe Candle Resampling & RSI
-        closed_1d = resample_candles(closed_4h, "1d")
+        d_bars = (
+            [c for c in candles_1d if c.closed]
+            if (candles_1d and len(candles_1d) >= 15)
+            else (resample_candles(closed_4h, "1d") if closed_4h else [])
+        )
+        closed_1d = d_bars
         w_bars = candles_1w if (candles_1w and len(candles_1w) >= 15) else (resample_candles(closed_1d, "1w") if closed_1d else [])
         closes_1d = [c.close for c in closed_1d]
         closes_1w = [c.close for c in w_bars]
@@ -1191,7 +1211,7 @@ class CryptoOpportunityScreener:
             archetype, snap_1h.adx14, snap_1h.momentum_reference_adx14, snap_1h.minus_di, snap_1h.plus_di
         )
         closes_4h_calc = [c.close for c in closed_4h]
-        ema200_4h = ema(closes_4h_calc, 200)[-1] if len(closes_4h_calc) >= 200 else ema50_4h
+        ema200_4h = ema(closes_4h_calc, 200)[-1] if len(closes_4h_calc) >= 200 else ema(closes_4h_calc, len(closes_4h_calc))[-1]
         dist_to_trigger = (close - bracket.breakout_trigger) / max(close, Decimal("1e-8"))
         dist_to_entry = abs(close - bracket.suggested_entry) / max(close, Decimal("1e-8"))
         if dist_to_entry > Decimal("0.045"):

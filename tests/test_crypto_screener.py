@@ -112,6 +112,12 @@ class FakeCryptoMarketData:
         symbol = instrument.id.symbol
         if interval == "1h":
             return self._candles_1h.get(symbol, [])[-limit:]
+        if interval == "1d":
+            if hasattr(self, "_candles_1d") and symbol in self._candles_1d:
+                return self._candles_1d[symbol][-limit:]
+            c4h = self._candles_4h.get(symbol, [])
+            from algotrader.domain.indicators import resample_candles
+            return resample_candles([c for c in c4h if c.closed], "1d")[-limit:]
         if interval == "1w":
             if hasattr(self, "_candles_1w") and symbol in self._candles_1w:
                 return self._candles_1w[symbol][-limit:]
@@ -1069,6 +1075,93 @@ async def test_weekly_rsi_overbought_eliminated_from_long_gates(settings: Settin
     # Long opportunities must be completely eliminated due to Gate L2 HTF 1W RSI >= 70
     long_opps = [o for o in opps if o.direction == Direction.LONG]
     assert len(long_opps) == 0, f"Expected 0 long opps for overbought weekly RSI token, got {long_opps}"
+
+
+@pytest.mark.asyncio
+async def test_macro_death_cross_eliminated_from_long_gates(settings: Settings) -> None:
+    """Validate that tokens in a macro death cross (EMA50 and close far below EMA200) are eliminated by Gate L1."""
+    inst = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="SAGAUSDT")
+    # Construct 4H candles where recent prices plunged below EMA200
+    # First 200 bars high (~$0.05), last 50 bars low (~$0.02)
+    start = datetime(2026, 6, 1, tzinfo=UTC)
+    h4_candles: list[Candle] = []
+    curr = Decimal("0.050")
+    for i in range(200):
+        h4_candles.append(
+            Candle(
+                opened_at=start + timedelta(hours=4 * i),
+                closed_at=start + timedelta(hours=4 * (i + 1)),
+                open=curr,
+                high=curr + Decimal("0.001"),
+                low=curr - Decimal("0.001"),
+                close=curr,
+                volume=Decimal("100000"),
+                quote_volume=Decimal("5000000"),
+                closed=True,
+            )
+        )
+    # Cascade down to 0.020 for the remaining 50 bars
+    curr = Decimal("0.020")
+    for i in range(200, 250):
+        h4_candles.append(
+            Candle(
+                opened_at=start + timedelta(hours=4 * i),
+                closed_at=start + timedelta(hours=4 * (i + 1)),
+                open=curr,
+                high=curr + Decimal("0.0005"),
+                low=curr - Decimal("0.0005"),
+                close=curr,
+                volume=Decimal("50000"),
+                quote_volume=Decimal("1000000"),
+                closed=True,
+            )
+        )
+
+    # 1H candles consolidating at 0.020
+    h1_candles: list[Candle] = []
+    h1_start = start + timedelta(hours=4 * 250 - 750)
+    for i in range(750):
+        h1_candles.append(
+            Candle(
+                opened_at=h1_start + timedelta(hours=i),
+                closed_at=h1_start + timedelta(hours=i + 1),
+                open=Decimal("0.020"),
+                high=Decimal("0.0202"),
+                low=Decimal("0.0198"),
+                close=Decimal("0.020"),
+                volume=Decimal("20000"),
+                quote_volume=Decimal("400000"),
+                closed=True,
+            )
+        )
+
+    market = FakeCryptoMarketData(
+        [inst],
+        {"SAGAUSDT": h1_candles},
+        {"SAGAUSDT": h4_candles},
+    )
+
+    screener = CryptoOpportunityScreener(settings)
+    opps = await screener._evaluate_single(
+        inst=inst,
+        quote=Quote(
+            instrument_id=inst.id,
+            bid=Decimal("0.020"),
+            ask=Decimal("0.0201"),
+            last=Decimal("0.020"),
+            quote_volume_24h=Decimal("10000000"),
+        ),
+        market=market,
+        derivatives_port=None,
+        btc_candles=h1_candles,
+        macro_context=MacroSentimentContext(),
+        mode=ScreenerMode.ACCUMULATION,
+        target_direction=Direction.LONG,
+    )
+
+    long_opps = [o for o in opps if o.direction == Direction.LONG]
+    assert len(long_opps) == 0, f"Expected SAGA-like death cross token to be eliminated from Longs, got {long_opps}"
+
 
 
 
