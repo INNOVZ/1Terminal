@@ -159,7 +159,7 @@ class TradingSystem:
         settings: Settings | None = None,
         min_score: Decimal | None = None,
         target_direction: Direction | None = None,
-        top_n: int = 30,
+        top_n: int | None = None,
         max_symbols: int | None = None,
         mode: ScreenerMode = ScreenerMode.ACCUMULATION,
     ) -> list[CryptoOpportunity]:

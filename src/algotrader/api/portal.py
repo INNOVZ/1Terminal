@@ -160,7 +160,7 @@ async def _do_crypto_screen(
             min_score=Decimal(str(min_score)),
             max_symbols=max_symbols,
             mode=screener_mode,
-            top_n=50,
+            top_n=None,
         )
 
         inst_map = {opp.instrument.id.symbol: opp.instrument for opp in opportunities}
@@ -183,9 +183,11 @@ async def _do_crypto_screen(
 
             qualified_opps = [opp for opp in opportunities if _is_qualified(opp)]
             ranked_opps = sorted(qualified_opps, key=_conviction, reverse=True)
-            top_picks = ranked_opps[:32]
+            top_picks = ranked_opps
 
-            # Pre-fetch 1H candles for top opportunities concurrently
+            # Pre-fetch 1H candles for top opportunities concurrently (paced with semaphore)
+            candle_sem = asyncio.Semaphore(10)
+
             async def _fetch_pick_candles(opp: Any) -> dict[str, Any]:
                 opp_dict = cast(dict[str, Any], opp.as_dict())
                 sym = opp.instrument.id.symbol
@@ -193,19 +195,20 @@ async def _do_crypto_screen(
                 candles_payload = []
                 if inst:
                     try:
-                        raw_candles = await asyncio.wait_for(futures.candles(inst, "1h", 250), timeout=3.0)
-                        candles_payload = [
-                            {
-                                "time": int(c.closed_at.timestamp()),
-                                "open": float(c.open),
-                                "high": float(c.high),
-                                "low": float(c.low),
-                                "close": float(c.close),
-                                "volume": float(c.volume),
-                            }
-                            for c in raw_candles
-                            if c.closed
-                        ]
+                        async with candle_sem:
+                            raw_candles = await asyncio.wait_for(futures.candles(inst, "1h", 250), timeout=3.0)
+                            candles_payload = [
+                                {
+                                    "time": int(c.closed_at.timestamp()),
+                                    "open": float(c.open),
+                                    "high": float(c.high),
+                                    "low": float(c.low),
+                                    "close": float(c.close),
+                                    "volume": float(c.volume),
+                                }
+                                for c in raw_candles
+                                if c.closed
+                            ]
                     except Exception:
                         pass
                 opp_dict["candles"] = candles_payload

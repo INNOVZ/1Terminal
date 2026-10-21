@@ -241,15 +241,32 @@ function RadarPageContent() {
   const handleCandleChange = useCallback((c: Candle) => setActiveCandle(c), []);
 
   const handleSelectOpportunity = useCallback((opp: Opportunity) => {
-    const candles =
+    const existingCandles =
       opp.candles && opp.candles.length > 0
         ? opp.candles
         : candleStore[opp.symbol] || [];
-    setActiveOpportunity({ ...opp, candles });
-    if (candles && candles.length > 0) {
-      setActiveCandle(candles[candles.length - 1]);
+
+    setActiveOpportunity({ ...opp, candles: existingCandles });
+    if (existingCandles && existingCandles.length > 0) {
+      setActiveCandle(existingCandles[existingCandles.length - 1]);
+    } else {
+      // On-demand fetch from chart API if candles were not pre-fetched in screener payload
+      void fetch(`/api/chart/${opp.symbol}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((chartData) => {
+          if (chartData && Array.isArray(chartData.candles) && chartData.candles.length > 0) {
+            setActiveOpportunity((prev) => {
+              if (prev && prev.symbol === opp.symbol) {
+                return { ...prev, candles: chartData.candles };
+              }
+              return prev;
+            });
+            setActiveCandle(chartData.candles[chartData.candles.length - 1]);
+          }
+        })
+        .catch(() => {});
     }
-  }, []);
+  }, [candleStore]);
 
   const handleLiveTick = useCallback(
     (tick: { price: number }) => {

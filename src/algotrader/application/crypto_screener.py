@@ -100,7 +100,7 @@ class CryptoOpportunityScreener:
         *,
         min_score: Decimal | None = None,
         target_direction: Direction | None = None,
-        top_n: int = 30,
+        top_n: int | None = None,
         max_symbols: int | None = None,
         mode: ScreenerMode = ScreenerMode.ACCUMULATION,
     ) -> list[CryptoOpportunity]:
@@ -299,10 +299,14 @@ class CryptoOpportunityScreener:
             ]
             all_opps = deduped_longs + qualified_shorts
             all_opps.sort(key=_conviction, reverse=True)
-            return all_opps[:top_n]
+            if top_n is not None:
+                return all_opps[:top_n]
+            return all_opps
 
         final_opps = deduped_longs if target_direction is Direction.LONG else deduped_shorts
-        return final_opps[:top_n]
+        if top_n is not None:
+            return final_opps[:top_n]
+        return final_opps
 
     async def _evaluate_single(
         self,

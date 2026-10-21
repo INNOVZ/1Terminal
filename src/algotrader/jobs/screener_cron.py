@@ -71,9 +71,15 @@ async def execute_screener_job(
             seen_bases.add(opp.instrument.base_asset)
             deduped_shorts.append(opp)
 
-    balanced_picks = deduped_longs[:24] + deduped_shorts[:8]
+    qualified_shorts = [
+        s for s in deduped_shorts
+        if (getattr(s, "conviction", None) is None or s.conviction >= Decimal("55.0"))
+        and s.score >= Decimal("60.0")
+        and (getattr(s, "checklist_verification", None) is None or s.checklist_verification.passed_count >= 3)
+    ]
+    balanced_picks = deduped_longs + qualified_shorts
     if not balanced_picks:
-        balanced_picks = [opp for opp in opportunities if opp.grade != OpportunityGrade.SUB_GRADE][:32]
+        balanced_picks = [opp for opp in opportunities if opp.grade != OpportunityGrade.SUB_GRADE]
 
     def _conv(o: Any) -> float:
         base = float(o.conviction) if o.conviction is not None else float(o.estimated_win_rate_pct) * 0.4 + float(o.score) * 0.6
