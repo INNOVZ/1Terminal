@@ -322,10 +322,11 @@ class CryptoOpportunityScreener:
         btc_ret_1h: Decimal = ZERO,
     ) -> list[CryptoOpportunity]:
         """Evaluate a single instrument across 1h, 4h, derivatives, and alpha factors."""
-        # Fetch 1h and 4h candles concurrently (750 1h = 30 days for 1H VPVR, 180 4h = 30 days)
-        c1h, c4h = await asyncio.gather(
+        # Fetch 1h, 4h, and 1w candles concurrently (750 1h = 30 days for 1H VPVR, 180 4h = 30 days, 50 1w = ~1 year for HTF weekly RSI)
+        c1h, c4h, c1w = await asyncio.gather(
             market.candles(inst, "1h", 750),
             market.candles(inst, "4h", 180),
+            market.candles(inst, "1w", 50),
             return_exceptions=True,
         )
 
@@ -336,6 +337,11 @@ class CryptoOpportunityScreener:
 
         closed_1h = sorted([c for c in c1h if c.closed], key=lambda x: x.closed_at)
         closed_4h = sorted([c for c in c4h if c.closed], key=lambda x: x.closed_at)
+        candles_1w = (
+            sorted(list(c1w), key=lambda x: x.closed_at)
+            if (not isinstance(c1w, BaseException) and c1w)
+            else []
+        )
 
         if len(closed_1h) < 210 or len(closed_4h) < 50:
             return []
@@ -395,6 +401,7 @@ class CryptoOpportunityScreener:
                 is_btc_cascade=is_btc_cascade,
                 btc_ret_1h=btc_ret_1h,
                 residual_24h=residual_24h,
+                candles_1w=candles_1w,
             )
 
         # 2. Pre-Breakdown Distribution Evaluation (BEFORE the dump - SHORT)
@@ -415,6 +422,7 @@ class CryptoOpportunityScreener:
                 is_btc_cascade=is_btc_cascade,
                 btc_ret_1h=btc_ret_1h,
                 residual_24h=residual_24h,
+                candles_1w=candles_1w,
             )
 
         # STRICT INSTITUTIONAL MUTUAL EXCLUSION:
@@ -499,6 +507,7 @@ class CryptoOpportunityScreener:
         is_btc_cascade: bool = False,
         btc_ret_1h: Decimal = ZERO,
         residual_24h: Decimal = ZERO,
+        candles_1w: Sequence[Candle] | None = None,
     ) -> CryptoOpportunity | None:
         """Score pre-breakout volatility squeeze, base coiling, and silent accumulation BEFORE expansion (V2.5)."""
         close = snap_1h.close
@@ -649,11 +658,13 @@ class CryptoOpportunityScreener:
 
         # Multi-Timeframe Candle Resampling & HTF RSI (Anti-Chasing Gates)
         closed_1d = resample_candles(closed_4h, "1d")
-        closed_1w = resample_candles(closed_1d, "1w") if closed_1d else []
         closes_1d = [c.close for c in closed_1d]
-        closes_1w = [c.close for c in closed_1w]
         rsi_1d_series = rsi(closes_1d, 14) if len(closes_1d) >= 15 else []
         rsi_1d = rsi_1d_series[-1] if rsi_1d_series else None
+
+        # Weekly candles: prefer direct 1W candles (>= 15 bars for 14-period RSI), fallback to resampled 1W
+        w_bars = candles_1w if (candles_1w and len(candles_1w) >= 15) else (resample_candles(closed_1d, "1w") if closed_1d else [])
+        closes_1w = [c.close for c in w_bars]
         rsi_1w_series = rsi(closes_1w, 14) if len(closes_1w) >= 15 else []
         rsi_1w = rsi_1w_series[-1] if rsi_1w_series else None
 
@@ -947,6 +958,7 @@ class CryptoOpportunityScreener:
         is_btc_cascade: bool = False,
         btc_ret_1h: Decimal = ZERO,
         residual_24h: Decimal = ZERO,
+        candles_1w: Sequence[Candle] | None = None,
     ) -> CryptoOpportunity | None:
         """Deep institutional short screening engine according to AGENT.md V2.5:
 
@@ -983,9 +995,9 @@ class CryptoOpportunityScreener:
 
         # 2. Multi-Timeframe Candle Resampling & RSI
         closed_1d = resample_candles(closed_4h, "1d")
-        closed_1w = resample_candles(closed_1d, "1w") if closed_1d else []
+        w_bars = candles_1w if (candles_1w and len(candles_1w) >= 15) else (resample_candles(closed_1d, "1w") if closed_1d else [])
         closes_1d = [c.close for c in closed_1d]
-        closes_1w = [c.close for c in closed_1w]
+        closes_1w = [c.close for c in w_bars]
 
         rsi_4h_series = rsi(closes_4h, 14)
         rsi_4h = rsi_4h_series[-1] if rsi_4h_series else Decimal("50")

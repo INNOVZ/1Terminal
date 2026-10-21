@@ -112,6 +112,10 @@ class FakeCryptoMarketData:
         symbol = instrument.id.symbol
         if interval == "1h":
             return self._candles_1h.get(symbol, [])[-limit:]
+        if interval == "1w":
+            if hasattr(self, "_candles_1w") and symbol in self._candles_1w:
+                return self._candles_1w[symbol][-limit:]
+            return []
         return self._candles_4h.get(symbol, [])[-limit:]
 
 
@@ -998,6 +1002,74 @@ async def test_screener_canonical_token_deduplication_usdt_vs_usdc(settings: Set
             assert opp.suggested_stop < opp.suggested_entry
         elif opp.direction == Direction.SHORT:
             assert opp.suggested_stop > opp.suggested_entry
+
+
+@pytest.mark.asyncio
+async def test_weekly_rsi_overbought_eliminated_from_long_gates(settings: Settings) -> None:
+    """A token whose weekly RSI >= 70.0 (e.g., JSTUSDT at 74.9) must be eliminated by Gate L2."""
+    inst = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="JSTUSDT")
+    started = datetime(2025, 1, 1, tzinfo=UTC)
+
+    # 50 weekly candles with an exhausted vertical pump yielding Weekly RSI ~ 75.0
+    w_candles: list[Candle] = []
+    price = Decimal("0.04")
+    for i in range(50):
+        # Heavy weekly upward pump in second half
+        inc = Decimal("0.0035") if i >= 20 else Decimal("0.0002")
+        prev = price
+        price += inc
+        w_candles.append(
+            Candle(
+                opened_at=started + timedelta(weeks=i),
+                closed_at=started + timedelta(weeks=i + 1),
+                open=prev,
+                high=price + Decimal("0.001"),
+                low=prev - Decimal("0.001"),
+                close=price,
+                volume=Decimal("100000"),
+                quote_volume=Decimal("1000000"),
+                closed=True,
+            )
+        )
+
+    # Verify that the generated weekly candles produce RSI >= 70
+    from algotrader.domain.indicators import rsi
+    w_rsi_series = rsi([c.close for c in w_candles], 14)
+    assert w_rsi_series[-1] >= Decimal("70.0"), f"Expected 1W RSI >= 70, got {w_rsi_series[-1]}"
+
+    # Normal 1H and 4H base candles
+    h1_candles = trending_candles(up=True, count=750)
+    h4_candles = trending_candles(up=True, count=180)
+
+    market = FakeCryptoMarketData(
+        [inst],
+        {"JSTUSDT": h1_candles},
+        {"JSTUSDT": h4_candles},
+    )
+    market._candles_1w = {"JSTUSDT": w_candles}
+
+    screener = CryptoOpportunityScreener(settings)
+    opps = await screener._evaluate_single(
+        inst=inst,
+        quote=Quote(
+            instrument_id=inst.id,
+            bid=price,
+            ask=price + Decimal("0.0001"),
+            last=price,
+            quote_volume_24h=Decimal("50000000"),
+        ),
+        market=market,
+        derivatives_port=None,
+        btc_candles=h1_candles,
+        macro_context=MacroSentimentContext(),
+        mode=ScreenerMode.ACCUMULATION,
+        target_direction=Direction.LONG,
+    )
+
+    # Long opportunities must be completely eliminated due to Gate L2 HTF 1W RSI >= 70
+    long_opps = [o for o in opps if o.direction == Direction.LONG]
+    assert len(long_opps) == 0, f"Expected 0 long opps for overbought weekly RSI token, got {long_opps}"
+
 
 
 
