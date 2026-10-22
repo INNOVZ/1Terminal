@@ -41,7 +41,8 @@ class LongGateInputs:
     rvol_4h: Decimal = Decimal("1.0")
     oi_delta_7d: Decimal | None = None
     oi_delta_4h: Decimal | None = None
-    taker_buy_ratio_4h: Decimal = Decimal("0.5")
+    oi_delta_1h: Decimal | None = None
+    taker_buy_ratio_4h: Decimal = Decimal("1.0000")
     # High-tight flag continuation inputs (Section 4)
     high_4h: Decimal | None = None
     low_4h: Decimal | None = None
@@ -51,6 +52,15 @@ class LongGateInputs:
     rsi_1d: Decimal | None = None
     rsi_1w: Decimal | None = None
     ret_7d: Decimal = Decimal("0")
+    # V2.7 Kinetic Ignition & Anti-Chasing 2.1 inputs
+    prior_bb_bandwidth_4h: Decimal | None = None
+    candle_4h_close_pos: Decimal | None = None
+    pivot_resistance: Decimal | None = None
+    has_kinetic_ignition: bool = False
+    pocket_pivot_1h: bool = False
+    micro_expansion_1h: bool = False
+    of_absorption_1h: bool = False
+    taker_buy_ratio_1h: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +83,7 @@ class ShortGateInputs:
     has_climax_blowoff: bool
     poc_30d: Decimal
     macd_hist_4h: Decimal
-    taker_buy_ratio_24h: Decimal
+    taker_buy_ratio_24h: Decimal = Decimal("1.0000")
     funding_rate_8h: Decimal | None = None
     oi_delta_7d: Decimal | None = None
     oi_delta_1h: Decimal | None = None
@@ -88,6 +98,73 @@ class ShortGateInputs:
     macd_hist_4h_prev: Decimal | None = None
     basis_bps: Decimal | None = None
     runup_30d: Decimal | None = None
+
+
+def compute_coil_maturity_score(inputs: LongGateInputs) -> int:
+    """Compute Coil Maturity Score (0-100) for volatility compression setups.
+
+    Evaluates the quality, depth, duration, and structure of volatility compression.
+    Candidates with mature coils (score >= 65) represent pre-loaded springs ready
+    to expand, allowing bypass of active volume ignition requirements in Gate L6.
+    """
+    coil_maturity = 0
+
+    # 1. Compression Depth (max 30 pts)
+    if inputs.bb_bandwidth_4h <= Decimal("0.08"):
+        coil_maturity += 30
+    elif inputs.bb_bandwidth_4h <= Decimal("0.12"):
+        coil_maturity += 25
+    elif inputs.bb_bandwidth_4h <= Decimal("0.18"):
+        coil_maturity += 15
+
+    # 2. Volume & Range Contraction (max 25 pts)
+    if inputs.vcr_4h <= Decimal("0.65"):
+        coil_maturity += 25
+    elif inputs.vcr_4h <= Decimal("0.85"):
+        coil_maturity += 15
+
+    # 3. Duration: Count consecutive low-volatility / squeeze bars (max 20 pts)
+    squeeze_bars = sum(1 for b in inputs.bb_inside_kc_4h_lookback if b) + (1 if inputs.bb_inside_kc_4h else 0)
+    if squeeze_bars >= 8:
+        coil_maturity += 20
+    elif squeeze_bars >= 4:
+        coil_maturity += 12
+
+    # 4. Position Quality & Structural Holding (max 15 pts)
+    if inputs.close >= inputs.ema20_4h * Decimal("0.995") and inputs.close >= inputs.poc_30d * Decimal("0.975"):
+        coil_maturity += 15
+
+    # 5. RSI Neutral Coil: Spring wound tightly without directional exhaustion (max 10 pts)
+    if Decimal("40.0") <= inputs.rsi_4h <= Decimal("60.0"):
+        coil_maturity += 10
+
+    return coil_maturity
+
+
+def is_volume_vacuum_setup(inputs: LongGateInputs) -> bool:
+    """Detect Volume Vacuum (Supply Exhaustion) Pre-Ignition Signal.
+
+    When trading volume drops to <= 55% of average, price volatility contracts (vcr <= 0.85),
+    24h price action is flat (-4% to +4%), and price holds structural EMA20,
+    the absence of volume reflects extreme seller exhaustion rather than lack of interest.
+    """
+    return bool(
+        inputs.rvol_4h <= Decimal("0.55")
+        and inputs.vcr_4h <= Decimal("0.85")
+        and abs(inputs.ret_24h) <= Decimal("0.04")
+        and inputs.bb_bandwidth_4h <= Decimal("0.15")
+        and inputs.close >= inputs.ema20_4h * Decimal("0.99")
+    )
+
+
+def is_mature_squeeze_setup(inputs: LongGateInputs) -> bool:
+    """Detect Mature Squeeze Duration (32+ hours in squeeze holding EMA20)."""
+    squeeze_bars = sum(1 for b in inputs.bb_inside_kc_4h_lookback if b) + (1 if inputs.bb_inside_kc_4h else 0)
+    return bool(
+        squeeze_bars >= 8
+        and inputs.bb_bandwidth_4h <= Decimal("0.15")
+        and inputs.close >= inputs.ema20_4h * Decimal("0.985")
+    )
 
 
 def evaluate_long_gates(
@@ -120,6 +197,7 @@ def evaluate_long_gates(
     )
     is_squeeze_absorption = (
         arch_val == "SHORT_SQUEEZE_ABSORPTION_LONG"
+        and (inputs.funding_rate_8h is None or inputs.funding_rate_8h <= Decimal("-0.00005"))
         and (
             inputs.close >= inputs.ema50_4h * Decimal("0.975")
             or inputs.close >= inputs.poc_30d * Decimal("0.975")
@@ -164,9 +242,33 @@ def evaluate_long_gates(
             and inputs.rsi_1h <= Decimal("75.0")
         )
     )
+    # Anti-Chasing 2.1: Standard range [-8.0%, +14.0%] with controlled first-bar ignition override for (+14.0%, +17.5%]
+    ret_in_standard = (Decimal("-0.08") <= inputs.ret_24h <= Decimal("0.14"))
+    ignition_override_ok = False
+    if Decimal("0.14") < inputs.ret_24h <= Decimal("0.175"):
+        prior_coiled = (
+            inputs.prior_bb_bandwidth_4h is not None
+            and inputs.prior_bb_bandwidth_4h <= Decimal("0.160")
+        )
+        near_pivot = (
+            inputs.pivot_resistance is not None
+            and (inputs.close - inputs.pivot_resistance) <= Decimal("0.85") * atr
+        ) or (inputs.pivot_resistance is None)
+        clean_candle = (
+            inputs.candle_4h_close_pos is not None
+            and inputs.candle_4h_close_pos >= Decimal("0.70")
+        )
+        momentum_ok = (
+            inputs.rsi_4h <= Decimal("68.0")
+            and inputs.rsi_1h <= Decimal("73.0")
+        )
+        ignition_override_ok = prior_coiled and near_pivot and clean_candle and momentum_ok
+
+    ret_24h_pass = ret_in_standard or ignition_override_ok
+
     standard_l2 = (
         inputs.excursion_72h <= Decimal("0.36")
-        and (Decimal("-0.08") <= inputs.ret_24h <= Decimal("0.16"))
+        and ret_24h_pass
         and (inputs.rsi_1h <= Decimal("76.0"))
         and (inputs.rsi_4h <= Decimal("70.0"))
         and atr_ext_ok
@@ -191,7 +293,7 @@ def evaluate_long_gates(
             and (((inputs.close - inputs.ema20_1h) / atr14_1h) <= Decimal("1.10"))
             and (funding <= Decimal("0.0001"))
             and (oi_24h >= Decimal("0.10"))
-            and (inputs.taker_buy_ratio_4h >= Decimal("0.52"))
+            and (inputs.taker_buy_ratio_4h >= Decimal("1.08"))
         )
         flag_l2 = (
             is_high_tight_flag
@@ -234,7 +336,10 @@ def evaluate_long_gates(
         or (va_position >= Decimal("0.18"))
     )
 
-    if arch_val == "BREAKOUT_LONG":
+    if arch_val in ("RANGE_BOTTOM_ACCUMULATION_LONG", "OI_ACCUMULATION_LONG"):
+        # Fix 4: Strictly require close >= val_30d (never allow below Value Area Low)
+        l4 = is_va_supported and (inputs.val_30d <= Decimal("0") or inputs.close >= inputs.val_30d)
+    elif arch_val == "BREAKOUT_LONG":
         # For active ceiling breakout expansion, price must also be challenging/exceeding POC
         l4 = is_va_supported and (
             (inputs.close >= inputs.poc_30d * Decimal("0.97")) or (va_position >= Decimal("0.35"))
@@ -267,18 +372,87 @@ def evaluate_long_gates(
     else:
         l5 = in_current_squeeze or in_recent_squeeze_expansion
 
-    # Gate L6: S/R Ceiling Absorption & Bull-Trap Filter
-    if dist_to_ceiling <= Decimal("0.045"):
-        oi_7d = inputs.oi_delta_7d if inputs.oi_delta_7d is not None else Decimal("0")
-        oi_4h = inputs.oi_delta_4h if inputs.oi_delta_4h is not None else Decimal("0")
-        volume_or_dryup_confirmed = (
-            inputs.rvol_4h >= Decimal("1.20")
-            or (inputs.vcr_4h <= Decimal("0.90") and inputs.taker_buy_ratio_4h >= Decimal("0.48"))
+    # Gate L6: Universal Order-Flow & Mandatory Kinetic Ignition Gate
+    coil_maturity = compute_coil_maturity_score(inputs)
+    volume_vacuum = is_volume_vacuum_setup(inputs)
+    mature_squeeze = is_mature_squeeze_setup(inputs)
+    stealth_coil_qualified = (coil_maturity >= 65) or volume_vacuum or mature_squeeze
+
+    # 1. Universal Order-Flow Audit (Bypass eliminated: every candidate audited regardless of dist_to_ceiling)
+    has_oi_metrics = (inputs.oi_delta_7d is not None or inputs.oi_delta_4h is not None)
+    if has_oi_metrics:
+        # Across all distances to ceiling: require non-bleeding OI: OI_7d >= -2.5% OR OI_4h >= +2.5%
+        universal_oi_ok = (
+            (inputs.oi_delta_7d is not None and inputs.oi_delta_7d >= Decimal("-0.025"))
+            or (inputs.oi_delta_4h is not None and inputs.oi_delta_4h >= Decimal("0.025"))
         )
-        flow_confirmed = (oi_7d >= Decimal("0.0") or oi_4h >= Decimal("0.005") or inputs.rvol_4h >= Decimal("1.20"))
-        l6 = volume_or_dryup_confirmed and flow_confirmed and (inputs.taker_buy_ratio_4h >= Decimal("0.47") or inputs.rvol_4h >= Decimal("1.25"))
+        if dist_to_ceiling <= Decimal("0.045"):
+            # Strict resistance ceiling rule: OI_7d >= -1.0% AND RVOL >= 1.15x
+            # Stealth coil bypass: mature compression coiling under ceiling doesn't require pre-breakout volume surge
+            ceiling_strict_ok = stealth_coil_qualified or (
+                inputs.oi_delta_7d is not None
+                and inputs.oi_delta_7d >= Decimal("-0.01")
+                and inputs.rvol_4h >= Decimal("1.15")
+            )
+            flow_confirmed = universal_oi_ok and ceiling_strict_ok
+        else:
+            flow_confirmed = universal_oi_ok
     else:
-        l6 = True
+        # Stage 1 in-memory pre-derivatives: volume dryup, mature coil, or surge required
+        flow_confirmed = stealth_coil_qualified or (inputs.rvol_4h >= Decimal("1.15")) or (inputs.vcr_4h <= Decimal("0.90"))
+
+    # 2. Mandatory Kinetic Ignition Trigger & Stealth Coil Qualification
+    # Compressed long candidates can qualify via:
+    # (a) Active Kinetic Ignition (Trigger A, B, or C, or RVOL surge)
+    # (b) Mature Coil Bypass (Coil Maturity Score >= 65)
+    # (c) Volume Vacuum Pre-Ignition (Supply exhaustion with structural hold)
+    # (d) Extended Squeeze Maturity (8+ squeeze bars holding EMA20)
+    has_ignition = (
+        inputs.has_kinetic_ignition
+        or inputs.pocket_pivot_1h
+        or inputs.micro_expansion_1h
+        or inputs.of_absorption_1h
+        or (inputs.rvol_4h is not None and inputs.rvol_4h >= Decimal("1.20"))
+    )
+    if not has_ignition and inputs.oi_delta_4h is not None and inputs.taker_buy_ratio_1h is not None:
+        if (
+            inputs.oi_delta_4h >= Decimal("0.035")
+            and inputs.taker_buy_ratio_1h >= Decimal("1.15")
+            and inputs.close >= inputs.ema20_1h
+        ):
+            has_ignition = True
+
+    is_compressed_setup = (
+        inputs.bb_bandwidth_4h <= Decimal("0.20")
+        or inputs.bb_inside_kc_4h
+        or arch_val in (
+            "COIL_SPRING_LONG",
+            "OI_ACCUMULATION_LONG",
+            "VCP_COMPRESSION_LONG",
+            "RANGE_BOTTOM_ACCUMULATION_LONG",
+            "FUNDING_SQUEEZE_SPRING_LONG",
+        )
+    )
+
+    if not has_oi_metrics:
+        # Pre-derivatives Stage 1 structural pass: allow base supply dry-up, mature coil, or volume surge
+        ignition_confirmed = (
+            has_ignition
+            or stealth_coil_qualified
+            or (inputs.vcr_4h <= Decimal("0.90"))
+            or (inputs.rvol_4h >= Decimal("1.15"))
+        )
+    elif is_compressed_setup:
+        ignition_confirmed = has_ignition or stealth_coil_qualified
+    else:
+        ignition_confirmed = has_ignition or (inputs.rvol_4h >= Decimal("1.20"))
+
+    # Fix 4: Acute Long Liquidation Veto (oi_change_1h < -2.5%)
+    is_acute_oi_liquidation = (inputs.oi_delta_1h is not None and inputs.oi_delta_1h < Decimal("-0.025"))
+    if is_acute_oi_liquidation:
+        flow_confirmed = False
+
+    l6 = flow_confirmed and ignition_confirmed and not is_acute_oi_liquidation
 
     gates = {"L1": l1, "L2": l2, "L3": l3, "L4": l4, "L5": l5, "L6": l6}
     return all(gates.values()), gates
@@ -306,15 +480,15 @@ def evaluate_short_gates(
     funding_8h = inputs.funding_rate_8h or Decimal("0")
     oi_7d = inputs.oi_delta_7d or Decimal("0")
     oi_1h = inputs.oi_delta_1h or Decimal("0")
-    taker_24h = inputs.taker_buy_ratio_24h or Decimal("0.5")
+    taker_24h = inputs.taker_buy_ratio_24h or Decimal("1.0000")
 
     is_short_squeeze_risk = (
         (inputs.funding_rate_8h is not None and funding_8h < Decimal("0.0"))
         and (inputs.close >= inputs.ema50_4h * Decimal("0.975"))
     )
     is_buyer_dominated_trend = (
-        (taker_24h >= Decimal("0.55") and inputs.close >= inputs.ema50_4h)
-        or (taker_24h >= Decimal("0.51") and not inputs.has_bearish_div and inputs.close >= inputs.ema50_4h)
+        (taker_24h >= Decimal("1.20") and inputs.close >= inputs.ema50_4h)
+        or (taker_24h >= Decimal("1.05") and not inputs.has_bearish_div and inputs.close >= inputs.ema50_4h)
     )
     if is_short_squeeze_risk or is_buyer_dominated_trend:
         return False, {"S1": False, "S2": False, "S3": False, "S4": False, "S5": False}
@@ -383,12 +557,12 @@ def evaluate_short_gates(
     is_utad_divergence = inputs.has_bearish_div and (inputs.macd_hist_4h < macd_prev)
 
     # Track A: Upper-Range Climax Blowoff / Wyckoff UTAD
-    # Strictly require either price breaking below 4H EMA20 OR verified taker seller dominance (<= 0.48)
+    # Strictly require either price breaking below 4H EMA20 OR verified taker seller dominance (<= 0.92)
     track_a_pass = (
         (pos_in_range_30d >= Decimal("0.65"))
         and rejected_from_high
         and (is_climax_blowoff or is_utad_divergence)
-        and (inputs.close <= inputs.ema20_4h or inputs.taker_buy_ratio_24h <= Decimal("0.48"))
+        and (inputs.close <= inputs.ema20_4h or inputs.taker_buy_ratio_24h <= Decimal("0.92"))
     )
 
     # Track B: Structural Breakdown / Macro Distribution Rollover
@@ -409,7 +583,7 @@ def evaluate_short_gates(
         (inputs.macd_hist_4h <= Decimal("0.05"))
         and (
             inputs.macd_hist_4h <= macd_prev
-            or inputs.taker_buy_ratio_24h <= Decimal("0.50")
+            or inputs.taker_buy_ratio_24h <= Decimal("1.00")
             or inputs.close <= inputs.ema20_4h
         )
     )
@@ -428,23 +602,23 @@ def evaluate_short_gates(
         basis = inputs.basis_bps or Decimal("0")
         oi_7d = inputs.oi_delta_7d or Decimal("0")
         oi_1h = inputs.oi_delta_1h or Decimal("0")
-        taker_1h = inputs.taker_buy_ratio_1h or Decimal("0.5")
+        taker_1h = inputs.taker_buy_ratio_1h or Decimal("1.0000")
 
         trapped_longs = (
             (funding_8h >= Decimal("0.0001") or basis >= Decimal("12.0")) and (oi_7d >= Decimal("0.15"))
         ) or (
             (funding_8h >= Decimal("0.00005") or basis >= Decimal("4.0"))
-            and (oi_7d >= Decimal("0.0") or taker_1h <= Decimal("0.48"))
+            and (oi_7d >= Decimal("0.0") or taker_1h <= Decimal("0.92"))
         ) or (
-            inputs.taker_buy_ratio_24h <= Decimal("0.48")
+            inputs.taker_buy_ratio_24h <= Decimal("0.92")
         )
         squeeze_flush = (
             (funding_8h <= Decimal("-0.0003"))
             and (oi_7d >= Decimal("0.25"))
             and (oi_1h <= Decimal("-0.015"))
-            and (taker_1h <= Decimal("0.46"))
+            and (taker_1h <= Decimal("0.85"))
         ) or (
-            (funding_8h <= Decimal("-0.00015")) and (taker_1h <= Decimal("0.48"))
+            (funding_8h <= Decimal("-0.00015")) and (taker_1h <= Decimal("0.92"))
         )
         s5 = trapped_longs or squeeze_flush
 

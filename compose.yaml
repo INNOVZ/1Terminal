@@ -11,6 +11,7 @@ services:
     environment:
       ATLAS_STATE_DB_PATH: /app/state/atlas_state.sqlite3
       PYTHONPATH: /app/src
+      ATLAS_ENV: ${ATLAS_ENV:-production}
     read_only: true
     tmpfs:
       - /tmp:size=64m,noexec,nosuid

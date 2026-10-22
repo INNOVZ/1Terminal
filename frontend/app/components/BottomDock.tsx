@@ -71,9 +71,9 @@ function BottomDock({
     setInternalRefreshing(true);
     window.dispatchEvent(new CustomEvent("atlas:scan-start"));
     try {
-      const res = await fetch("/api/screener/live?refresh=true").catch(
-        () => null,
-      );
+      const res = await fetch(`/api/screener/live?refresh=true&t=${Date.now()}`, {
+        cache: "no-store",
+      }).catch(() => null);
       if (res && res.ok) {
         const data = await res.json();
         window.dispatchEvent(

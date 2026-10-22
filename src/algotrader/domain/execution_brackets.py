@@ -56,13 +56,14 @@ def build_long_bracket(
     else:
         upper_shelf = max(ema50_4h, poc_30d)
         lower_shelf = min(ema50_4h, poc_30d)
-        if upper_shelf + Decimal("0.10") * atr <= close * Decimal("0.995"):
+        # Institutional Retest Offset: anchor_shelf + 0.15 * ATR (Page 2 Spec OCR typo audit: '8.15 * ATR' -> '0.15 * ATR')
+        if upper_shelf + Decimal("0.15") * atr <= close * Decimal("0.995"):
             anchor_shelf = upper_shelf
-        elif lower_shelf + Decimal("0.10") * atr <= close * Decimal("0.995"):
+        elif lower_shelf + Decimal("0.15") * atr <= close * Decimal("0.995"):
             anchor_shelf = lower_shelf
         else:
             anchor_shelf = poc_30d
-        raw_retest_entry = min(anchor_shelf + Decimal("0.10") * atr, close * Decimal("0.990"))
+        raw_retest_entry = min(anchor_shelf + Decimal("0.15") * atr, close * Decimal("0.990"))
 
     # Invariant 3: Post-rounding normalization using floor_to_increment with hard guard
     retest_entry = floor_to_increment(raw_retest_entry, tick_size)
@@ -76,7 +77,15 @@ def build_long_bracket(
     room_vah_to_ceiling = (high_30d - vah_30d) / max(atr, Decimal("1e-8"))
     swing_range = max(high_30d - swing_low_4h, atr * Decimal("3.0"))
 
-    if (close <= vah_30d * Decimal("1.005")) and (room_vah_to_ceiling >= Decimal("1.5")):
+    if close < poc_30d:
+        # Case 0 — Below POC Accumulation (between VAL and POC): Immediate overhead resistance is POC, not VAH!
+        raw_breakout_trigger = min(local_compression_high_4h, close * Decimal("1.08"))
+        if raw_breakout_trigger <= close:
+            raw_breakout_trigger = close + max(tick_size, atr * Decimal("0.05"))
+        raw_t1 = poc_30d
+        raw_t2 = vah_30d
+        raw_t3 = max(high_30d, vah_30d + Decimal("1.5") * atr)
+    elif (close <= vah_30d * Decimal("1.005")) and (room_vah_to_ceiling >= Decimal("1.5")):
         # Case A — VAH Breakout Into 30d Ceiling
         raw_breakout_trigger = vah_30d + Decimal("0.08") * atr
         raw_t1 = high_30d
@@ -98,12 +107,14 @@ def build_long_bracket(
     if breakout_trigger <= close:
         breakout_trigger = normalize_price(close + max(tick_size, atr * Decimal("0.05")), tick_size)
 
-    # Ensure Target 1 always provides >= 1.5 * atr expansion room above breakout trigger
-    min_t1 = breakout_trigger + Decimal("1.5") * atr
-    raw_t1 = max(raw_t1, min_t1)
+    # When close < poc_30d, Target 1 is strictly capped at poc_price unless poc is at/below trigger
+    if close < poc_30d:
+        raw_t1 = max(raw_t1, breakout_trigger + tick_size)
+    else:
+        # Ensure Target 1 always provides >= 1.5 * atr expansion room above breakout trigger
+        min_t1 = breakout_trigger + Decimal("1.5") * atr
+        raw_t1 = max(raw_t1, min_t1)
     t1 = normalize_price(raw_t1, tick_size)
-    if (t1 - breakout_trigger) < Decimal("1.5") * atr:
-        t1 = normalize_price(breakout_trigger + Decimal("1.5") * atr + tick_size, tick_size)
 
     if raw_t2 <= t1:
         raw_t2 = t1 + max(tick_size, atr * Decimal("1.0"))
@@ -159,14 +170,23 @@ def build_long_bracket(
         risk_unit = max(effective_entry - effective_stop, min_breakout_risk)
         risk_unit = max(risk_unit, EPSILON)
 
-        # Scale targets above effective_entry
-        t1 = max(t1, normalize_price(effective_entry + Decimal("1.50") * risk_unit, tick_size))
-        t2 = max(t2, normalize_price(effective_entry + Decimal("2.50") * risk_unit, tick_size))
-        t3 = max(t3, normalize_price(effective_entry + Decimal("3.80") * risk_unit, tick_size))
-        if t2 <= t1:
-            t2 = normalize_price(t1 + max(tick_size, atr * Decimal("0.5")), tick_size)
-        if t3 <= t2:
-            t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
+        if close < poc_30d:
+            t1 = normalize_price(poc_30d, tick_size)
+            t2 = normalize_price(vah_30d, tick_size)
+            if t2 <= t1:
+                t2 = normalize_price(t1 + max(tick_size, atr * Decimal("0.5")), tick_size)
+            t3 = normalize_price(max(high_30d, vah_30d + Decimal("1.5") * atr), tick_size)
+            if t3 <= t2:
+                t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
+        else:
+            # Scale targets above effective_entry
+            t1 = max(t1, normalize_price(effective_entry + Decimal("1.50") * risk_unit, tick_size))
+            t2 = max(t2, normalize_price(effective_entry + Decimal("2.50") * risk_unit, tick_size))
+            t3 = max(t3, normalize_price(effective_entry + Decimal("3.80") * risk_unit, tick_size))
+            if t2 <= t1:
+                t2 = normalize_price(t1 + max(tick_size, atr * Decimal("0.5")), tick_size)
+            if t3 <= t2:
+                t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
 
         suggested_entry = min(close, retest_entry)
         invalidation_stop = retest_stop
@@ -182,14 +202,23 @@ def build_long_bracket(
         risk_unit = max(effective_entry - effective_stop, min_retest_risk)
         risk_unit = max(risk_unit, EPSILON)
 
-        # Scale targets above effective_entry so asymmetric upside is guaranteed
-        t1 = max(t1, normalize_price(effective_entry + Decimal("1.50") * risk_unit, tick_size))
-        t2 = max(t2, normalize_price(effective_entry + Decimal("2.50") * risk_unit, tick_size))
-        t3 = max(t3, normalize_price(effective_entry + Decimal("3.80") * risk_unit, tick_size))
-        if t2 <= t1:
-            t2 = normalize_price(t1 + max(tick_size, atr * Decimal("0.5")), tick_size)
-        if t3 <= t2:
-            t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
+        if close < poc_30d:
+            t1 = normalize_price(poc_30d, tick_size)
+            t2 = normalize_price(vah_30d, tick_size)
+            if t2 <= t1:
+                t2 = normalize_price(t1 + max(tick_size, atr * Decimal("0.5")), tick_size)
+            t3 = normalize_price(max(high_30d, vah_30d + Decimal("1.5") * atr), tick_size)
+            if t3 <= t2:
+                t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
+        else:
+            # Scale targets above effective_entry so asymmetric upside is guaranteed
+            t1 = max(t1, normalize_price(effective_entry + Decimal("1.50") * risk_unit, tick_size))
+            t2 = max(t2, normalize_price(effective_entry + Decimal("2.50") * risk_unit, tick_size))
+            t3 = max(t3, normalize_price(effective_entry + Decimal("3.80") * risk_unit, tick_size))
+            if t2 <= t1:
+                t2 = normalize_price(t1 + max(tick_size, atr * Decimal("0.5")), tick_size)
+            if t3 <= t2:
+                t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
 
         suggested_entry = min(close, retest_entry)
         if invalidation_stop >= suggested_entry:
@@ -201,9 +230,11 @@ def build_long_bracket(
     r_t1 = (abs(t1 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
     r_t2 = (abs(t2 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
     r_t3 = (abs(t3 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
-
-    # Invariant 2: Clamp displayed asymmetric_rr = min(r_t2, 8.0)
-    asymmetric_rr = min(r_t2, Decimal("8.00")).quantize(Decimal("0.01"))
+    # Fix 5: When close < poc_30d, evaluate R:R to Target_1 (POC) and cap at 5.0
+    if close < poc_30d:
+        asymmetric_rr = min(r_t1, Decimal("5.00")).quantize(Decimal("0.01"))
+    else:
+        asymmetric_rr = min(r_t2, Decimal("5.00")).quantize(Decimal("0.01"))
 
     return ExecutionBracket(
         retest_entry=retest_entry,
@@ -253,6 +284,7 @@ def build_short_bracket(
     else:
         raw_retest_entry = min(close * Decimal("1.025"), close + atr * Decimal("0.75"))
 
+    # Breakdown Trigger Offset: -0.05 * ATR (Page 3 Spec OCR typo audit: '0.85 * ATR' -> '0.05 * ATR')
     raw_breakdown_trigger = local_consolidation_low_4h - Decimal("0.05") * atr
     if raw_breakdown_trigger >= close:
         raw_breakdown_trigger = close - Decimal("0.10") * atr
@@ -274,22 +306,17 @@ def build_short_bracket(
     risk_unit = max(risk_unit, EPSILON)
 
     # Realistic structural short targets scaled by volatility and risk
-    # T1: Nearest structural shelf (VAL/POC) or 1.75R expansion, bounded to avoid excessive depth
-    structural_shelf = min(poc_30d, val_30d) if close > poc_30d else val_30d
-    t1_by_shelf = (
-        structural_shelf
-        if (raw_effective_entry - Decimal("2.50") * risk_unit) <= structural_shelf <= (raw_breakdown_trigger - Decimal("1.00") * atr)
-        else None
+    # Geometric bounding formula from Task 1:
+    # Target_1 = max(Structural_Support, Entry_Price - 1.75 * Risk_Dist, Entry_Price * 0.86)
+    # This caps Target_1 at a maximum of 1.75R (or a 14% drop) to prevent ancient wick overshoot.
+    structural_support = min(poc_30d, val_30d) if close > poc_30d else val_30d
+    raw_t1 = max(
+        structural_support,
+        raw_effective_entry - Decimal("1.75") * risk_unit,
+        raw_effective_entry * Decimal("0.86"),
     )
-    t1_by_risk = raw_effective_entry - Decimal("1.75") * risk_unit
-    raw_t1 = t1_by_shelf if t1_by_shelf is not None else t1_by_risk
-
-    # Ensure T1 is at least 1.20*atr below breakdown trigger
-    max_t1 = raw_breakdown_trigger - Decimal("1.20") * atr
-    raw_t1 = min(raw_t1, max_t1)
-    # Ensure T1 is not excessively deep (cap at max 14% drop or 2.2*risk_unit)
-    min_t1 = raw_effective_entry - max(Decimal("2.20") * risk_unit, raw_effective_entry * Decimal("0.14"))
-    raw_t1 = max(raw_t1, min_t1)
+    if raw_t1 >= raw_breakdown_trigger:
+        raw_t1 = raw_breakdown_trigger - tick_size
 
     # T2: Asymmetric R:R target (2.60R) or Lower Structural Shelf
     t2_candidate = raw_effective_entry - Decimal("2.60") * risk_unit
@@ -349,8 +376,8 @@ def build_short_bracket(
     r_t2 = (abs(t2 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
     r_t3 = (abs(t3 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
 
-    # Invariant 2: Clamp displayed asymmetric_rr = min(r_t2, 8.0)
-    asymmetric_rr = min(r_t2, Decimal("8.00")).quantize(Decimal("0.01"))
+    # Invariant 2: Clamp displayed asymmetric_rr = min(r_t2, 5.0)
+    asymmetric_rr = min(r_t2, Decimal("5.00")).quantize(Decimal("0.01"))
 
     return ExecutionBracket(
         retest_entry=retest_entry,

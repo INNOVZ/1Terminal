@@ -394,38 +394,32 @@ function RadarPageContent() {
     };
 
     try {
+      const cacheBuster = `t=${Date.now()}`;
       const url = isLiveRefresh
-        ? `/api/screener/live?refresh=true&scope=${scope}`
-        : "/api/screener/live";
+        ? `/api/screener/live?refresh=true&scope=${scope}&${cacheBuster}`
+        : `/api/screener/live?${cacheBuster}`;
 
-      const res = await fetch(url).catch(() => null);
+      const res = await fetch(url, { cache: "no-store" }).catch(() => null);
       let data: ScreenerResponse | null = null;
       if (res && res.ok) {
         data = (await res.json()) as ScreenerResponse;
       }
 
-      // 1. Immediately apply cached opportunities so the user never sees a stuck loading screen
-      if (data && data.opportunities && data.opportunities.length > 0) {
-        await applyScreenerData(data);
-        setLoading(false);
-      }
-
-      // 2. If backend reports an active background scan, poll non-blockingly until it finishes
+      // If backend reports an active background scan, poll non-blockingly until it finishes
       if (data && data.is_scanning) {
         setIsScanning(true);
         let pollAttempts = 0;
         const maxPollAttempts = 40; // Max 80 seconds
+        let finalData: ScreenerResponse | null = null;
         while (pollAttempts < maxPollAttempts) {
           await new Promise((r) => setTimeout(r, 2000));
           pollAttempts++;
           try {
-            const pollRes = await fetch("/api/screener/live").catch(() => null);
+            const pollRes = await fetch(`/api/screener/live?t=${Date.now()}`, { cache: "no-store" }).catch(() => null);
             if (pollRes && pollRes.ok) {
               const pollData = (await pollRes.json()) as ScreenerResponse;
-              if (pollData && pollData.opportunities && pollData.opportunities.length > 0) {
-                await applyScreenerData(pollData);
-              }
               if (pollData && !pollData.is_scanning) {
+                finalData = pollData;
                 break;
               }
             }
@@ -433,10 +427,18 @@ function RadarPageContent() {
             console.warn("Polling error during rescan:", pollErr);
           }
         }
-      } else if (!data || !data.opportunities || data.opportunities.length === 0) {
-        if (data && Array.isArray(data.opportunities) && data.opportunities.length === 0) {
-          setOpportunities([]);
+        if (finalData) {
+          data = finalData;
         }
+      }
+
+      // Apply newly verified live scan data (never intermediate cached data)
+      if (data && Array.isArray(data.opportunities) && data.opportunities.length > 0) {
+        await applyScreenerData(data);
+      } else {
+        setOpportunities([]);
+        setActiveOpportunity(null);
+        setActiveCandle(null);
         if (isLiveRefresh) {
           setScanNotification(
             "Scan complete: 0 tokens currently qualify for institutional gates",
@@ -446,12 +448,11 @@ function RadarPageContent() {
               detail: { count: 0, timestamp: data?.timestamp },
             }),
           );
-        }
-      } else if (symbolParam) {
+        } else if (symbolParam) {
           // Screener returned 0 items, but we have a symbol query parameter!
           const cleanTarget = symbolParam.toUpperCase();
           try {
-            const chartRes = await fetch(`/api/chart/${cleanTarget}`).catch(
+            const chartRes = await fetch(`/api/chart/${cleanTarget}`, { cache: "no-store" }).catch(
               () => null,
             );
             if (chartRes && chartRes.ok) {
@@ -480,6 +481,7 @@ function RadarPageContent() {
             );
           }
         }
+      }
     } catch (err) {
       console.warn("Using offline radar baseline:", err);
       if (isLiveRefresh) {

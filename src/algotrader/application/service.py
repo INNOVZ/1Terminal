@@ -162,6 +162,7 @@ class TradingSystem:
         top_n: int | None = None,
         max_symbols: int | None = None,
         mode: ScreenerMode = ScreenerMode.ACCUMULATION,
+        coi_score: float | Decimal | None = None,
     ) -> list[CryptoOpportunity]:
         """Screen the USD-M crypto universe using multi-factor regime, derivatives, and macro analysis."""
         from algotrader.application.crypto_screener import CryptoOpportunityScreener
@@ -202,6 +203,7 @@ class TradingSystem:
             top_n=top_n,
             max_symbols=max_symbols,
             mode=mode,
+            coi_score=coi_score,
         )
 
     def _rank(self, candidates: list[Candidate]) -> list[Candidate]:

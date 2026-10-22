@@ -244,7 +244,7 @@ def test_classify_momentum_emerging_long() -> None:
         macd_hist_4h=Decimal("0.15"),  # > prev
         macd_hist_4h_prev=Decimal("0.08"),
         macd_hist_1h=Decimal("0.05"),  # > 0
-        taker_buy_ratio_4h=Decimal("0.54"),  # >= 0.535
+        taker_buy_ratio_4h=Decimal("1.18"),  # >= 1.15
     )
     assert classify_long_archetype(features) == SetupLabel.MOMENTUM_EMERGING_LONG
 
@@ -299,7 +299,7 @@ def test_classify_range_bottom_accumulation_long() -> None:
         macd_hist_4h=Decimal("0.05"),
         macd_hist_4h_prev=Decimal("0.02"),
         macd_hist_1h=Decimal("0.01"),
-        taker_buy_ratio_4h=Decimal("0.51"),
+        taker_buy_ratio_4h=Decimal("1.04"),
         range_height_30d=Decimal("0.38"),  # <= 0.42
         pos_in_range_30d=Decimal("0.60"),
         dist_to_ceiling=Decimal("0.12"),  # <= 0.16
@@ -1105,7 +1105,7 @@ def test_continuous_volume_momentum_and_oi_confirmation_scoring() -> None:
         cvd_zscore=Decimal("1.8"),
         oi_change_7d=Decimal("0.12"),
         oi_change_4h=Decimal("0.02"),
-        taker_buy_ratio_4h=Decimal("0.55"),
+        taker_buy_ratio_4h=Decimal("1.22"),
         funding_rate=Decimal("0.00001"),
         ema20_4h=Decimal("98.00"),
         macd_hist_4h=Decimal("0.20"),
@@ -1140,7 +1140,7 @@ def test_continuous_volume_momentum_and_oi_confirmation_scoring() -> None:
         cvd_zscore=Decimal("-1.5"),
         oi_change_7d=Decimal("-0.08"),
         oi_change_4h=Decimal("-0.04"),
-        taker_buy_ratio_4h=Decimal("0.44"),
+        taker_buy_ratio_4h=Decimal("0.78"),
         funding_rate=Decimal("0.00025"),
         ema20_4h=Decimal("98.00"),
         macd_hist_4h=Decimal("-0.20"),

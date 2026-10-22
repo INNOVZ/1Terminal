@@ -145,8 +145,8 @@ def evaluate_long_gates(s: GateEvaluationInput, archetype: str) -> tuple[bool, s
     # Gate L6: S/R Ceiling Absorption & Bull-Trap Filter
     if dist_to_ceiling <= 0.045:
         l6_pass = (
-            (s.oi_delta_7d >= 0.0)
-            and (s.oi_delta_4h >= 0.015)
+            (s.oi_delta_7d is not None and s.oi_delta_7d >= -0.01)
+            and (s.oi_delta_4h is not None and s.oi_delta_4h >= 0.005)
             and (s.rvol_4h >= 1.20)
             and (s.taker_buy_ratio_4h >= 0.52)
         )

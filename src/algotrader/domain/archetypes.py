@@ -34,6 +34,14 @@ class LongArchetypeFeatures:
     val_30d: Decimal = Decimal("0")
     funding_rate_8h: Decimal | None = None
     cvd_24h: Decimal = Decimal("0")
+    ret_24h: Decimal = Decimal("0")
+    oi_delta_24h: Decimal | None = None
+    taker_buy_ratio_1h: Decimal | None = None
+    low_30d: Decimal = Decimal("0")
+    low_4h: Decimal | None = None
+    ema20_4h: Decimal | None = None
+    ema20_1h: Decimal | None = None
+    rvol_1h: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,14 +73,43 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
     Returns SetupLabel if matched, else None.
     """
     atr = max(features.atr14_4h, Decimal("1e-8"))
-
-    # 0. SHORT_SQUEEZE_ABSORPTION_LONG (Crowded Short Squeeze & Order Flow Absorption)
     funding_8h = features.funding_rate_8h
     oi_7d = features.oi_delta_7d or Decimal("0")
     oi_4h = features.oi_delta_4h or Decimal("0")
-    is_funding_crowded_short = funding_8h is not None and funding_8h <= Decimal("0.00005")
+
+    # 0a. FUNDING_SQUEEZE_SPRING_LONG (Quality-Gated Negative-Funding Wyckoff Squeeze Spring)
+    # Derivative Fuel:
+    is_funding_fuel = (
+        funding_8h is not None
+        and funding_8h <= Decimal("-0.00015")
+        and features.oi_delta_24h is not None
+        and features.oi_delta_24h >= Decimal("0.06")
+        and (
+            (features.taker_buy_ratio_1h is not None and features.taker_buy_ratio_1h >= Decimal("1.18"))
+            or (features.taker_buy_ratio_4h >= Decimal("1.18"))
+        )
+    )
+    # Strict Anti-Falling-Knife Structural Floor:
+    low_4h = features.low_4h or features.low_24h
+    holds_higher_low = (features.low_30d > Decimal("0")) and (low_4h >= features.low_30d * Decimal("1.03"))
+    inside_value_area = (features.close >= features.val_30d) and (features.pos_in_range_30d >= Decimal("0.15"))
+    ema20_4h_val = features.ema20_4h or features.ema50_4h
+    reclaims_emas = (
+        features.close >= ema20_4h_val
+        and features.close >= features.ema50_4h * Decimal("0.965")
+        and (
+            (features.rvol_1h is not None and features.rvol_1h >= Decimal("1.35"))
+            or features.rvol_4h >= Decimal("1.35")
+        )
+    )
+    if is_funding_fuel and holds_higher_low and inside_value_area and reclaims_emas:
+        return SetupLabel.FUNDING_SQUEEZE_SPRING_LONG
+
+    # 0b. SHORT_SQUEEZE_ABSORPTION_LONG (Crowded Short Squeeze & Order Flow Absorption)
+    # Fix 6: Require strictly negative funding (funding_bps <= -0.50 bps, i.e. -0.00005 per 8h)
+    is_funding_crowded_short = funding_8h is not None and funding_8h <= Decimal("-0.00005")
     is_oi_expanding = oi_7d >= Decimal("0.15") or oi_4h >= Decimal("0.035")
-    has_buyer_absorption = features.cvd_24h > Decimal("0") or features.taker_buy_ratio_4h >= Decimal("0.50")
+    has_buyer_absorption = features.cvd_24h > Decimal("0") or features.taker_buy_ratio_4h >= Decimal("1.00")
     holding_structure = (
         features.close >= features.ema50_4h * Decimal("0.975")
         or features.close >= features.poc_30d * Decimal("0.975")
@@ -112,27 +149,52 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
     ):
         return SetupLabel.VCP_COMPRESSION_LONG
 
-    # 3. OI_ACCUMULATION_LONG (Smart Money Absorption)
-    oi_7d = features.oi_delta_7d or Decimal("0")
+    # 3. OI_ACCUMULATION_LONG (Smart Money Stealth Absorption)
     is_compressed = features.bb_inside_kc_4h or (features.bb_bandwidth_4h <= Decimal("0.22"))
+    # Fix 4: Require close >= val_30d (never allow below VAL)
+    holding_structure = (
+        (
+            features.close >= features.ema50_4h * Decimal("0.975")
+            or features.close >= features.poc_30d * Decimal("0.975")
+        )
+        and (features.val_30d <= Decimal("0") or features.close >= features.val_30d)
+    )
+    is_stealth_compressed = (
+        Decimal("-0.04") <= features.ret_24h <= Decimal("0.09")
+        and features.bb_bandwidth_4h <= Decimal("0.20")
+    )
+    has_acute_derivative_loading = (
+        (
+            (features.oi_delta_4h is not None and features.oi_delta_4h >= Decimal("0.05"))
+            or (features.oi_delta_24h is not None and features.oi_delta_24h >= Decimal("0.12"))
+        )
+        and (
+            (features.taker_buy_ratio_1h is not None and features.taker_buy_ratio_1h >= Decimal("1.15"))
+            or (features.taker_buy_ratio_4h >= Decimal("1.15"))
+        )
+    )
+    if is_stealth_compressed and has_acute_derivative_loading and holding_structure:
+        return SetupLabel.OI_ACCUMULATION_LONG
     if (
         Decimal("0.08") <= oi_7d <= Decimal("0.60")
         and is_compressed
         and abs(features.ret_7d) <= Decimal("0.12")
         and is_mom_up
+        and holding_structure
     ):
         return SetupLabel.OI_ACCUMULATION_LONG
 
     # 4. RANGE_BOTTOM_ACCUMULATION_LONG (Wyckoff Value Area Base Accumulation)
+    # Fix 4: Require close >= val_30d (never below Value Area Low)
     if (
-        features.close >= features.val_30d * Decimal("0.98")
+        features.close >= features.val_30d
         and features.range_height_30d <= Decimal("0.55")
         and (is_compressed or features.bb_bandwidth_4h <= Decimal("0.24"))
         and is_mom_up
         and features.close >= features.ema50_4h * Decimal("0.975")
         and features.pos_in_range_30d <= Decimal("0.60")
         and features.vcr_4h <= Decimal("1.20")
-        and features.taker_buy_ratio_4h >= Decimal("0.48")
+        and features.taker_buy_ratio_4h >= Decimal("0.95")
     ):
         return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
 
@@ -157,29 +219,40 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
         features.btc_residual_alpha_24h >= Decimal("0.03")
         and features.macd_hist_4h > features.macd_hist_4h_prev
         and features.macd_hist_1h > Decimal("0")
-        and features.taker_buy_ratio_4h >= Decimal("0.535")
+        and features.taker_buy_ratio_4h >= Decimal("1.15")
     ):
         return SetupLabel.MOMENTUM_EMERGING_LONG
 
     # 7. Structural Market-Profile Affinity Fallback
-    # Classifies valid consolidation into closest structural archetype only if compressed
+    # Classifies valid consolidation into closest structural archetype only if compressed and holding structure
     if at_or_above_resistance and has_breakout_volume:
         return SetupLabel.BREAKOUT_LONG
-    if oi_7d >= Decimal("0.05") and is_compressed and is_mom_up:
+    if oi_7d >= Decimal("0.05") and is_compressed and is_mom_up and holding_structure:
         return SetupLabel.OI_ACCUMULATION_LONG
     if is_compressed or features.bb_bandwidth_4h <= Decimal("0.22"):
         if features.pos_in_range_30d > Decimal("0.60") and has_supply_exhaustion and is_mom_up:
             return SetupLabel.VCP_COMPRESSION_LONG
         is_val_support_holding = (
-            features.close >= features.val_30d * Decimal("0.98")
+            features.close >= features.val_30d
             and features.close >= features.ema50_4h * Decimal("0.975")
         )
         if (
             features.pos_in_range_30d <= Decimal("0.60")
             and is_val_support_holding
             and is_mom_up
-            and features.taker_buy_ratio_4h >= Decimal("0.48")
+            and features.taker_buy_ratio_4h >= Decimal("0.95")
         ):
+            return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
+        # Stealth Coil Fallback: Extreme compression holding structure above POC with non-negative taker buying
+        if (
+            features.bb_bandwidth_4h <= Decimal("0.15")
+            and is_val_support_holding
+            and features.close >= features.poc_30d * Decimal("0.985")
+            and features.taker_buy_ratio_4h >= Decimal("0.95")
+            and has_supply_exhaustion
+        ):
+            if features.pos_in_range_30d > Decimal("0.55"):
+                return SetupLabel.VCP_COMPRESSION_LONG
             return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
     return None
 
@@ -247,7 +320,7 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
         and mtf_rsi_overbought
         and features.upper_wick_ratio_4h >= Decimal("0.35")
         and has_climax_runup
-        and (oi_7d >= Decimal("0.10") or features.taker_buy_ratio_24h <= Decimal("0.49"))
+        and (oi_7d >= Decimal("0.10") or features.taker_buy_ratio_24h <= Decimal("0.95"))
     ):
         return SetupLabel.EXHAUSTION_REVERSAL_SHORT
 
@@ -280,7 +353,7 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
         and features.close < features.ema50_4h
         and features.close < features.poc_30d
         and is_macd_decaying
-        and features.taker_buy_ratio_24h <= Decimal("0.48")
+        and features.taker_buy_ratio_24h <= Decimal("0.92")
     ):
         return SetupLabel.DISTRIBUTION_SHORT
 
@@ -291,7 +364,7 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
         and features.pos_in_range_30d >= Decimal("0.45")
         and features.close <= features.ema50_4h
         and is_macd_rolling
-        and features.taker_buy_ratio_24h <= Decimal("0.49")
+        and features.taker_buy_ratio_24h <= Decimal("0.95")
     ):
         return SetupLabel.VCP_DISTRIBUTION_SHORT
 

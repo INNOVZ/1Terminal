@@ -34,8 +34,11 @@ class SetupLabel(StrEnum):
 
     # Pre-Breakout & Accumulation Setups (BEFORE the pump)
     SHORT_SQUEEZE_ABSORPTION_LONG = "SHORT_SQUEEZE_ABSORPTION_LONG"
+    FUNDING_SQUEEZE_SPRING_LONG = "FUNDING_SQUEEZE_SPRING_LONG"
+    WYCKOFF_SQUEEZE_SPRING = "FUNDING_SQUEEZE_SPRING_LONG"
     COIL_SPRING_LONG = "COIL_SPRING_LONG"
     OI_ACCUMULATION_LONG = "OI_ACCUMULATION_LONG"
+    STEALTH_OI_ACCUMULATION = "STEALTH_OI_ACCUMULATION"
     VCP_COMPRESSION_LONG = "VCP_COMPRESSION_LONG"
     RANGE_BOTTOM_ACCUMULATION_LONG = "RANGE_BOTTOM_ACCUMULATION_LONG"
 
@@ -154,6 +157,7 @@ class CryptoOpportunity:
     resistance_absorption_score: Decimal | None = None
     breakout_readiness_status: str = "RETEST_ONLY_WAIT_FOR_DIP"
     candles: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    is_discovery_tier: bool = False
 
     def as_dict(self) -> dict[str, object]:
         tick = self.instrument.price_tick
@@ -197,7 +201,7 @@ class CryptoOpportunity:
             "funding_rate_bps": f"{float((self.funding_rate or Decimal('0')) * 10000):+.2f} bps",
             "oi_change_1h_pct": f"{float((self.oi_change_1h or Decimal('0')) * 100):+.2f}%" if self.oi_change_1h is not None else "N/A",
             "oi_change_7d_pct": f"{float((self.oi_change_7d or Decimal('0')) * 100):+.2f}%" if self.oi_change_7d is not None else "N/A",
-            "taker_buy_sell_ratio": str(self.taker_ratio) if self.taker_ratio is not None else "N/A",
+            "taker_buy_sell_ratio": f"{float(self.taker_ratio):.4f}" if self.taker_ratio is not None else "N/A",
             "cvd_24h": str(self.cvd_24h) if self.cvd_24h is not None else "N/A",
             "cvd_z_score": str(self.cvd_z_score) if self.cvd_z_score is not None else "N/A",
             "orderflow_absorption": self.orderflow_absorption,
@@ -225,6 +229,7 @@ class CryptoOpportunity:
             "macro_narrative": self.macro_narrative,
             "evaluated_at": self.evaluated_at.isoformat(),
             "candles": list(self.candles),
+            "is_discovery_tier": self.is_discovery_tier,
         }
 
 

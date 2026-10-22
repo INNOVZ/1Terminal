@@ -1027,26 +1027,31 @@ def cumulative_volume_delta_metrics(
 
 
 def taker_buy_ratio_from_candles(candles: Sequence[Candle]) -> Decimal:
-    """Compute taker_buy_ratio directly from Binance kline index [10]:
+    """Compute taker_buy_sell_ratio directly from Binance kline index [10]:
 
-    taker_buy_quote_vol / max(quote_vol, 1e-8).
+    taker_buy_vol / max(total_vol - taker_buy_vol, 1e-9) (i.e. buy_vol / sell_vol, centered at 1.00), rounded to 4 decimals.
     Falls back to base asset volume ratio if quote volumes are zero.
     """
     if not candles:
-        return Decimal("0.5")
+        return Decimal("1.0000")
 
     total_quote_vol = sum((c.quote_volume for c in candles), ZERO)
     total_taker_quote = sum((c.taker_buy_quote_volume for c in candles), ZERO)
-
-    if total_quote_vol > ZERO:
-        return total_taker_quote / max(total_quote_vol, Decimal("1e-8"))
-
     total_vol = sum((c.volume for c in candles), ZERO)
     total_taker_base = sum((c.taker_buy_volume for c in candles), ZERO)
-    if total_vol > ZERO:
-        return total_taker_base / max(total_vol, Decimal("1e-8"))
 
-    return Decimal("0.5")
+    if total_taker_quote == ZERO and total_taker_base == ZERO:
+        return Decimal("1.0000")
+
+    if total_quote_vol > ZERO and total_taker_quote > ZERO:
+        sell_vol = max(total_quote_vol - total_taker_quote, Decimal("1e-9"))
+        return round(total_taker_quote / sell_vol, 4)
+
+    if total_vol > ZERO and total_taker_base > ZERO:
+        sell_vol = max(total_vol - total_taker_base, Decimal("1e-9"))
+        return round(total_taker_base / sell_vol, 4)
+
+    return Decimal("1.0000")
 
 
 

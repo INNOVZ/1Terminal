@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     screening_interval_hours: int | None = Field(default=None, ge=1, le=168)
     signal_expiry_bars: int = Field(default=2, ge=1, le=8)
     execution_lease_seconds: int = Field(default=300, ge=60, le=900)
-    bar_close_grace_seconds: int = Field(default=30, ge=5, le=300)
+    bar_close_grace_seconds: int = Field(default=60, ge=5, le=300)
     scheduler_failure_limit: int = Field(default=3, ge=1, le=10)
 
     binance_spot_api_key: SecretStr = SecretStr("")

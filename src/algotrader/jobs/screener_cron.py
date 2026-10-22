@@ -12,11 +12,12 @@ from typing import Any
 from algotrader.config import load_settings
 from algotrader.domain.crypto_screener_models import ScreenerMode
 from algotrader.domain.scoring import OpportunityGrade
+from algotrader.infrastructure.persistence import atomic_write_json
 from algotrader.infrastructure.runtime import Runtime, build_runtime
 
 
-def seconds_until_next_cycle(now: datetime, interval_hours: int = 1, grace_seconds: int = 30) -> float:
-    """Calculates seconds until the next aligned UTC cycle (e.g., at XX:00:30 UTC for 1H)."""
+def seconds_until_next_cycle(now: datetime, interval_hours: int = 1, grace_seconds: int = 60) -> float:
+    """Calculates seconds until the next aligned UTC cycle (e.g., at XX:00:60 UTC for 1H/4H)."""
     utc_now = now.astimezone(UTC)
     boundary_hour = (utc_now.hour // interval_hours) * interval_hours
     boundary = utc_now.replace(hour=boundary_hour, minute=0, second=0, microsecond=0)
@@ -26,7 +27,7 @@ def seconds_until_next_cycle(now: datetime, interval_hours: int = 1, grace_secon
     return max(0.0, (target - utc_now).total_seconds())
 
 
-def next_cycle_timestamp(now: datetime, interval_hours: int = 1, grace_seconds: int = 30) -> datetime:
+def next_cycle_timestamp(now: datetime, interval_hours: int = 1, grace_seconds: int = 60) -> datetime:
     """Returns the ISO UTC timestamp of the upcoming aligned cycle."""
     delay = seconds_until_next_cycle(now, interval_hours, grace_seconds)
     return now.astimezone(UTC) + timedelta(seconds=delay)
@@ -165,11 +166,11 @@ async def execute_screener_job(
         "opportunities": opps_list,
     }
 
-    # Persist latest results to disk
+    # Persist latest results to disk atomically (fsync + rename)
     out_dir = Path("data")
     out_dir.mkdir(parents=True, exist_ok=True)
     latest_file = out_dir / "screener_latest.json"
-    latest_file.write_text(json.dumps(result_payload, indent=2))
+    atomic_write_json(latest_file, result_payload)
 
     # Append audit run to log
     history_file = out_dir / "screener_runs.jsonl"

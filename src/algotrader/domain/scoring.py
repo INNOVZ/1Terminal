@@ -13,6 +13,9 @@ from algotrader.domain.models import Direction
 EPSILON = Decimal("1e-8")
 
 W_BASE: dict[SetupLabel | str, Decimal] = {
+    SetupLabel.FUNDING_SQUEEZE_SPRING_LONG: Decimal("0.60"),
+    SetupLabel.WYCKOFF_SQUEEZE_SPRING: Decimal("0.59"),
+    SetupLabel.STEALTH_OI_ACCUMULATION: Decimal("0.57"),
     SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG: Decimal("0.60"),
     SetupLabel.COIL_SPRING_LONG: Decimal("0.58"),
     SetupLabel.VCP_COMPRESSION_LONG: Decimal("0.57"),
@@ -23,6 +26,9 @@ W_BASE: dict[SetupLabel | str, Decimal] = {
     SetupLabel.UTAD_DIVERGENCE_SHORT: Decimal("0.57"),
     SetupLabel.EXHAUSTION_REVERSAL_SHORT: Decimal("0.53"),
     SetupLabel.DISTRIBUTION_SHORT: Decimal("0.55"),
+    "FUNDING_SQUEEZE_SPRING_LONG": Decimal("0.60"),
+    "WYCKOFF_SQUEEZE_SPRING": Decimal("0.59"),
+    "STEALTH_OI_ACCUMULATION": Decimal("0.57"),
 }
 
 
@@ -58,6 +64,7 @@ class LongContinuousFactorScores:
     volume_score: Decimal = Decimal("50.0")  # Dedicated Volume confirmation score
     momentum_score: Decimal = Decimal("50.0")  # Dedicated Momentum confirmation score
     derivatives_score: Decimal = Decimal("50.0")  # Dedicated Derivatives & OI confirmation score
+    alpha_score: Decimal = Decimal("50.0")  # Dedicated Alpha confirmation score
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +82,7 @@ class ShortContinuousFactorScores:
     volume_score: Decimal = Decimal("50.0")
     momentum_score: Decimal = Decimal("50.0")
     derivatives_score: Decimal = Decimal("50.0")
+    alpha_score: Decimal = Decimal("50.0")
 
 
 def clip(value: Decimal, lower: Decimal, upper: Decimal) -> Decimal:
@@ -110,6 +118,7 @@ def calculate_continuous_long_factor_scores(
     macro_multiplier: Decimal,
     is_btc_cascade: bool = False,
     dist_to_entry: Decimal = Decimal("0.0"),
+    oi_change_1h: Decimal | None = None,
 ) -> LongContinuousFactorScores:
     """Continuous Multi-Factor Quant Scoring Engine across the 5 Institutional Pillars.
 
@@ -166,7 +175,10 @@ def calculate_continuous_long_factor_scores(
     else:
         dryup_pts = Decimal("0.0")
 
-    if rvol_4h >= Decimal("1.50"):
+    if bandwidth_4h <= Decimal("0.15") and vol_contraction_ratio <= Decimal("0.85") and rvol_4h <= Decimal("0.65"):
+        # Wyckoff Volume Vacuum: extreme dry-up in tight coil indicates seller exhaustion
+        rvol_pts = Decimal("15.0")
+    elif rvol_4h >= Decimal("1.50"):
         rvol_pts = Decimal("25.0")
     elif rvol_4h >= Decimal("1.25"):
         rvol_pts = Decimal("15.0")
@@ -210,12 +222,12 @@ def calculate_continuous_long_factor_scores(
     else:
         oi_4h_pts = Decimal("0.0")
 
-    # Taker buy flow confirmation
-    if taker_buy_ratio_4h >= Decimal("0.54"):
+    # Taker buy flow confirmation (1.00 scale: buy_vol / sell_vol)
+    if taker_buy_ratio_4h >= Decimal("1.18"):
         taker_pts = Decimal("10.0")
-    elif taker_buy_ratio_4h >= Decimal("0.51"):
+    elif taker_buy_ratio_4h >= Decimal("1.05"):
         taker_pts = Decimal("5.0")
-    elif taker_buy_ratio_4h <= Decimal("0.46"):
+    elif taker_buy_ratio_4h <= Decimal("0.85"):
         taker_pts = Decimal("-8.0")
     else:
         taker_pts = Decimal("0.0")
@@ -246,15 +258,21 @@ def calculate_continuous_long_factor_scores(
     )
 
     # Dedicated Derivatives Confirmation Score (0 to 100)
-    base_deriv = Decimal("50.0")
-    oi_macro_delta = min(Decimal("25.0"), max(Decimal("-25.0"), (oi_change_7d or Decimal("0")) * Decimal("150.0"))) if oi_change_7d is not None else Decimal("0.0")
-    oi_intra_delta = min(Decimal("15.0"), max(Decimal("-15.0"), (oi_change_4h or Decimal("0")) * Decimal("300.0"))) if oi_change_4h is not None else Decimal("0.0")
-    taker_delta = min(Decimal("20.0"), max(Decimal("-20.0"), (taker_buy_ratio_4h - Decimal("0.50")) * Decimal("200.0")))
-    derivatives_score = clip(
-        base_deriv + oi_macro_delta + oi_intra_delta + taker_delta + funding_pts + cvd_pts,
-        Decimal("0.0"),
-        Decimal("100.0"),
-    ).quantize(Decimal("0.1"))
+    # Fix 2: If oi_change_7d is None, do not award false high score (sub-par baseline 40.0)
+    if oi_change_7d is None:
+        derivatives_score = Decimal("40.0")
+    else:
+        base_deriv = Decimal("50.0")
+        oi_4h_comp = min(Decimal("16.0"), max(Decimal("-16.0"), (oi_change_4h or Decimal("0")) * Decimal("320.0"))) if oi_change_4h is not None else Decimal("0.0")
+        oi_7d_comp = min(Decimal("16.0"), max(Decimal("-16.0"), (oi_change_7d or Decimal("0")) * Decimal("160.0"))) if oi_change_7d is not None else Decimal("0.0")
+        oi_1h_comp = min(Decimal("8.0"), max(Decimal("-8.0"), (oi_change_1h or Decimal("0")) * Decimal("400.0"))) if oi_change_1h is not None else Decimal("0.0")
+        oi_blended_delta = oi_4h_comp + oi_7d_comp + oi_1h_comp
+        taker_delta = min(Decimal("20.0"), max(Decimal("-20.0"), (taker_buy_ratio_4h - Decimal("1.00")) * Decimal("50.0")))
+        derivatives_score = clip(
+            base_deriv + oi_blended_delta + taker_delta + funding_pts + cvd_pts,
+            Decimal("0.0"),
+            Decimal("100.0"),
+        ).quantize(Decimal("0.1"))
 
     # 4. Trend Alignment & Momentum Expansion (0 to 100)
     if close < ema200_4h and ema50_4h < ema200_4h * Decimal("0.98"):
@@ -373,6 +391,13 @@ def calculate_continuous_long_factor_scores(
         Decimal("100.0"),
     )
 
+    # Dedicated Alpha Score (BTC-Residual Alpha Normalized: 0.00% -> 50.0)
+    alpha_score = clip(
+        Decimal("50.0") + btc_residual_alpha * Decimal("500.0"),
+        Decimal("0.0"),
+        Decimal("100.0"),
+    ).quantize(Decimal("0.1"))
+
     return LongContinuousFactorScores(
         volatility_score=volatility_score.quantize(Decimal("0.1")),
         value_score=value_score.quantize(Decimal("0.1")),
@@ -385,6 +410,7 @@ def calculate_continuous_long_factor_scores(
         volume_score=volume_score,
         momentum_score=momentum_score,
         derivatives_score=derivatives_score,
+        alpha_score=alpha_score,
     )
 
 
@@ -418,6 +444,7 @@ def calculate_continuous_short_factor_scores(
     is_btc_cascade: bool = False,
     upper_wick_ratio_4h: Decimal = Decimal("0.0"),
     dist_to_entry: Decimal = Decimal("0.0"),
+    oi_change_1h: Decimal | None = None,
 ) -> ShortContinuousFactorScores:
     """Continuous Multi-Factor Quant Scoring Engine across the 5 Institutional Short Pillars.
 
@@ -473,12 +500,12 @@ def calculate_continuous_short_factor_scores(
 
     # 3. Smart Money Distribution & Trapped Longs (0 to 100)
     base_dist = Decimal("40.0")
-    # Taker sell flow (taker buy ratio < 0.50 means sellers dominate)
-    if taker_buy_ratio_4h <= Decimal("0.46"):
+    # Taker sell flow (taker buy ratio < 1.00 means sellers dominate)
+    if taker_buy_ratio_4h <= Decimal("0.85"):
         base_dist += Decimal("18.0")
-    elif taker_buy_ratio_4h <= Decimal("0.49"):
+    elif taker_buy_ratio_4h <= Decimal("0.95"):
         base_dist += Decimal("10.0")
-    elif taker_buy_ratio_4h >= Decimal("0.53"):
+    elif taker_buy_ratio_4h >= Decimal("1.15"):
         base_dist -= Decimal("15.0")
 
     # CVD Selling Pressure
@@ -631,9 +658,20 @@ def calculate_continuous_short_factor_scores(
     short_momentum_score = clip(base_short_mom + mom_macd_short + mom_alpha_short, Decimal("0.0"), Decimal("100.0")).quantize(Decimal("0.1"))
 
     # Dedicated Short Derivatives Score
-    base_short_deriv = Decimal("50.0")
-    short_deriv_pts = (distribution_score - Decimal("50.0"))
-    short_derivatives_score = clip(base_short_deriv + short_deriv_pts, Decimal("0.0"), Decimal("100.0")).quantize(Decimal("0.1"))
+    # Fix 2: If oi_change_7d is None, do not award false high score (sub-par baseline 40.0)
+    if oi_change_7d is None:
+        short_derivatives_score = Decimal("40.0")
+    else:
+        base_short_deriv = Decimal("50.0")
+        short_deriv_pts = (distribution_score - Decimal("50.0"))
+        short_derivatives_score = clip(base_short_deriv + short_deriv_pts, Decimal("0.0"), Decimal("100.0")).quantize(Decimal("0.1"))
+
+    # Dedicated Short Alpha Score (Residual Alpha underperformance vs BTC Normalized: 0.00% -> 50.0)
+    alpha_score = clip(
+        Decimal("50.0") - btc_residual_alpha * Decimal("500.0"),
+        Decimal("0.0"),
+        Decimal("100.0"),
+    ).quantize(Decimal("0.1"))
 
     return ShortContinuousFactorScores(
         volatility_score=volatility_score.quantize(Decimal("0.1")),
@@ -647,6 +685,7 @@ def calculate_continuous_short_factor_scores(
         volume_score=short_volume_score,
         momentum_score=short_momentum_score,
         derivatives_score=short_derivatives_score,
+        alpha_score=alpha_score,
     )
 
 
@@ -656,25 +695,56 @@ def calculate_adx_subscore(
     adx_4h_prev: Decimal,
     dmi_plus: Decimal,
     dmi_minus: Decimal,
+    *,
+    bandwidth_4h: Decimal | None = None,
+    bb_inside_kc: bool = False,
+    delta_adx_1h: Decimal | None = None,
+    delta_dmi_diff_1h: Decimal | None = None,
+    dmi_plus_4h: Decimal | None = None,
+    dmi_minus_4h: Decimal | None = None,
 ) -> Decimal:
     """Regime-adaptive ADX subscore (0 to 100).
 
-    For pre-breakout accumulation (COIL_SPRING_LONG, OI_ACCUMULATION_LONG, VCP_COMPRESSION_LONG, RANGE_BOTTOM_ACCUMULATION_LONG):
-      adx_subscore = clip(100.0 - 4.0 * max(0.0, adx_4h - 14.0), 0.0, 100.0) if dmi_plus >= dmi_minus * 0.90 else 25.0
-    For trend expansion:
-      adx_subscore = clip(4.0 * (adx_4h - 15.0) + (20.0 if adx_4h > adx_4h_prev else 0.0), 0.0, 100.0)
+    Task 3: Resolve the ADX vs. Squeeze Scoring Paradox
+    - Separate Established Trend Strength (ADX_4h >= 25) from Coiled Ignition Inflection.
+    - When a token is in verified compression (BB_Bandwidth_4h <= 16% or BB_Inside_KC == True),
+      award full ADX sub-score points (100.0) if +DI_4h > -DI_4h AND either Delta ADX_1h(3) >= +1.5 or Delta(+DI_1h - -DI_1h) >= +3.0.
     """
+    # 1. Coiled Ignition Inflection (Task 3 Institutional Rule)
+    is_compressed = (bandwidth_4h is not None and bandwidth_4h <= Decimal("0.16")) or bb_inside_kc
+    dp_4h = dmi_plus_4h if dmi_plus_4h is not None else dmi_plus
+    dm_4h = dmi_minus_4h if dmi_minus_4h is not None else dmi_minus
+    has_inflection = (
+        (delta_adx_1h is not None and delta_adx_1h >= Decimal("1.5"))
+        or (delta_dmi_diff_1h is not None and delta_dmi_diff_1h >= Decimal("3.0"))
+    )
+    if is_compressed and dp_4h > dm_4h and has_inflection:
+        return Decimal("100.0")
+
+    # 2. Established Trend Strength (ADX_4h >= 25)
+    if adx_4h >= Decimal("25.0") and dmi_plus > dmi_minus:
+        bonus = Decimal("20.0") if adx_4h > adx_4h_prev else Decimal("0.0")
+        raw = Decimal("4.0") * (adx_4h - Decimal("15.0")) + bonus
+        return clip(raw, Decimal("50.0"), Decimal("100.0"))
+
+    # 3. Pre-breakout accumulation baseline (when not yet ignited)
     is_accumulation = archetype in (
         SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG,
         SetupLabel.COIL_SPRING_LONG,
         SetupLabel.OI_ACCUMULATION_LONG,
         SetupLabel.VCP_COMPRESSION_LONG,
         SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG,
+        SetupLabel.FUNDING_SQUEEZE_SPRING_LONG,
+        SetupLabel.WYCKOFF_SQUEEZE_SPRING,
+        SetupLabel.STEALTH_OI_ACCUMULATION,
         "SHORT_SQUEEZE_ABSORPTION_LONG",
         "COIL_SPRING_LONG",
         "OI_ACCUMULATION_LONG",
         "VCP_COMPRESSION_LONG",
         "RANGE_BOTTOM_ACCUMULATION_LONG",
+        "FUNDING_SQUEEZE_SPRING_LONG",
+        "WYCKOFF_SQUEEZE_SPRING",
+        "STEALTH_OI_ACCUMULATION",
     )
     if is_accumulation:
         if dmi_plus >= dmi_minus * Decimal("0.90"):

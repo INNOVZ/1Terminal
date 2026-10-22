@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from algotrader.application.macro_service import MacroIntelligenceService
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from algotrader.application.watchlist_service import WatchlistService
@@ -21,6 +21,7 @@ from algotrader.domain.crypto_screener_models import (
     calculate_opportunity_win_rate_and_ev,
 )
 from algotrader.domain.watchlist_models import WatchlistItem, WatchlistPriority, WyckoffStage
+from algotrader.infrastructure.persistence import atomic_write_json
 from algotrader.infrastructure.runtime import Runtime, build_runtime
 
 portal_router = APIRouter(prefix="/api")
@@ -105,26 +106,6 @@ def _enrich_opp_with_win_rate(opp: dict[str, Any]) -> dict[str, Any]:
 
 
 def _get_fresh_baseline_opportunities() -> dict[str, Any]:
-    latest_path = Path("data/screener_latest.json")
-    if latest_path.exists():
-        try:
-            cached_latest = json.loads(latest_path.read_text())
-            if isinstance(cached_latest, dict) and "opportunities" in cached_latest:
-                seen_bases: set[str] = set()
-                deduped: list[dict[str, Any]] = []
-                for o in cached_latest.get("opportunities", []):
-                    _enrich_opp_with_win_rate(o)
-                    sym = str(o.get("symbol", ""))
-                    base = o.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
-                    if base and base not in seen_bases:
-                        seen_bases.add(base)
-                        deduped.append(o)
-                cached_latest["opportunities"] = deduped
-                cached_latest["qualifying_count"] = len(deduped)
-                return cached_latest
-        except Exception:
-            pass
-
     now = datetime.now(UTC)
     return {
         "timestamp": now.isoformat(),
@@ -256,18 +237,7 @@ async def _do_crypto_screen(
         if deduped_opps:
             final_opps = deduped_opps
         else:
-            # Only if zero candidates passed strict gates do we retain previous verified setups
-            latest_path = Path("data/screener_latest.json")
-            prior_opps = []
-            if _screener_cache and isinstance(_screener_cache, dict):
-                prior_opps = _screener_cache.get("opportunities", [])
-            elif latest_path.exists():
-                try:
-                    disk_data = json.loads(latest_path.read_text())
-                    prior_opps = disk_data.get("opportunities", [])
-                except Exception:
-                    pass
-            final_opps = prior_opps
+            final_opps = []
 
         final_opps.sort(key=lambda o: float(o.get("conviction") or o.get("score") or 0.0), reverse=True)
 
@@ -281,11 +251,10 @@ async def _do_crypto_screen(
         _screener_cache = result
         _cache_timestamp = now
 
-        # Persist latest live scan to disk
+        # Persist latest live scan to disk atomically
         try:
             cache_file = Path("data/screener_latest.json")
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(json.dumps(result, indent=2, default=str))
+            atomic_write_json(cache_file, result)
         except Exception:
             pass
 
@@ -299,11 +268,13 @@ async def _do_crypto_screen(
 
         return result
     except Exception as exc:
-        if _screener_cache:
-            return _screener_cache
-        fallback = _get_fresh_baseline_opportunities()
-        fallback["audit_warning"] = f"Live rate limit / IP backoff active: {exc}"
-        return fallback
+        return {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "total_scanned": 0,
+            "qualifying_count": 0,
+            "macro_narrative": f"Live scan issue: {exc}",
+            "opportunities": [],
+        }
     finally:
         _is_refreshing = False
 
@@ -316,14 +287,19 @@ async def get_live_screener(
     scope: str = "core",
     refresh: bool = False,
     wait: bool = False,
+    response: Response = None,
 ) -> dict[str, Any]:
-    """Runs or retrieves cached live pre-breakout institutional screener results with candles.
+    """Runs or retrieves verified live pre-breakout institutional screener results with candles.
     
     Two-Speed Screening Model:
-    - `scope="core"` (default): Fast on-demand scan of top 250 liquid contracts (~25s).
+    - `scope="core"` (default): Fast on-demand scan of top 250 liquid contracts (~15s).
     - `scope="full"`: Comprehensive background sweep across all 484+ liquid contracts (including low-caps).
     """
     global _screener_cache, _cache_timestamp, _screener_task
+
+    if response:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
 
     effective_max = 500 if scope.lower() == "full" or max_symbols >= 500 else max_symbols
 
@@ -335,19 +311,35 @@ async def get_live_screener(
         if wait and _screener_task:
             await _screener_task
 
-    latest_path = Path("data/screener_latest.json")
-    if latest_path.exists():
-        try:
-            mtime = datetime.fromtimestamp(latest_path.stat().st_mtime, tz=UTC)
-            if not _cache_timestamp or mtime != _cache_timestamp:
-                _screener_cache = _get_fresh_baseline_opportunities()
-                _cache_timestamp = mtime
-        except Exception:
-            pass
+    is_currently_scanning = _screener_task is not None and not _screener_task.done()
 
-    base = _screener_cache or _get_fresh_baseline_opportunities()
-    result = dict(base)
-    result["is_scanning"] = (_screener_task is not None and not _screener_task.done())
+    if is_currently_scanning:
+        # Never serve cached candidate results while an active live scan is running
+        return {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "total_scanned": 0,
+            "qualifying_count": 0,
+            "macro_narrative": "Live algorithmic universe scan in progress...",
+            "opportunities": [],
+            "is_scanning": True,
+        }
+
+    # If no live scan exists yet in memory, trigger one on demand
+    if not _screener_cache:
+        async with _screener_task_lock:
+            if _screener_task is None or _screener_task.done():
+                _screener_task = asyncio.create_task(_do_crypto_screen(mode, min_score, effective_max))
+        return {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "total_scanned": 0,
+            "qualifying_count": 0,
+            "macro_narrative": "Initiating live algorithmic scan across Binance universe...",
+            "opportunities": [],
+            "is_scanning": True,
+        }
+
+    result = dict(_screener_cache)
+    result["is_scanning"] = False
     return result
 
 
@@ -368,8 +360,8 @@ _last_cron_run: datetime | None = None
 _next_cron_run: datetime | None = None
 
 
-def seconds_until_next_cycle(now: datetime, interval_hours: int = 4, grace_seconds: int = 30) -> float:
-    """Calculates seconds until the next aligned UTC cycle (e.g., at 00:00:30, 04:00:30, 08:00:30 UTC for 4H)."""
+def seconds_until_next_cycle(now: datetime, interval_hours: int = 4, grace_seconds: int = 60) -> float:
+    """Calculates seconds until the next aligned UTC cycle (e.g., at 00:00:60, 04:00:60, 08:00:60 UTC for 4H)."""
     utc_now = now.astimezone(UTC)
     boundary_hour = (utc_now.hour // interval_hours) * interval_hours
     boundary = utc_now.replace(hour=boundary_hour, minute=0, second=0, microsecond=0)
@@ -387,7 +379,7 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
     global _last_cron_run, _next_cron_run
     while True:
         try:
-            delay = seconds_until_next_cycle(datetime.now(UTC), interval_hours=interval_hours, grace_seconds=30)
+            delay = seconds_until_next_cycle(datetime.now(UTC), interval_hours=interval_hours, grace_seconds=60)
             _next_cron_run = datetime.now(UTC) + timedelta(seconds=delay)
             print(
                 f"⏰ [Cron] Sleeping {delay:.0f}s ({delay/60:.1f}m) until next {interval_hours}-hour cycle at "
@@ -421,7 +413,7 @@ async def get_cron_status() -> dict[str, Any]:
     global _last_cron_run, _next_cron_run, _cron_task
     now = datetime.now(UTC)
     interval_hours = 4
-    delay = seconds_until_next_cycle(now, interval_hours=interval_hours, grace_seconds=30)
+    delay = seconds_until_next_cycle(now, interval_hours=interval_hours, grace_seconds=60)
     next_run = _next_cron_run or (now + timedelta(seconds=delay))
     is_running = _cron_task is not None and not _cron_task.done()
     return {

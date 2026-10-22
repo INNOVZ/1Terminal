@@ -146,6 +146,8 @@ class Quote:
     high_24h: Decimal | None = None
     low_24h: Decimal | None = None
     price_change_pct_24h: Decimal | None = None
+    funding_rate: Decimal | None = None
+    basis_pct: Decimal | None = None
 
     @property
     def mid(self) -> Decimal:
@@ -253,15 +255,18 @@ class Candidate:
 class DerivativesSnapshot:
     """Point-in-time public derivatives data used only as observable research features."""
 
-    funding_rate: Decimal
+    funding_rate: Decimal | None
     basis_rate: Decimal
     open_interest: Decimal
     open_interest_change_1h: Decimal | None
     taker_buy_sell_ratio: Decimal
     bid_depth_notional: Decimal
     ask_depth_notional: Decimal
+    open_interest_change_4h: Decimal | None = None
+    open_interest_change_24h: Decimal | None = None
     open_interest_change_7d: Decimal | None = None
     observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    degraded_telemetry: bool = False
 
     @property
     def depth_imbalance(self) -> Decimal:

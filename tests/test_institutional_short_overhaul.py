@@ -124,7 +124,7 @@ def test_scoring_no_saturation_for_weak_setups():
         cvd_zscore=Decimal("0.10"),
         oi_change_7d=Decimal("-0.10"),
         oi_change_4h=Decimal("-0.01"),
-        taker_buy_ratio_4h=Decimal("0.50"),
+        taker_buy_ratio_4h=Decimal("1.00"),
         funding_rate=Decimal("0.00001"),
         ema20_4h=Decimal("0.000690"),
         macd_hist_4h=Decimal("-0.000002"),
