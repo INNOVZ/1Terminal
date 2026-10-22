@@ -287,6 +287,112 @@ function RadarPageContent() {
       setIsScanning(true);
       window.dispatchEvent(new CustomEvent("atlas:scan-start"));
     }
+
+    const applyScreenerData = async (incoming: ScreenerResponse) => {
+      if (!incoming || !incoming.opportunities || incoming.opportunities.length === 0) return;
+      const enriched: Opportunity[] = incoming.opportunities.map((o: Opportunity) => ({
+        ...o,
+        candles:
+          o.candles && o.candles.length > 0
+            ? o.candles
+            : candleStore[o.symbol] || [],
+      }));
+
+      const cleanTarget = symbolParam ? symbolParam.toUpperCase() : null;
+      let matchedTarget: Opportunity | null = null;
+
+      if (cleanTarget) {
+        matchedTarget =
+          enriched.find(
+            (item: Opportunity) =>
+              item.symbol.toUpperCase() === cleanTarget,
+          ) || null;
+
+        if (!matchedTarget) {
+          try {
+            const chartRes = await fetch(
+              `/api/chart/${cleanTarget}`,
+            ).catch(() => null);
+            if (chartRes && chartRes.ok) {
+              const chartData = (await chartRes.json()) as { opportunity?: Opportunity; candles?: Candle[] };
+              if (chartData && chartData.opportunity) {
+                matchedTarget = {
+                  ...chartData.opportunity,
+                  candles:
+                    chartData.candles && chartData.candles.length > 0
+                      ? chartData.candles
+                      : candleStore[cleanTarget] || [],
+                };
+                enriched.unshift(matchedTarget);
+              }
+            }
+          } catch (cErr) {
+            console.warn(
+              "Could not load targeted watchlist candidate:",
+              cErr,
+            );
+          }
+        }
+      }
+
+      // Client-side base-asset deduplication: enforce single canonical contract per underlying asset
+      const seenBases = new Set<string>();
+      const dedupedEnriched: Opportunity[] = [];
+      for (const item of enriched) {
+        const rawBase = item.base_asset || item.symbol.replace(/USDT$/, "").replace(/USDC$/, "");
+        const baseKey = rawBase.toUpperCase();
+        if (baseKey && !seenBases.has(baseKey)) {
+          seenBases.add(baseKey);
+          dedupedEnriched.push(item);
+        }
+      }
+
+      setOpportunities(dedupedEnriched);
+
+      // Preserve active token or activate targeted candidate
+      setActiveOpportunity((prev) => {
+        if (matchedTarget) {
+          if (matchedTarget.candles && matchedTarget.candles.length > 0) {
+            setActiveCandle(
+              matchedTarget.candles[matchedTarget.candles.length - 1],
+            );
+          }
+          return matchedTarget;
+        }
+        if (prev) {
+          const matched = enriched.find(
+            (item: Opportunity) =>
+              item.symbol.toUpperCase() === prev.symbol.toUpperCase(),
+          );
+          if (matched) {
+            if (matched.candles && matched.candles.length > 0) {
+              setActiveCandle(
+                matched.candles[matched.candles.length - 1],
+              );
+            }
+            return matched;
+          }
+        }
+        if (enriched[0]?.candles && enriched[0].candles.length > 0) {
+          setActiveCandle(
+            enriched[0].candles[enriched[0].candles.length - 1],
+          );
+        }
+        return enriched[0];
+      });
+
+      if (isLiveRefresh) {
+        setScanNotification(
+          `✓ Rescan complete: verified ${enriched.length} setups`,
+        );
+        window.dispatchEvent(
+          new CustomEvent("atlas:scan-complete", {
+            detail: { count: enriched.length, timestamp: incoming.timestamp },
+          }),
+        );
+      }
+    };
+
     try {
       const url = isLiveRefresh
         ? `/api/screener/live?refresh=true&scope=${scope}`
@@ -298,10 +404,17 @@ function RadarPageContent() {
         data = (await res.json()) as ScreenerResponse;
       }
 
-      // If backend reports an active background scan, poll until it finishes
+      // 1. Immediately apply cached opportunities so the user never sees a stuck loading screen
+      if (data && data.opportunities && data.opportunities.length > 0) {
+        await applyScreenerData(data);
+        setLoading(false);
+      }
+
+      // 2. If backend reports an active background scan, poll non-blockingly until it finishes
       if (data && data.is_scanning) {
+        setIsScanning(true);
         let pollAttempts = 0;
-        const maxPollAttempts = 150; // Allow up to 5 minutes for full universe analysis
+        const maxPollAttempts = 40; // Max 80 seconds
         while (pollAttempts < maxPollAttempts) {
           await new Promise((r) => setTimeout(r, 2000));
           pollAttempts++;
@@ -309,8 +422,10 @@ function RadarPageContent() {
             const pollRes = await fetch("/api/screener/live").catch(() => null);
             if (pollRes && pollRes.ok) {
               const pollData = (await pollRes.json()) as ScreenerResponse;
+              if (pollData && pollData.opportunities && pollData.opportunities.length > 0) {
+                await applyScreenerData(pollData);
+              }
               if (pollData && !pollData.is_scanning) {
-                data = pollData;
                 break;
               }
             }
@@ -318,120 +433,17 @@ function RadarPageContent() {
             console.warn("Polling error during rescan:", pollErr);
           }
         }
-      }
-
-      if (data && data.opportunities && data.opportunities.length > 0) {
-        const enriched: Opportunity[] = data.opportunities.map((o: Opportunity) => ({
-          ...o,
-          candles:
-            o.candles && o.candles.length > 0
-              ? o.candles
-              : candleStore[o.symbol] || [],
-        }));
-
-        const cleanTarget = symbolParam ? symbolParam.toUpperCase() : null;
-        let matchedTarget: Opportunity | null = null;
-
-        if (cleanTarget) {
-          matchedTarget =
-            enriched.find(
-              (item: Opportunity) =>
-                item.symbol.toUpperCase() === cleanTarget,
-            ) || null;
-
-          // If candidate is not in screener opportunities, fetch directly from /api/chart/${cleanTarget}
-          if (!matchedTarget) {
-            try {
-              const chartRes = await fetch(
-                `/api/chart/${cleanTarget}`,
-              ).catch(() => null);
-              if (chartRes && chartRes.ok) {
-                const chartData = (await chartRes.json()) as { opportunity?: Opportunity; candles?: Candle[] };
-                if (chartData && chartData.opportunity) {
-                  matchedTarget = {
-                    ...chartData.opportunity,
-                    candles:
-                      chartData.candles && chartData.candles.length > 0
-                        ? chartData.candles
-                        : candleStore[cleanTarget] || [],
-                  };
-                  enriched.unshift(matchedTarget);
-                }
-              }
-            } catch (cErr) {
-              console.warn(
-                "Could not load targeted watchlist candidate:",
-                cErr,
-              );
-            }
-          }
+      } else if (!data || !data.opportunities || data.opportunities.length === 0) {
+        if (data && Array.isArray(data.opportunities) && data.opportunities.length === 0) {
+          setOpportunities([]);
         }
-
-        // Client-side base-asset deduplication: enforce single canonical contract per underlying asset
-        const seenBases = new Set<string>();
-        const dedupedEnriched: Opportunity[] = [];
-        for (const item of enriched) {
-          const rawBase = item.base_asset || item.symbol.replace(/USDT$/, "").replace(/USDC$/, "");
-          const baseKey = rawBase.toUpperCase();
-          if (baseKey && !seenBases.has(baseKey)) {
-            seenBases.add(baseKey);
-            dedupedEnriched.push(item);
-          }
-        }
-
-        setOpportunities(dedupedEnriched);
-
-        // Preserve active token or activate targeted candidate
-        setActiveOpportunity((prev) => {
-          if (matchedTarget) {
-            if (matchedTarget.candles && matchedTarget.candles.length > 0) {
-              setActiveCandle(
-                matchedTarget.candles[matchedTarget.candles.length - 1],
-              );
-            }
-            return matchedTarget;
-          }
-          if (prev) {
-            const matched = enriched.find(
-              (item: Opportunity) =>
-                item.symbol.toUpperCase() === prev.symbol.toUpperCase(),
-            );
-            if (matched) {
-              if (matched.candles && matched.candles.length > 0) {
-                setActiveCandle(
-                  matched.candles[matched.candles.length - 1],
-                );
-              }
-              return matched;
-            }
-          }
-          if (enriched[0]?.candles && enriched[0].candles.length > 0) {
-            setActiveCandle(
-              enriched[0].candles[enriched[0].candles.length - 1],
-            );
-          }
-          return enriched[0];
-        });
-
-        if (isLiveRefresh) {
-          setScanNotification(
-            `✓ Rescan complete: verified ${enriched.length} setups`,
-          );
-          window.dispatchEvent(
-            new CustomEvent("atlas:scan-complete", {
-              detail: { count: enriched.length, timestamp: data.timestamp },
-            }),
-          );
-        }
-      } else if (data && Array.isArray(data.opportunities) && data.opportunities.length === 0) {
-        setOpportunities([]);
         if (isLiveRefresh) {
           setScanNotification(
             "Scan complete: 0 tokens currently qualify for institutional gates",
           );
           window.dispatchEvent(
             new CustomEvent("atlas:scan-complete", {
-              detail: { count: 0, timestamp: data.timestamp },
+              detail: { count: 0, timestamp: data?.timestamp },
             }),
           );
         }
@@ -585,15 +597,9 @@ function RadarPageContent() {
     // 1. Instant REST snapshot for all candidate symbols
     const fetchSnapshot = async () => {
       try {
-        const encoded = encodeURIComponent(JSON.stringify(symbols));
-        let res = await fetch(
-          `https://api.binance.com/api/v3/ticker/price?symbols=${encoded}`,
+        const res = await fetch(
+          "https://fapi.binance.com/fapi/v1/ticker/price",
         ).catch(() => null);
-        if (!res || !res.ok) {
-          res = await fetch(
-            "https://fapi.binance.com/fapi/v1/ticker/price",
-          ).catch(() => null);
-        }
         if (res && res.ok && isSubscribed) {
           const data = await res.json();
           if (Array.isArray(data)) {
