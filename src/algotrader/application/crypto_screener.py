@@ -629,9 +629,9 @@ class CryptoOpportunityScreener:
         pos_in_range = (close - low_30d) / max(high_30d - low_30d, Decimal("1e-8"))
         low_24h = min(c.low for c in (closed_1h[-24:] if len(closed_1h) >= 24 else closed_1h))
 
-        # 30-Day Triangular Kernel Volume Profile (using up to 720 1H bars)
-        vp_window = closed_1h[-720:] if len(closed_1h) >= 720 else closed_1h
-        vp = volume_profile(vp_window, bins=50)
+        # 30-Day Volume Profile (using 180 4H bars = 720 hours = 30 days)
+        vp_window = closed_4h[-180:] if len(closed_4h) >= 180 else (closed_1h[-240:] if len(closed_1h) >= 240 else closed_1h)
+        vp = volume_profile(vp_window, bins=40)
         poc_price = vp.poc_price
         vah_price = vp.vah_price
         val_price = vp.val_price
@@ -1100,9 +1100,9 @@ class CryptoOpportunityScreener:
         ema20_4h = ema(closes_4h, 20)[-1]
         ema50_4h = ema(closes_4h, 50)[-1] if len(closes_4h) >= 50 else ema20_4h
 
-        # 1. 30-Day VPVR Window (720 1H bars for highest spatial resolution)
-        vpvr_window = closed_1h[-720:] if len(closed_1h) >= 720 else closed_1h
-        vp = volume_profile(vpvr_window, bins=50)
+        # 1. 30-Day VPVR Window (180 4H bars = 720 hours = 30 days)
+        vpvr_window = closed_4h[-180:] if len(closed_4h) >= 180 else (closed_1h[-240:] if len(closed_1h) >= 240 else closed_1h)
+        vp = volume_profile(vpvr_window, bins=40)
         poc_price = vp.poc_price
         vah_price = vp.vah_price
         val_price = vp.val_price

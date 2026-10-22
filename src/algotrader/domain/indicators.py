@@ -852,30 +852,34 @@ def volume_profile(
         return VolumeProfile(d_max, d_max, d_min, d_vol, d_vol)
 
     bin_width = (max_high - min_low) / float(bins)
+    inv_bin_width = 1.0 / bin_width
     bin_volumes = [0.0] * bins
     bin_mids = [min_low + (float(i) + 0.5) * bin_width for i in range(bins)]
 
     for c_low, c_high, c_close, c_vol in zip(lows, highs, closes, vols, strict=False):
         if c_vol <= 0.0:
             continue
-        if c_high <= c_low:
-            idx = min(bins - 1, max(0, int((c_low - min_low) / bin_width)))
-            bin_volumes[idx] += c_vol
-            continue
-
+        span = max(c_high - c_low, 1e-8)
         tp = (c_high + c_low + c_close) / 3.0
         tp = max(c_low, min(c_high, tp))
+        left_span = max(tp - c_low, 1e-8)
+        right_span = max(c_high - tp, 1e-8)
+        inv_left = 1.0 / (span * left_span)
+        inv_right = 1.0 / (span * right_span)
 
-        low_idx = min(bins - 1, max(0, int((c_low - min_low) / bin_width)))
-        high_idx = min(bins - 1, max(0, int((c_high - min_low) / bin_width)))
+        low_idx = min(bins - 1, max(0, int((c_low - min_low) * inv_bin_width)))
+        high_idx = min(bins - 1, max(0, int((c_high - min_low) * inv_bin_width)))
         for i in range(low_idx, high_idx + 1):
             b_low = min_low + float(i) * bin_width
             b_high = b_low + bin_width
             x1 = max(c_low, b_low)
             x2 = min(c_high, b_high)
             if x2 > x1:
-                weight = _triangular_cdf_f(x2, c_low, c_high, tp) - _triangular_cdf_f(x1, c_low, c_high, tp)
-                bin_volumes[i] += c_vol * max(0.0, weight)
+                cdf1 = ((x1 - c_low) ** 2) * inv_left if x1 <= tp else 1.0 - ((c_high - x1) ** 2) * inv_right
+                cdf2 = ((x2 - c_low) ** 2) * inv_left if x2 <= tp else 1.0 - ((c_high - x2) ** 2) * inv_right
+                w = cdf2 - cdf1
+                if w > 0.0:
+                    bin_volumes[i] += c_vol * w
 
     poc_idx = max(range(bins), key=lambda i: bin_volumes[i])
     target_vol = total_vol * float(value_area_pct)
