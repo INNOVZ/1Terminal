@@ -808,6 +808,20 @@ def _triangular_cdf(x: Decimal, a: Decimal, b: Decimal, c: Decimal) -> Decimal:
     return Decimal("1") - ((b - x) ** 2) / (span * right_span)
 
 
+def _triangular_cdf_f(x: float, a: float, b: float, c: float) -> float:
+    """Fast float triangular CDF for high-throughput volume profile computation."""
+    if x <= a:
+        return 0.0
+    if x >= b:
+        return 1.0
+    span = max(b - a, 1e-8)
+    left_span = max(c - a, 1e-8)
+    right_span = max(b - c, 1e-8)
+    if x <= c:
+        return ((x - a) ** 2) / (span * left_span)
+    return 1.0 - ((b - x) ** 2) / (span * right_span)
+
+
 def volume_profile(
     candles: Sequence[Candle],
     bins: int = 50,
@@ -818,57 +832,61 @@ def volume_profile(
     For each candle, distributes quote_volume (or volume) across bins intersecting [low, high]
     using a triangular distribution centered at Typical Price tp = (high + low + close) / 3.0.
     Finds the Point of Control (POC, max-volume level) and Value Area (70% total volume).
+    Optimized with fast vectorizable float operations for high-throughput institutional screening.
     """
     if not candles:
         return VolumeProfile(ZERO, ZERO, ZERO, ZERO, ZERO)
 
-    min_low = min(c.low for c in candles)
-    max_high = max(c.high for c in candles)
-    total_vol = sum((c.quote_volume if c.quote_volume > ZERO else c.volume for c in candles), ZERO)
+    lows = [float(c.low) for c in candles]
+    highs = [float(c.high) for c in candles]
+    closes = [float(c.close) for c in candles]
+    vols = [float(c.quote_volume if c.quote_volume > ZERO else c.volume) for c in candles]
+
+    min_low = min(lows)
+    max_high = max(highs)
+    total_vol = sum(vols)
     if max_high <= min_low or bins <= 0:
-        return VolumeProfile(max_high, max_high, min_low, total_vol, total_vol)
+        d_max = Decimal(str(round(max_high, 8)))
+        d_min = Decimal(str(round(min_low, 8)))
+        d_vol = Decimal(str(round(total_vol, 2)))
+        return VolumeProfile(d_max, d_max, d_min, d_vol, d_vol)
 
-    bin_width = (max_high - min_low) / Decimal(bins)
-    bin_volumes = [ZERO] * bins
-    bin_mids = [min_low + (Decimal(i) + Decimal("0.5")) * bin_width for i in range(bins)]
+    bin_width = (max_high - min_low) / float(bins)
+    bin_volumes = [0.0] * bins
+    bin_mids = [min_low + (float(i) + 0.5) * bin_width for i in range(bins)]
 
-    for c in candles:
-        c_low, c_high = c.low, c.high
-        c_vol = c.quote_volume if c.quote_volume > ZERO else c.volume
-        if c_vol <= ZERO:
+    for c_low, c_high, c_close, c_vol in zip(lows, highs, closes, vols, strict=False):
+        if c_vol <= 0.0:
             continue
         if c_high <= c_low:
             idx = min(bins - 1, max(0, int((c_low - min_low) / bin_width)))
             bin_volumes[idx] += c_vol
             continue
 
-        tp = (c_high + c_low + c.close) / Decimal("3")
+        tp = (c_high + c_low + c_close) / 3.0
         tp = max(c_low, min(c_high, tp))
 
         low_idx = min(bins - 1, max(0, int((c_low - min_low) / bin_width)))
         high_idx = min(bins - 1, max(0, int((c_high - min_low) / bin_width)))
         for i in range(low_idx, high_idx + 1):
-            b_low = min_low + Decimal(i) * bin_width
+            b_low = min_low + float(i) * bin_width
             b_high = b_low + bin_width
             x1 = max(c_low, b_low)
             x2 = min(c_high, b_high)
             if x2 > x1:
-                weight = _triangular_cdf(x2, c_low, c_high, tp) - _triangular_cdf(x1, c_low, c_high, tp)
-                bin_volumes[i] += c_vol * max(ZERO, weight)
+                weight = _triangular_cdf_f(x2, c_low, c_high, tp) - _triangular_cdf_f(x1, c_low, c_high, tp)
+                bin_volumes[i] += c_vol * max(0.0, weight)
 
     poc_idx = max(range(bins), key=lambda i: bin_volumes[i])
-    poc_price = bin_mids[poc_idx]
-    poc_volume = bin_volumes[poc_idx]
-
-    target_vol = total_vol * value_area_pct
+    target_vol = total_vol * float(value_area_pct)
     va_indices = {poc_idx}
     cur_vol = bin_volumes[poc_idx]
 
     up = poc_idx + 1
     down = poc_idx - 1
     while cur_vol < target_vol and (up < bins or down >= 0):
-        up_vol = bin_volumes[up] if up < bins else Decimal("-1")
-        down_vol = bin_volumes[down] if down >= 0 else Decimal("-1")
+        up_vol = bin_volumes[up] if up < bins else -1.0
+        down_vol = bin_volumes[down] if down >= 0 else -1.0
         if up_vol >= down_vol and up < bins:
             va_indices.add(up)
             cur_vol += up_vol
@@ -880,18 +898,26 @@ def volume_profile(
         else:
             break
 
-    vah_price = bin_mids[max(va_indices)]
-    val_price = bin_mids[min(va_indices)]
+    poc_price = Decimal(str(round(bin_mids[poc_idx], 8)))
+    poc_volume = Decimal(str(round(bin_volumes[poc_idx], 2)))
+    vah_price = Decimal(str(round(bin_mids[max(va_indices)], 8)))
+    val_price = Decimal(str(round(bin_mids[min(va_indices)], 8)))
+    total_volume_d = Decimal(str(round(total_vol, 2)))
+    value_area_volume_d = Decimal(str(round(cur_vol, 2)))
+
     vp_bins = tuple(
-        VolumeProfileBin(price=bin_mids[i], volume=bin_volumes[i])
+        VolumeProfileBin(
+            price=Decimal(str(round(bin_mids[i], 8))),
+            volume=Decimal(str(round(bin_volumes[i], 2))),
+        )
         for i in range(bins)
     )
     return VolumeProfile(
         poc_price=poc_price,
         vah_price=vah_price,
         val_price=val_price,
-        total_volume=total_vol,
-        value_area_volume=cur_vol,
+        total_volume=total_volume_d,
+        value_area_volume=value_area_volume_d,
         poc_volume=poc_volume,
         bins=vp_bins,
     )

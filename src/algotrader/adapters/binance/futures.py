@@ -72,7 +72,7 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
             except Exception:
                 return []
 
-        premium, open_interest, oi_history, oi_daily_history, taker, depth = await asyncio.gather(
+        results = await asyncio.gather(
             self._client.request("GET", "/fapi/v1/premiumIndex", params={"symbol": symbol}),
             self._client.request("GET", "/fapi/v1/openInterest", params={"symbol": symbol}),
             self._client.request(
@@ -87,13 +87,17 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
                 params={"symbol": symbol, "period": "1h", "limit": 1},
             ),
             self._client.request("GET", "/fapi/v1/depth", params={"symbol": symbol, "limit": 20}),
+            return_exceptions=True,
         )
-        if not isinstance(premium, dict) or not isinstance(open_interest, dict):
+        premium = results[0] if isinstance(results[0], dict) else {}
+        open_interest = results[1] if isinstance(results[1], dict) else {}
+        oi_history = results[2] if isinstance(results[2], list) else []
+        oi_daily_history = results[3] if isinstance(results[3], list) else []
+        taker = results[4] if isinstance(results[4], list) else []
+        depth = results[5] if isinstance(results[5], dict) else {}
+
+        if not premium and not open_interest:
             raise VenueError("Binance returned invalid derivatives snapshot objects")
-        if not isinstance(oi_history, list) or not isinstance(taker, list):
-            raise VenueError("Binance returned invalid derivatives history arrays")
-        if not isinstance(depth, dict):
-            raise VenueError("Binance returned an invalid order-book snapshot")
 
         mark = Decimal(str(premium.get("markPrice", "0")))
         index = Decimal(str(premium.get("indexPrice", "0")))

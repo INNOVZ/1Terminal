@@ -172,7 +172,7 @@ class CryptoOpportunityScreener:
         liquid_instruments = list(best_by_base.values())
 
         # Stage 5: Institutional Liquidity Index (ILI) Stratification (Top liquid descending)
-        limit_symbols = max_symbols if max_symbols is not None else 320
+        limit_symbols = max_symbols if max_symbols is not None else 180
         limit_symbols = min(limit_symbols, len(liquid_instruments))
 
         ili_inputs = [
@@ -185,14 +185,17 @@ class CryptoOpportunityScreener:
         ranked_symbols = compute_ili_ranks(ili_inputs)
         inst_by_symbol = {inst.id.symbol: inst for inst in liquid_instruments}
 
-        # Primary selection: Top liquid by ILI
+        # Primary selection: Seed top liquid by ILI up to 85% of limit_symbols
+        seed_count = int(limit_symbols * 0.85)
         selected_set: set[str] = {
-            r.symbol for r in ranked_symbols[:limit_symbols] if r.symbol in inst_by_symbol
+            r.symbol for r in ranked_symbols[:seed_count] if r.symbol in inst_by_symbol
         }
 
-        # Priority inclusion: Any contract demonstrating active volume/expansion
-        # (e.g. 24h volume >= $2M or absolute 24h price change >= 2.5%) even if ranked near boundary
+        # Priority inclusion: Fill remaining slots with high active volume/expansion contracts
+        # Strictly capped at limit_symbols to prevent latency degradation
         for inst in liquid_instruments:
+            if len(selected_set) >= limit_symbols:
+                break
             sym = inst.id.symbol
             if sym in selected_set:
                 continue
@@ -201,8 +204,6 @@ class CryptoOpportunityScreener:
                 chg = abs(q.price_change_pct_24h) if q.price_change_pct_24h is not None else Decimal("0")
                 if q.quote_volume_24h >= Decimal("2000000") or chg >= Decimal("2.5"):
                     selected_set.add(sym)
-                    if len(selected_set) >= 360:
-                        break
 
         selected_instruments = [
             inst_by_symbol[s] for s in [r.symbol for r in ranked_symbols] if s in selected_set
@@ -250,6 +251,7 @@ class CryptoOpportunityScreener:
                     target_direction=target_direction,
                     is_btc_cascade=is_btc_cascade,
                     btc_ret_1h=btc_ret_1h,
+                    min_score=min_score,
                 )
                 await asyncio.sleep(0)  # Cooperative yield to event loop for healthchecks
                 return res
@@ -350,6 +352,7 @@ class CryptoOpportunityScreener:
         target_direction: Direction | None = None,
         is_btc_cascade: bool = False,
         btc_ret_1h: Decimal = ZERO,
+        min_score: Decimal | None = None,
     ) -> list[CryptoOpportunity]:
         """Evaluate a single instrument across 1h, 4h, derivatives, and alpha factors."""
         async def _fetch_candles(interval: str, limit: int) -> Sequence[Candle]:
@@ -363,11 +366,10 @@ class CryptoOpportunityScreener:
                         return ()
             return ()
 
-        # Concurrently fetch 1h (750 bars = 30d VPVR), 4h (250 bars = 41d EMA200 & resampled 1D), and 1w (50 bars = ~1yr HTF RSI)
-        c1h, c4h, c1w = await asyncio.gather(
+        # Concurrently fetch 1h (750 bars = 30d VPVR) and 4h (250 bars = 41d EMA200 & resampled 1D/1W)
+        c1h, c4h = await asyncio.gather(
             _fetch_candles("1h", 750),
             _fetch_candles("4h", 250),
-            _fetch_candles("1w", 50),
             return_exceptions=True,
         )
 
@@ -379,11 +381,7 @@ class CryptoOpportunityScreener:
         closed_1h = sorted([c for c in c1h if c.closed], key=lambda x: x.closed_at)
         closed_4h = sorted([c for c in c4h if c.closed], key=lambda x: x.closed_at)
         candles_1d = resample_candles(closed_4h, "1d")
-        candles_1w = (
-            sorted(list(c1w), key=lambda x: x.closed_at)
-            if (not isinstance(c1w, BaseException) and c1w)
-            else []
-        )
+        candles_1w = resample_candles(candles_1d, "1w") if candles_1d else []
 
         if len(closed_1h) < 210 or len(closed_4h) < 50:
             return []
@@ -414,21 +412,7 @@ class CryptoOpportunityScreener:
 
         opps: list[CryptoOpportunity] = []
 
-        # Query derivatives snapshot for candidate if port provided
-        derivatives: DerivativesSnapshot | None = None
-        if derivatives_port is not None:
-            try:
-                deriv_res = await asyncio.wait_for(
-                    derivatives_port.derivatives_snapshot(inst), timeout=5.0
-                )
-                if isinstance(deriv_res, DerivativesSnapshot):
-                    derivatives = deriv_res
-            except Exception:
-                derivatives = None
-
-        await asyncio.sleep(0)  # Cooperative yield before intensive scoring checks
-
-        # 1. Pre-Breakout Accumulation Evaluation (BEFORE the move - LONG)
+        # Stage 1: Preliminary Structural Setup Evaluation (Zero External Derivatives Latency)
         accum_opp = None
         if (target_direction is None or target_direction is Direction.LONG) and mode in (
             ScreenerMode.ACCUMULATION,
@@ -442,7 +426,7 @@ class CryptoOpportunityScreener:
                 snap_1h=snap_1h,
                 closed_1h=closed_1h,
                 closed_4h=closed_4h,
-                derivatives=derivatives,
+                derivatives=None,
                 macro_context=macro_context,
                 is_btc_cascade=is_btc_cascade,
                 btc_ret_1h=btc_ret_1h,
@@ -464,7 +448,7 @@ class CryptoOpportunityScreener:
                 snap_1h=snap_1h,
                 closed_1h=closed_1h,
                 closed_4h=closed_4h,
-                derivatives=derivatives,
+                derivatives=None,
                 macro_context=macro_context,
                 is_btc_cascade=is_btc_cascade,
                 btc_ret_1h=btc_ret_1h,
@@ -472,6 +456,58 @@ class CryptoOpportunityScreener:
                 candles_1d=candles_1d,
                 candles_1w=candles_1w,
             )
+
+        # Stage 2: Deep Derivatives Enrichment ONLY for Shortlisted Candidates
+        # If neither accumulation nor distribution passed structural criteria, avoid expensive derivatives API calls
+        qual_threshold = min(Decimal("58.0"), min_score) if min_score is not None else Decimal("58.0")
+        is_viable_long = accum_opp is not None and accum_opp.score >= qual_threshold
+        is_viable_short = dist_opp is not None and dist_opp.score >= qual_threshold
+
+        if not is_viable_long and not is_viable_short and mode != ScreenerMode.BREAKOUT:
+            return []
+
+        derivatives: DerivativesSnapshot | None = None
+        if derivatives_port is not None and (is_viable_long or is_viable_short or mode == ScreenerMode.BREAKOUT):
+            try:
+                deriv_res = await asyncio.wait_for(
+                    derivatives_port.derivatives_snapshot(inst), timeout=4.0
+                )
+                if isinstance(deriv_res, DerivativesSnapshot):
+                    derivatives = deriv_res
+            except Exception:
+                derivatives = None
+
+        if derivatives is not None:
+            if is_viable_long:
+                accum_opp = self._score_accumulation_setup(
+                    inst=inst,
+                    quote=quote,
+                    snap_1h=snap_1h,
+                    closed_1h=closed_1h,
+                    closed_4h=closed_4h,
+                    derivatives=derivatives,
+                    macro_context=macro_context,
+                    is_btc_cascade=is_btc_cascade,
+                    btc_ret_1h=btc_ret_1h,
+                    residual_24h=residual_24h,
+                    candles_1d=candles_1d,
+                    candles_1w=candles_1w,
+                )
+            if is_viable_short:
+                dist_opp = self._score_distribution_setup(
+                    inst=inst,
+                    quote=quote,
+                    snap_1h=snap_1h,
+                    closed_1h=closed_1h,
+                    closed_4h=closed_4h,
+                    derivatives=derivatives,
+                    macro_context=macro_context,
+                    is_btc_cascade=is_btc_cascade,
+                    btc_ret_1h=btc_ret_1h,
+                    residual_24h=residual_24h,
+                    candles_1d=candles_1d,
+                    candles_1w=candles_1w,
+                )
 
         # STRICT INSTITUTIONAL MUTUAL EXCLUSION:
         # A token cannot be both an accumulation long and a distribution short simultaneously!
