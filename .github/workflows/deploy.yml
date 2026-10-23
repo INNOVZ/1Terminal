@@ -1,37 +1,92 @@
-name: Deploy to GCP e2-micro
+name: Verify and deploy screener
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: screener-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  backend:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --extra dev
+      - run: uv run ruff check src
+      - run: uv run mypy
+      - run: uv run pytest
 
-      - name: Deploy to GCP VM via SSH
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t atlas-screener:verify .
+      - name: Verify packaged application without exchange access
+        run: |
+          docker run -d --name screener-check --network none -e ATLAS_SCREENER_CRON_ENABLED=false -e ATLAS_STATE_DB_PATH=/app/state/watchlist.sqlite3 atlas-screener:verify
+          for attempt in $(seq 1 20); do
+            if docker exec screener-check python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2)"; then break; fi
+            sleep 1
+          done
+          docker exec screener-check python -c "import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/')); assert d['mode']=='screener' and d['order_execution_enabled'] is False"
+      - if: always()
+        run: docker logs screener-check && docker rm -f screener-check
+
+  deploy:
+    needs: [backend, frontend, container]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy verified commit to GCP
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          RELEASE_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.GCP_VM_IP }}
           username: ${{ secrets.GCP_VM_USER || 'deploy' }}
           key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+          envs: RELEASE_SHA
           script: |
-            set -e
-            echo "🚀 Connecting to GCP e2-micro..."
+            set -eu
             cd /home/deploy/alfa-terminal
-            echo "📥 Pulling latest changes from main..."
             git fetch origin main
-            git reset --hard origin/main
-            mkdir -p data state
-            chmod -R a+rwX data state || true
-            echo "🐳 Building and restarting containers..."
-            docker compose down --remove-orphans || true
-            docker compose up -d --build
-            echo "⏳ Checking container status..."
-            sleep 10
-            docker compose ps
-            echo "✅ Deployment successful!"
+            git cat-file -e "$RELEASE_SHA^{commit}"
+            release="/home/deploy/atlas-releases/$RELEASE_SHA"
+            mkdir -p /home/deploy/atlas-releases
+            if [ ! -d "$release" ]; then
+              git worktree add --detach "$release" "$RELEASE_SHA"
+            fi
+            export ATLAS_DATA_DIR=/home/deploy/alfa-terminal/data
+            export ATLAS_IMAGE_TAG="$RELEASE_SHA"
+            mkdir -p "$ATLAS_DATA_DIR"
+            # One-time migration: ensure this directory is writable by container UID 10001.
+            # Deliberately do not make runtime data world-writable.
+            docker compose --project-name alfa-terminal --file "$release/compose.yaml" build
+            docker compose --project-name alfa-terminal --file "$release/compose.yaml" up -d --wait --wait-timeout 120 --remove-orphans
+            docker compose --project-name alfa-terminal --file "$release/compose.yaml" exec -T atlas python -c "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/')); assert d['mode']=='screener' and d['order_execution_enabled'] is False"

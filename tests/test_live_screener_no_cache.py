@@ -55,12 +55,17 @@ async def test_do_crypto_screen_returns_empty_when_no_candidates_pass() -> None:
     mock_system = AsyncMock()
     mock_system.crypto_screen.return_value = []
     mock_runtime = AsyncMock()
-    mock_runtime.system = mock_system
+    mock_runtime.crypto_screen = mock_system.crypto_screen
+    mock_runtime.last_scan_counts = {"selected": 12, "evaluated": 10, "failed": 2}
 
     with (
         patch("algotrader.api.portal.get_portal_runtime", return_value=mock_runtime),
         patch("algotrader.api.portal.load_settings"),
+        patch("algotrader.api.portal.atomic_write_json"),
     ):
         result = await portal_module._do_crypto_screen()
         assert result["opportunities"] == []
         assert result["qualifying_count"] == 0
+        mock_system.crypto_screen.assert_awaited_once()
+        assert result["total_scanned"] == 10
+        assert result["order_execution_enabled"] is False

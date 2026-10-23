@@ -1,207 +1,90 @@
-from __future__ import annotations
-
-import hashlib
-import hmac
-from urllib.parse import parse_qs
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from pydantic import SecretStr
 
 from algotrader.adapters.binance.client import BinanceHttpClient
-from algotrader.domain.errors import RateLimitError, UnknownExecutionStatus
+from algotrader.domain.errors import ConfigurationError, RateLimitError, VenueError
 
 
-async def test_signed_request_has_valid_hmac_and_never_exposes_secret() -> None:
-    observed_query = ""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal observed_query
-        observed_query = request.url.query.decode()
-        return httpx.Response(200, json={"ok": True})
-
-    client = BinanceHttpClient(
-        "https://example.test",
-        SecretStr("public-key"),
-        SecretStr("private-secret"),
-        transport=httpx.MockTransport(handler),
-    )
+@pytest.mark.parametrize(("method", "path"), [
+    ("POST", "/fapi/v1/order"), ("DELETE", "/fapi/v1/order"),
+    ("GET", "/fapi/v2/account"), ("GET", "/api/v3/account"),
+    ("GET", "/fapi/v1/openOrders"), ("GET", "/fapi/v1/listenKey"),
+    ("POST", "/fapi/v1/klines"), ("GET", "https://example.test/fapi/v1/klines"),
+    ("GET", "/fapi/v1/klines?signature=secret"),
+])
+async def test_non_public_requests_never_reach_transport(method, path):
+    handler = AsyncMock(return_value=httpx.Response(200, json={}))
+    client = BinanceHttpClient("https://example.test", transport=httpx.MockTransport(handler))
     try:
-        await client.request("GET", "/signed", params={"symbol": "BTCUSDT"}, signed=True)
-    finally:
-        await client.close()
-    unsigned, signature = observed_query.rsplit("&signature=", 1)
-    expected = hmac.new(b"private-secret", unsigned.encode(), hashlib.sha256).hexdigest()
-    assert signature == expected
-    assert parse_qs(observed_query)["symbol"] == ["BTCUSDT"]
-    assert "private-secret" not in observed_query
-
-
-async def test_order_server_error_is_unknown_not_safe_to_retry() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        del request
-        return httpx.Response(503, json={"msg": "unavailable"})
-
-    client = BinanceHttpClient(
-        "https://example.test",
-        SecretStr("public-key"),
-        SecretStr("private-secret"),
-        transport=httpx.MockTransport(handler),
-    )
-    try:
-        with pytest.raises(UnknownExecutionStatus):
-            await client.request("POST", "/order", order_submission=True)
+        with pytest.raises(ConfigurationError):
+            await client.request(method, path)
+        handler.assert_not_called()
     finally:
         await client.close()
 
 
-class RateLimitThenOk(httpx.AsyncBaseTransport):
-    """Returns 429 for the first `fails` calls, then succeeds."""
-
-    def __init__(self, fails: int, *, retry_after: str | None = None) -> None:
-        self.fails = fails
-        self.calls = 0
-        self._retry_after = retry_after
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        self.calls += 1
-        if self.calls <= self.fails:
-            headers = {"Retry-After": self._retry_after} if self._retry_after else {}
-            return httpx.Response(429, json={"code": -1003}, headers=headers)
-        return httpx.Response(200, json={"ok": True})
-
-
-async def test_rate_limited_read_is_retried_after_backoff() -> None:
-    """A 429 means the request was rejected outright, so retrying creates no order state."""
-    transport = RateLimitThenOk(fails=2)
-    client = BinanceHttpClient(
-        "https://x",
-        SecretStr(""),
-        SecretStr(""),
-        transport=transport,
-        rate_limit_backoff_seconds=0.001,
-    )
+async def test_public_request_has_no_credentials_even_when_environment_has_keys(monkeypatch):
+    monkeypatch.setenv("ATLAS_BINANCE_FUTURES_API_KEY", "old-deployed-key")
+    monkeypatch.setenv("ATLAS_BINANCE_FUTURES_API_SECRET", "old-deployed-secret")
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=[])
+    client = BinanceHttpClient("https://example.test", transport=httpx.MockTransport(handler))
     try:
-        assert await client.request("GET", "/api/v3/klines") == {"ok": True}
-        assert transport.calls == 3
+        assert await client.request("GET", "/fapi/v1/klines", params={"symbol": "BTCUSDT"}) == []
+        assert "x-mbx-apikey" not in requests[0].headers
+        assert "signature" not in str(requests[0].url)
+        with pytest.raises(ConfigurationError):
+            await client.request("GET", "/fapi/v1/klines", params={"signature": "x"})
+        assert len(requests) == 1
     finally:
         await client.close()
 
 
-async def test_rate_limit_retries_are_bounded() -> None:
-    transport = RateLimitThenOk(fails=99)
+async def test_rate_limit_honors_retry_after(monkeypatch):
+    calls = 0
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After": "90"}, json={})
+        return httpx.Response(200, json=[], headers={"x-mbx-used-weight-1m": "42"})
+    sleep = AsyncMock()
+    monkeypatch.setattr("algotrader.adapters.binance.client.asyncio.sleep", sleep)
+    client = BinanceHttpClient("https://example.test", transport=httpx.MockTransport(handler))
+    try:
+        assert await client.request("GET", "/fapi/v1/klines") == []
+        assert calls == 2
+        assert sleep.call_args.args[0] >= 90
+        assert client.used_weight_1m == 42
+    finally:
+        await client.close()
+
+
+async def test_rate_limit_retry_budget_is_bounded():
     client = BinanceHttpClient(
-        "https://x",
-        SecretStr(""),
-        SecretStr(""),
-        transport=transport,
-        max_rate_limit_retries=2,
-        rate_limit_backoff_seconds=0.001,
+        "https://example.test", max_rate_limit_retries=0,
+        transport=httpx.MockTransport(lambda request: httpx.Response(429, json={})),
     )
     try:
         with pytest.raises(RateLimitError):
-            await client.request("GET", "/api/v3/klines")
-        assert transport.calls == 3, "initial attempt plus two retries, then give up"
+            await client.request("GET", "/fapi/v1/klines")
     finally:
         await client.close()
 
 
-async def test_order_submission_is_never_retried_on_rate_limit() -> None:
-    """Retrying a submission trades a clear failure for an ambiguous one."""
-    transport = RateLimitThenOk(fails=1)
+@pytest.mark.parametrize("status", [302, 500, 403])
+async def test_failed_public_response_is_not_success(status):
     client = BinanceHttpClient(
-        "https://x",
-        SecretStr(""),
-        SecretStr(""),
-        transport=transport,
-        rate_limit_backoff_seconds=0.001,
+        "https://example.test",
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, json={})),
     )
     try:
-        with pytest.raises(RateLimitError):
-            await client.request("POST", "/api/v3/order", order_submission=True)
-        assert transport.calls == 1, "the order must not be resubmitted"
-    finally:
-        await client.close()
-
-
-async def test_retry_after_header_is_honoured() -> None:
-    transport = RateLimitThenOk(fails=1, retry_after="0.002")
-    client = BinanceHttpClient(
-        "https://x",
-        SecretStr(""),
-        SecretStr(""),
-        transport=transport,
-        rate_limit_backoff_seconds=99.0,
-    )
-    try:
-        # Would hang on the 99s default if the venue's own hint were ignored.
-        assert await client.request("GET", "/api/v3/time") == {"ok": True}
-    finally:
-        await client.close()
-
-
-@pytest.mark.parametrize("retry_after", ["invalid", "nan", "-10", "999999"])
-async def test_retry_after_header_cannot_break_or_stall_the_client(retry_after: str) -> None:
-    transport = RateLimitThenOk(fails=1, retry_after=retry_after)
-    client = BinanceHttpClient(
-        "https://x",
-        SecretStr(""),
-        SecretStr(""),
-        transport=transport,
-        rate_limit_backoff_seconds=0.001,
-        max_rate_limit_backoff_seconds=0.002,
-    )
-    try:
-        assert await client.request("GET", "/api/v3/time") == {"ok": True}
-        assert transport.calls == 2
-    finally:
-        await client.close()
-
-
-class NetworkErrorThenOk(httpx.AsyncBaseTransport):
-    """Raises httpx.NetworkError for the first `fails` calls, then succeeds."""
-
-    def __init__(self, fails: int) -> None:
-        self.fails = fails
-        self.calls = 0
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        self.calls += 1
-        if self.calls <= self.fails:
-            raise httpx.NetworkError("Simulated socket connection reset")
-        return httpx.Response(200, json={"ok": True})
-
-
-async def test_read_request_is_retried_on_transient_network_error() -> None:
-    transport = NetworkErrorThenOk(fails=2)
-    client = BinanceHttpClient(
-        "https://x",
-        SecretStr(""),
-        SecretStr(""),
-        transport=transport,
-        transport_backoff_seconds=0.001,
-    )
-    try:
-        res = await client.request("GET", "/fapi/v1/klines")
-        assert res == {"ok": True}
-        assert transport.calls == 3, "initial failure + 2 retries = 3 calls"
-    finally:
-        await client.close()
-
-
-async def test_order_request_is_not_retried_on_network_error() -> None:
-    transport = NetworkErrorThenOk(fails=2)
-    client = BinanceHttpClient(
-        "https://x",
-        SecretStr("key"),
-        SecretStr("secret"),
-        transport=transport,
-        transport_backoff_seconds=0.001,
-    )
-    try:
-        with pytest.raises(UnknownExecutionStatus):
-            await client.request("POST", "/fapi/v1/order", order_submission=True, signed=True)
-        assert transport.calls == 1, "order submissions must NEVER retry on network failure"
+        with pytest.raises(VenueError):
+            await client.request("GET", "/fapi/v1/klines")
     finally:
         await client.close()
 

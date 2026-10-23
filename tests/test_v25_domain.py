@@ -5,10 +5,6 @@ from decimal import Decimal
 
 import pytest
 
-from algotrader.application.scheduler import (
-    seconds_until_next_fast_cycle,
-    seconds_until_next_settlement_cycle,
-)
 from algotrader.domain.archetypes import (
     LongArchetypeFeatures,
     ShortArchetypeFeatures,
@@ -815,22 +811,6 @@ def test_compute_3tier_ev_r_and_grade() -> None:
 # 9. Dual-Loop Scheduler Cycle Offsets
 # =====================================================================
 
-
-def test_dual_loop_scheduler_timing() -> None:
-    # 15-min cycle at 12:04:10 should target 12:15:03 -> ~653 seconds
-    now_fast = datetime(2026, 10, 14, 12, 4, 10, tzinfo=UTC)
-    wait_fast = seconds_until_next_fast_cycle(now_fast, grace_seconds=3)
-    target_fast = now_fast + timedelta(seconds=wait_fast)
-    assert target_fast.minute == 15
-    assert target_fast.second == 3
-
-    # Settlement cycle at 07:45:00 should target 08:00:30 UTC -> ~930 seconds
-    now_macro = datetime(2026, 10, 14, 7, 45, 0, tzinfo=UTC)
-    wait_macro = seconds_until_next_settlement_cycle(now_macro, grace_seconds=30)
-    target_macro = now_macro + timedelta(seconds=wait_macro)
-    assert target_macro.hour == 8
-    assert target_macro.minute == 0
-    assert target_macro.second == 30
 
 
 # =====================================================================

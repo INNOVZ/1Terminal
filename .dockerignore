@@ -12,3 +12,7 @@ __pycache__
 .ruff_cache
 docs
 tests
+data
+scratch
+frontend
+*.pdf

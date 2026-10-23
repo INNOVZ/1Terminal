@@ -1,38 +1,32 @@
+"""Credential-free HTTP transport restricted to public Binance market data."""
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import math
 import random
 import time
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlencode
 
 import httpx
-import structlog
-from pydantic import SecretStr
 
-from algotrader.domain.errors import (
-    ConfigurationError,
-    OrderRejected,
-    RateLimitError,
-    UnknownExecutionStatus,
-    VenueError,
-)
+from algotrader.domain.errors import ConfigurationError, RateLimitError, VenueError
 
-log = structlog.get_logger(__name__)
+# Explicit paths prevent even GET requests from accessing account/trading endpoints.
+PUBLIC_PATHS = frozenset({
+    "/api/v3/time", "/api/v3/exchangeInfo", "/api/v3/ticker/24hr",
+    "/api/v3/ticker/bookTicker", "/api/v3/klines", "/api/v3/depth",
+    "/fapi/v1/time", "/fapi/v1/exchangeInfo", "/fapi/v1/ticker/24hr",
+    "/fapi/v1/ticker/bookTicker", "/fapi/v1/klines", "/fapi/v1/depth",
+    "/fapi/v1/premiumIndex", "/fapi/v1/openInterest", "/fapi/v1/fundingRate",
+    "/futures/data/openInterestHist", "/futures/data/takerlongshortRatio",
+})
 
 
 class BinanceHttpClient:
-    """Small signed REST client with deliberately conservative retry semantics."""
-
     def __init__(
         self,
         base_url: str,
-        api_key: SecretStr,
-        api_secret: SecretStr,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout_seconds: float = 10.0,
@@ -42,31 +36,21 @@ class BinanceHttpClient:
         max_transport_retries: int = 3,
         transport_backoff_seconds: float = 0.4,
     ) -> None:
-        self._api_key = api_key
-        self._api_secret = api_secret
         self._max_rate_limit_retries = max_rate_limit_retries
         self._rate_limit_backoff_seconds = rate_limit_backoff_seconds
         self._max_rate_limit_backoff_seconds = max_rate_limit_backoff_seconds
         self._max_transport_retries = max_transport_retries
         self._transport_backoff_seconds = transport_backoff_seconds
-        headers = {"User-Agent": "atlas-algotrader/0.1"}
-        if api_key.get_secret_value():
-            headers["X-MBX-APIKEY"] = api_key.get_secret_value()
-        limits = httpx.Limits(
-            max_connections=250,
-            max_keepalive_connections=100,
-            keepalive_expiry=60.0,
-        )
+        self._used_weight_1m = 0
+        self._weight_updated_at = 0.0
         self._http = httpx.AsyncClient(
             base_url=base_url,
             timeout=httpx.Timeout(timeout_seconds),
             transport=transport,
-            headers=headers,
-            limits=limits,
+            headers={"User-Agent": "atlas-screener/0.2"},
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+            follow_redirects=False,
         )
-        self._clock_offset_ms = 0
-        self._used_weight_1m = 0
-        self._weight_updated_at = 0.0
 
     @property
     def used_weight_1m(self) -> int:
@@ -75,185 +59,66 @@ class BinanceHttpClient:
     async def close(self) -> None:
         await self._http.aclose()
 
-    async def sync_clock(self, time_path: str) -> None:
-        started = time.time_ns() // 1_000_000
-        payload = await self.request("GET", time_path)
-        finished = time.time_ns() // 1_000_000
-        midpoint = (started + finished) // 2
-        self._clock_offset_ms = int(payload["serverTime"]) - midpoint
-
     async def request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: Mapping[str, Any] | None = None,
-        signed: bool = False,
-        order_submission: bool = False,
+        self, method: str, path: str, *, params: Mapping[str, Any] | None = None
     ) -> Any:
-        """Issue a request, retrying only on rate limits.
-
-        Rate limits are the one venue response that is safe to retry: the request was
-        rejected outright, so no order state was created. Everything else keeps the original
-        conservative posture -- a timeout or 5xx on an order submission still raises
-        ``UnknownExecutionStatus`` and is never retried, because the venue may have accepted
-        it. Order submissions are excluded from retry entirely: a 429 on submission is
-        safe in principle, but re-sending is not worth the ambiguity when the caller can
-        reconcile by client order ID.
-        """
+        if method != "GET" or path not in PUBLIC_PATHS:
+            raise ConfigurationError("Screener permits only allowlisted public GET endpoints")
+        if any(key.lower() in {"signature", "apikey", "api_key", "secret", "timestamp", "recvwindow"} for key in (params or {})):
+            raise ConfigurationError("Authenticated request parameters are not supported")
         rate_attempt = 0
         transport_attempt = 0
         while True:
             try:
-                return await self._attempt(
-                    method, path, params, signed, order_submission=order_submission
-                )
+                # Wait for the observed weight window to expire near its ceiling.
+                if self._used_weight_1m >= 2150:
+                    remaining = 60.0 - (time.monotonic() - self._weight_updated_at)
+                    if remaining > 0:
+                        await asyncio.sleep(remaining)
+                response = await self._http.get(path, params=params)
+                return self._parse_response(response)
             except RateLimitError as exc:
                 rate_attempt += 1
-                if order_submission or rate_attempt > self._max_rate_limit_retries:
+                if rate_attempt > self._max_rate_limit_retries:
                     raise
                 venue_delay = exc.retry_after_seconds
-                delay = (
-                    min(venue_delay, self._max_rate_limit_backoff_seconds)
-                    if venue_delay is not None and math.isfinite(venue_delay) and venue_delay > 0
-                    else min(
-                        self._rate_limit_backoff_seconds * (2 ** (rate_attempt - 1)),
+                if venue_delay is not None and math.isfinite(venue_delay) and venue_delay > 0:
+                    # Never cap the exchange's explicit Retry-After.
+                    delay = venue_delay
+                else:
+                    delay = min(
+                        self._rate_limit_backoff_seconds * 2 ** (rate_attempt - 1),
                         self._max_rate_limit_backoff_seconds,
                     )
-                )
-                delay += random.uniform(0.1, 1.0)  # Desynchronize workers (avoid thundering herd)
-                log.warning(
-                    "binance_rate_limited",
-                    path=path,
-                    attempt=rate_attempt,
-                    sleeping_seconds=round(delay, 2),
-                )
-                await asyncio.sleep(delay)
-            except VenueError as exc:
-                # Strictly isolate order submissions from retry (never re-send orders)
-                # But retry read-only market data queries on transient socket timeouts / network glitches
-                if order_submission or "Binance transport failure" not in str(exc):
-                    raise
+                await asyncio.sleep(delay + random.uniform(0.01, 0.05))
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 transport_attempt += 1
                 if transport_attempt > self._max_transport_retries:
-                    raise
-                delay = self._transport_backoff_seconds * (2 ** (transport_attempt - 1)) + random.uniform(0.05, 0.25)
-                log.warning(
-                    "binance_transport_retrying",
-                    path=path,
-                    attempt=transport_attempt,
-                    sleeping_seconds=round(delay, 2),
-                    error=str(exc),
-                )
-                await asyncio.sleep(delay)
+                    raise VenueError("Binance public market-data transport failed") from exc
+                await asyncio.sleep(self._transport_backoff_seconds * 2 ** (transport_attempt - 1))
 
-    async def _attempt(
-        self,
-        method: str,
-        path: str,
-        params: Mapping[str, Any] | None,
-        signed: bool,
-        *,
-        order_submission: bool,
-    ) -> Any:
-        request_params = {key: value for key, value in (params or {}).items() if value is not None}
-        headers: dict[str, str] = {}
-        if signed:
-            self._sign_request(request_params, headers)
-
-        # Real-time Adaptive Backpressure: time-decayed weight based on Binance 1-minute rolling window
-        now = time.time()
-        elapsed = now - self._weight_updated_at
-        effective_weight = 0
-        if elapsed < 60.0 and self._used_weight_1m > 0:
-            effective_weight = int(self._used_weight_1m * (1.0 - elapsed / 60.0))
-
-        if effective_weight >= 2150:
-            # Danger zone (> 90% of 2400 ceiling): pause to let window drain safely
-            await asyncio.sleep(1.5)
-        elif effective_weight >= 1900:
-            # High load (> 79%): moderate backpressure
-            await asyncio.sleep(0.35)
-        elif effective_weight >= 1600:
-            # Approaching ceiling: micro-spacing
-            await asyncio.sleep(0.08)
-
-        try:
-            response = await self._http.request(
-                method, path, params=request_params, headers=headers
-            )
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            if order_submission:
-                raise UnknownExecutionStatus(
-                    "order request failed at transport level; reconcile by client order ID"
-                ) from exc
-            raise VenueError(f"Binance transport failure: {exc}") from exc
-
-        return self._parse_response(response, order_submission=order_submission)
-
-    def _sign_request(
-        self,
-        request_params: dict[str, Any],
-        headers: dict[str, str],
-    ) -> None:
-        api_key = self._api_key.get_secret_value()
-        secret = self._api_secret.get_secret_value()
-        if not api_key or not secret:
-            raise ConfigurationError("Binance credentials are required for signed requests")
-        # Subtract 500ms safety buffer so requests are never rejected for being slightly ahead of server clock
-        request_params["timestamp"] = time.time_ns() // 1_000_000 + self._clock_offset_ms - 500
-        request_params.setdefault("recvWindow", 10000)
-        query = urlencode(request_params)
-        request_params["signature"] = hmac.new(
-            secret.encode("utf-8"), query.encode("utf-8"), hashlib.sha256
-        ).hexdigest()
-        headers["X-MBX-APIKEY"] = api_key
-
-    def _parse_response(self, response: httpx.Response, *, order_submission: bool) -> Any:
-        weight_hdr = response.headers.get("x-mbx-used-weight-1m")
-        if weight_hdr:
+    def _parse_response(self, response: httpx.Response) -> Any:
+        weight = response.headers.get("x-mbx-used-weight-1m")
+        if weight:
             try:
-                self._used_weight_1m = int(weight_hdr)
-                self._weight_updated_at = time.time()
-            except (ValueError, TypeError):
-                pass
-
-        if response.status_code in {418, 429}:
-            retry_after = response.headers.get("Retry-After")
-            try:
-                retry_after_seconds = float(retry_after) if retry_after else None
+                self._used_weight_1m = int(weight)
+                self._weight_updated_at = time.monotonic()
             except ValueError:
-                retry_after_seconds = None
-            raise RateLimitError(
-                f"Binance rate limit response {response.status_code}",
-                retry_after_seconds,
-            )
+                pass
+        if response.status_code in {418, 429}:
+            try:
+                retry_after = float(response.headers["Retry-After"])
+            except (KeyError, ValueError):
+                retry_after = None
+            raise RateLimitError(f"Binance rate limit response {response.status_code}", retry_after)
         if response.status_code >= 500:
-            if order_submission:
-                raise UnknownExecutionStatus(
-                    f"Binance returned {response.status_code}; order state is unknown"
-                )
             raise VenueError(f"Binance server error {response.status_code}")
+        if response.is_redirect:
+            raise VenueError("Unexpected redirect from Binance market-data endpoint")
         try:
             payload = response.json()
         except ValueError as exc:
             raise VenueError("Binance returned a non-JSON response") from exc
         if response.is_error:
-            code = (
-                payload.get("code", response.status_code)
-                if isinstance(payload, dict)
-                else response.status_code
-            )
-            message = (
-                payload.get("msg", str(payload)) if isinstance(payload, dict) else str(payload)
-            )
-            error = f"Binance error {code}: {message}"
-            if order_submission:
-                raise OrderRejected(error)
-            raise VenueError(error)
+            raise VenueError(f"Binance market-data error {response.status_code}")
         return payload
-
-
-def decimal_text(value: object) -> str:
-    text = format(value, "f")
-    return text.rstrip("0").rstrip(".") if "." in text else text

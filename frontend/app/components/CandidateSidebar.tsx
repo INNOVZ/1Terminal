@@ -237,9 +237,9 @@ const CandidateCard = memo(function CandidateCard({
                 color: "#f49d0d",
                 border: "1px solid rgba(244, 157, 13, 0.25)",
               }}
-              title={`Estimated Win Rate: ${opp.estimated_win_rate_pct}%`}
+              title="Research score has not been calibrated against forward outcomes"
             >
-              Win {opp.estimated_win_rate_pct}%
+              Uncalibrated
             </span>
           )}
           

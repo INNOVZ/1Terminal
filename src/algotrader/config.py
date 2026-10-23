@@ -17,12 +17,6 @@ class Environment(StrEnum):
     PRODUCTION = "production"
 
 
-class ExecutionMode(StrEnum):
-    PAPER = "paper"
-    TESTNET = "testnet"
-    LIVE = "live"
-
-
 class StrategyProfile(StrEnum):
     """Explicit alpha policy selected before market data is evaluated.
 
@@ -71,52 +65,23 @@ class EmpiricalSetup(StrEnum):
     PULLBACK = "pullback"
 
 
-LIVE_ACKNOWLEDGEMENT = "I_UNDERSTAND_LIVE_ORDERS_USE_REAL_FUNDS"
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ATLAS_",
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="forbid",
+        extra="ignore",
         case_sensitive=False,
     )
 
+    # Ignore obsolete trader variables in deployed .env files. No keys are loaded.
     environment: Environment = Environment.DEVELOPMENT
-    execution_mode: ExecutionMode = ExecutionMode.PAPER
-    live_trading_enabled: bool = False
-    live_trading_ack: SecretStr = SecretStr("")
-
     operator_token: SecretStr = SecretStr("")
     allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ("localhost", "127.0.0.1")
+    screener_cron_enabled: bool = True
+    screener_interval_hours: int = Field(default=4, ge=1, le=24)
 
-    automation_enabled: bool = False
-    signal_discovery_interval_hours: int = Field(default=1, ge=1, le=24)
-    execution_cooldown_hours: int = Field(default=8, ge=1, le=168)
-    # Deprecated compatibility input. Remove after deployments migrate to
-    # ATLAS_EXECUTION_COOLDOWN_HOURS.
-    screening_interval_hours: int | None = Field(default=None, ge=1, le=168)
-    signal_expiry_bars: int = Field(default=2, ge=1, le=8)
-    execution_lease_seconds: int = Field(default=300, ge=60, le=900)
-    bar_close_grace_seconds: int = Field(default=60, ge=5, le=300)
-    scheduler_failure_limit: int = Field(default=3, ge=1, le=10)
-
-    binance_spot_api_key: SecretStr = SecretStr("")
-    binance_spot_api_secret: SecretStr = SecretStr("")
-    binance_futures_api_key: SecretStr = SecretStr("")
-    binance_futures_api_secret: SecretStr = SecretStr("")
-    binance_futures_hedge_mode: bool = True
-    testnet_uses_live_market_data: bool = True
-    """Price testnet runs from the live public API.
-
-    Spot Testnet serves ~5 days of 4h klines against a 480-candle requirement, so screening
-    cannot run there at all, and its synthetic prices would make any signal meaningless.
-    Only unauthenticated market-data endpoints are used; keys and orders stay on testnet.
-    Set False to screen on testnet data, accepting that Spot will not produce candidates.
-    """
-    ignored_spot_balance_assets: Annotated[tuple[str, ...], NoDecode] = ()
-
+    # The following parameters are retained for offline research simulations only.
     account_risk_per_trade: Decimal = Field(default=Decimal("0.0025"), gt=0, le=Decimal("0.01"))
     max_daily_loss: Decimal = Field(default=Decimal("0.02"), gt=0, le=Decimal("0.10"))
     max_intraday_mark_to_market_loss: Decimal = Field(
@@ -298,14 +263,7 @@ class Settings(BaseSettings):
             return tuple(item.strip().upper() for item in value.split(",") if item.strip())
         return value
 
-    @field_validator("ignored_spot_balance_assets", mode="before")
-    @classmethod
-    def parse_ignored_spot_balance_assets(cls, value: object) -> object:
-        if isinstance(value, str):
-            return tuple(item.strip() for item in value.split(",") if item.strip())
-        return value
-
-    @field_validator("signal_discovery_interval_hours")
+    @field_validator("screener_interval_hours")
     @classmethod
     def validate_screening_interval(cls, value: int) -> int:
         if 24 % value != 0:
@@ -313,12 +271,7 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def validate_live_interlock(self) -> Settings:
-        if (
-            self.screening_interval_hours is not None
-            and "execution_cooldown_hours" not in self.model_fields_set
-        ):
-            self.execution_cooldown_hours = self.screening_interval_hours
+    def validate_research_parameters(self) -> Settings:
         if self.max_structural_stop_distance_atr < self.atr_stop_multiple:
             raise ValueError(
                 "maximum structural stop distance must be at least the ATR stop multiple"
@@ -341,16 +294,6 @@ class Settings(BaseSettings):
             raise ValueError("research report lookback cannot exceed research retention")
         if self.environment is Environment.PRODUCTION and "*" in self.allowed_hosts:
             raise ValueError("production allowed hosts cannot contain a wildcard")
-        if self.execution_mode is not ExecutionMode.LIVE:
-            return self
-        if self.strategy_profile is not StrategyProfile.LEGACY_MOMENTUM:
-            raise ValueError("research-only strategy profiles cannot be selected in live mode")
-        if not self.live_trading_enabled:
-            raise ValueError("live mode requires ATLAS_LIVE_TRADING_ENABLED=true")
-        if self.live_trading_ack.get_secret_value() != LIVE_ACKNOWLEDGEMENT:
-            raise ValueError("live mode requires the exact live-trading acknowledgement")
-        if self.environment is not Environment.PRODUCTION:
-            raise ValueError("live mode requires ATLAS_ENVIRONMENT=production")
         return self
 
     @property

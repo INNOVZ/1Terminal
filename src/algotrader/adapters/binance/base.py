@@ -4,7 +4,6 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
-from hashlib import sha256
 from typing import Any
 
 from algotrader.adapters.binance.client import BinanceHttpClient
@@ -14,13 +13,9 @@ from algotrader.domain.models import (
     Instrument,
     InstrumentId,
     MarketKind,
-    OrderResult,
-    OrderStatus,
     Quote,
     Venue,
 )
-
-ORDER_STATUS = {status.value: status for status in OrderStatus}
 
 
 def _decimal(value: object, default: str = "0") -> Decimal:
@@ -172,59 +167,3 @@ class BinanceMarketDataBase:
             )
             for row in payload
         ]
-
-
-def parse_order_result(payload: Mapping[str, Any], venue: Venue, symbol: str) -> OrderResult:
-    raw_status = str(payload.get("status", "UNKNOWN"))
-    average = payload.get("avgPrice")
-    if average in {None, "", "0", 0, "0.00", "0.00000"}:
-        # Spot reports filled notional as `cummulativeQuoteQty`; USD-M Futures calls the
-        # same field `cumQuote`. Reading only the Spot spelling left futures fills with no
-        # derivable price, which the execution coordinator treats as an unknown fill --
-        # halting *after* the entry filled but *before* protection was placed.
-        quote_quantity = _decimal(payload.get("cummulativeQuoteQty"))
-        if quote_quantity <= 0:
-            quote_quantity = _decimal(payload.get("cumQuote"))
-        executed = _decimal(payload.get("executedQty"))
-        average_price = quote_quantity / executed if quote_quantity > 0 and executed > 0 else None
-    else:
-        average_price = _decimal(average)
-    return OrderResult(
-        venue=venue,
-        symbol=symbol,
-        client_order_id=str(payload.get("clientOrderId", payload.get("origClientOrderId", ""))),
-        exchange_order_id=str(payload.get("orderId", "")),
-        status=ORDER_STATUS.get(raw_status, OrderStatus.UNKNOWN),
-        executed_quantity=_decimal(payload.get("executedQty")),
-        average_price=average_price,
-        raw_status=raw_status,
-    )
-
-
-def parse_algo_order_result(payload: Mapping[str, Any], venue: Venue, symbol: str) -> OrderResult:
-    """Map Binance USD-M conditional-algo responses into the common order model."""
-    raw_status = str(payload.get("algoStatus", "UNKNOWN"))
-    return OrderResult(
-        venue=venue,
-        symbol=symbol,
-        client_order_id=str(payload.get("clientAlgoId", "")),
-        exchange_order_id=str(payload.get("algoId", "")),
-        status=ORDER_STATUS.get(raw_status, OrderStatus.UNKNOWN),
-        # Conditional orders have not executed when Binance accepts the bracket.
-        executed_quantity=Decimal("0"),
-        average_price=None,
-        raw_status=raw_status,
-    )
-
-
-def bracket_revision(stop_price: Decimal, target_price: Decimal | None = None) -> str:
-    """Short deterministic tag identifying one bracket geometry.
-
-    Client order ids must change when a bracket is amended, or the venue rejects the new
-    order as a duplicate. Deriving the tag from the prices rather than a random value keeps
-    a retry after an ambiguous response idempotent: the same amendment reuses the same id
-    instead of creating a second protective order against one position.
-    """
-    target_revision = target_price if target_price is not None else "stop-only"
-    digest = sha256(f"{stop_price}|{target_revision}".encode()).hexdigest()
-    return digest[:6]

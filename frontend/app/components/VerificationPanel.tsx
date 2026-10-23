@@ -435,9 +435,9 @@ function VerificationPanel({
                   borderRadius: "4px",
                   fontWeight: 700,
                 }}
-                title="Mathematical Expectancy (+R per trade)"
+                title="Heuristic model expectancy using assumed probabilities; not validated performance"
               >
-                EV:{" "}
+                Model EV:{" "}
                 {(() => {
                   const evNum = Number(opportunity.expected_value_r);
                   if (isNaN(evNum)) return `${opportunity.expected_value_r}R`;

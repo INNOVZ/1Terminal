@@ -6,7 +6,6 @@ from decimal import Decimal
 from typing import Protocol
 
 from algotrader.domain.models import (
-    AccountSnapshot,
     Candle,
     DerivativesSnapshot,
     Direction,
@@ -17,11 +16,9 @@ from algotrader.domain.models import (
     OrderIntent,
     OrderResult,
     PositionManagementState,
-    ProtectionSet,
     Quote,
     TrackedSignal,
     TradeRecord,
-    TradeSignal,
     UnresolvedOrderIntent,
     Venue,
 )
@@ -41,53 +38,6 @@ class MarketDataPort(Protocol):
 
 class DerivativesDataPort(Protocol):
     async def derivatives_snapshot(self, instrument: Instrument) -> DerivativesSnapshot: ...
-
-
-class ExecutionPort(Protocol):
-    venue: Venue
-
-    async def account_snapshot(self) -> AccountSnapshot: ...
-
-    async def place_order(self, intent: OrderIntent) -> OrderResult: ...
-
-    async def place_protection(self, signal: TradeSignal, quantity: Decimal) -> ProtectionSet: ...
-
-    async def replace_protection(
-        self,
-        signal: TradeSignal,
-        quantity: Decimal,
-        *,
-        existing: ProtectionSet,
-        include_target: bool = True,
-    ) -> ProtectionSet:
-        """Cancel ``existing`` and re-place the bracket from ``signal``'s current prices.
-
-        Venues differ in how protection is amended -- Spot uses an OCO while the initial target
-        is active, and USD-M uses independent ``closePosition`` orders -- so the port exposes
-        replacement rather than per-leg mutation. ``include_target=False`` is the managed-runner
-        mode: after a partial profit the remaining position is protected only by the ratcheting
-        stop, otherwise the original 2R target would close it before trailing can activate.
-        """
-        ...
-
-    async def reduce_position(
-        self,
-        instrument: Instrument,
-        direction: Direction,
-        quantity: Decimal,
-        *,
-        client_order_id: str,
-    ) -> OrderResult:
-        """Close ``quantity`` of an open position at market, leaving the remainder."""
-        ...
-
-    async def query_order(
-        self, instrument_id: InstrumentId, client_order_id: str
-    ) -> OrderResult | None: ...
-
-    async def cancel_order(
-        self, instrument_id: InstrumentId, client_order_id: str
-    ) -> OrderResult: ...
 
 
 class SafetyStateStore(Protocol):
@@ -204,25 +154,6 @@ class OpportunityStore(Protocol):
     async def list_opportunities(
         self, *, since: datetime | None = None
     ) -> Sequence[OpportunityObservation]: ...
-
-
-class ExecutionRepository(
-    SafetyStateStore,
-    ExecutionJournal,
-    TradeLedger,
-    PositionManagementStore,
-    EventStore,
-    Protocol,
-):
-    pass
-
-
-class PortfolioRepository(SafetyStateStore, TradeLedger, Protocol):
-    pass
-
-
-class SchedulerRepository(SafetyStateStore, EventStore, Protocol):
-    pass
 
 
 class StateRepository(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -15,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from algotrader.application.watchlist_service import WatchlistService
-from algotrader.config import load_settings
+from algotrader.config import Settings, load_settings
 from algotrader.domain.crypto_screener_models import (
     ScreenerMode,
     calculate_opportunity_win_rate_and_ev,
@@ -35,12 +34,11 @@ _cached_instruments: Any = None
 _watchlist_service = WatchlistService()
 
 
-async def get_portal_runtime() -> Runtime:
+async def get_portal_runtime(settings: Settings | None = None) -> Runtime:
     global _shared_runtime
     async with _runtime_lock:
         if _shared_runtime is None:
-            settings = load_settings()
-            _shared_runtime = await build_runtime(settings)
+            _shared_runtime = await build_runtime(settings or load_settings())
         return _shared_runtime
 
 
@@ -130,13 +128,11 @@ async def _do_crypto_screen(
     _is_refreshing = True
     try:
         runtime = await get_portal_runtime()
-        settings = load_settings()
+        settings = runtime.settings
         screener_mode = ScreenerMode(mode.lower())
 
-        futures = next(
-            c.market_data for c in runtime.system._contexts if c.market_data.venue.value == "binance_usdm"
-        )
-        opportunities = await runtime.system.crypto_screen(
+        futures = runtime.futures_market
+        opportunities = await runtime.crypto_screen(
             settings=settings,
             min_score=Decimal(str(min_score)),
             max_symbols=max_symbols,
@@ -157,7 +153,7 @@ async def _do_crypto_screen(
             def _is_qualified(x: Any) -> bool:
                 # 1. Hard veto on Below Threshold setups
                 gr = getattr(x, "grade", None)
-                gr_val = gr.value if hasattr(gr, "value") else str(gr or "")
+                gr_val = str(getattr(gr, "value", gr) or "")
                 if "Below" in gr_val or gr_val == "BELOW_THRESHOLD":
                     return False
                 # 2. Strict score and conviction floor (minimum Grade B standard)
@@ -173,9 +169,7 @@ async def _do_crypto_screen(
                 # 4. Asymmetric R:R >= 2.0 and positive EV
                 rr = float(getattr(x, "risk_reward_ratio", 0))
                 ev = float(getattr(x, "expected_value_r", 0))
-                if rr < 2.0 or ev < 0.20:
-                    return False
-                return True
+                return rr >= 2.0 and ev >= 0.20
 
             qualified_opps = [opp for opp in opportunities if _is_qualified(opp)]
             ranked_opps = sorted(qualified_opps, key=_conviction, reverse=True)
@@ -231,19 +225,20 @@ async def _do_crypto_screen(
         macro_narrative = (
             opportunities[0].macro_narrative
             if opportunities
-            else "Macro: Greed 61/100 | BTC.D: 59.7%"
+            else "No qualifying candidates; macro context unavailable in this result."
         )
         # When freshly screened setups qualify, strictly prioritize them
-        if deduped_opps:
-            final_opps = deduped_opps
-        else:
-            final_opps = []
+        final_opps = deduped_opps
 
         final_opps.sort(key=lambda o: float(o.get("conviction") or o.get("score") or 0.0), reverse=True)
 
         result = {
             "timestamp": now.isoformat(),
-            "total_scanned": 490,
+            "total_scanned": runtime.last_scan_counts.get("evaluated", 0),
+            "scan_counts": runtime.last_scan_counts,
+            "mode": "screener",
+            "order_execution_enabled": False,
+            "validation_status": "uncalibrated_research",
             "qualifying_count": len(final_opps),
             "macro_narrative": macro_narrative,
             "opportunities": final_opps,
@@ -255,14 +250,6 @@ async def _do_crypto_screen(
         try:
             cache_file = Path("data/screener_latest.json")
             atomic_write_json(cache_file, result)
-        except Exception:
-            pass
-
-        # Trigger automated Binance Testnet execution for highest-conviction setups
-        try:
-            trader = get_testnet_trader()
-            if trader and final_opps:
-                asyncio.create_task(trader.evaluate_and_execute_candidates(final_opps))
         except Exception:
             pass
 
@@ -287,7 +274,7 @@ async def get_live_screener(
     scope: str = "core",
     refresh: bool = False,
     wait: bool = False,
-    response: Response = None,
+    response: Response = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Runs or retrieves verified live pre-breakout institutional screener results with candles.
     
@@ -407,23 +394,43 @@ def start_screener_cron(interval_hours: int = 4) -> None:
         print(f"✅ [Cron] Atlas {interval_hours}-hour background screener cron started successfully.")
 
 
+async def stop_portal() -> None:
+    """Cancel scans before closing their shared public-data clients."""
+    global _cron_task, _screener_task, _shared_runtime, _cached_instruments
+    global _cache_timestamp, _last_cron_run, _next_cron_run
+    tasks = [task for task in (_cron_task, _screener_task) if task is not None]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    _cron_task = None
+    _screener_task = None
+    async with _runtime_lock:
+        if _shared_runtime is not None:
+            await _shared_runtime.close()
+            _shared_runtime = None
+    _cached_instruments = None
+    _screener_cache.clear()
+    _cache_timestamp = _last_cron_run = _next_cron_run = None
+
+
 @portal_router.get("/screener/cron/status")
 async def get_cron_status() -> dict[str, Any]:
     """Returns the current operational status and next run time of the 4-hour screener cron."""
     global _last_cron_run, _next_cron_run, _cron_task
     now = datetime.now(UTC)
-    interval_hours = 4
+    settings = load_settings()
+    interval_hours = settings.screener_interval_hours
     delay = seconds_until_next_cycle(now, interval_hours=interval_hours, grace_seconds=60)
     next_run = _next_cron_run or (now + timedelta(seconds=delay))
     is_running = _cron_task is not None and not _cron_task.done()
     return {
         "status": "running" if is_running else "idle",
         "interval_hours": interval_hours,
-        "schedule": f"Aligned with UTC {interval_hours}H candle closes (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)",
+        "schedule": f"Every {interval_hours} hours at aligned UTC candle closes plus 60 seconds",
         "last_run": _last_cron_run.isoformat() if _last_cron_run else None,
         "next_run": next_run.isoformat(),
         "seconds_remaining": int(delay),
-        "total_universe_scanned": 490,
+        "total_universe_scanned": _screener_cache.get("total_scanned", 0),
     }
 
 
@@ -432,9 +439,7 @@ async def get_symbol_chart(symbol: str, interval: str = "1h", limit: int = 250) 
     """Fetches high-resolution candles and calculated indicators/opportunity for a specific symbol."""
     global _cached_instruments, _screener_cache
     runtime = await get_portal_runtime()
-    futures = next(
-        c.market_data for c in runtime.system._contexts if c.market_data.venue.value == "binance_usdm"
-    )
+    futures = runtime.futures_market
 
     sym_clean = symbol.upper()
     if _cached_instruments is None:
@@ -633,9 +638,7 @@ async def get_watchlist(live_audit: bool = True, refresh: bool = False) -> dict[
 
     try:
         runtime = await get_portal_runtime()
-        futures = next(
-            c.market_data for c in runtime.system._contexts if c.market_data.venue.value == "binance_usdm"
-        )
+        futures = runtime.futures_market
         if _cached_instruments is None or refresh:
             _cached_instruments = await asyncio.wait_for(futures.instruments(), timeout=3.0)
 
@@ -678,9 +681,7 @@ async def get_watchlist_audit(refresh: bool = False) -> dict[str, Any]:
     global _cached_instruments
     try:
         runtime = await get_portal_runtime()
-        futures = next(
-            c.market_data for c in runtime.system._contexts if c.market_data.venue.value == "binance_usdm"
-        )
+        futures = runtime.futures_market
         if _cached_instruments is None or refresh:
             _cached_instruments = await asyncio.wait_for(futures.instruments(), timeout=3.0)
 
@@ -791,57 +792,4 @@ async def get_macro_overextension(refresh: bool = False) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------
-# Binance Futures Testnet Automated Trader Singleton & Endpoints
-# ------------------------------------------------------------------------------
-_testnet_trader: Any = None
-
-
-def get_testnet_trader() -> Any:
-    global _testnet_trader
-    if _testnet_trader is None:
-        import os
-        api_key = (
-            os.getenv("ATLAS_BINANCE_FUTURES_API_KEY")
-            or os.getenv("BINANCE_FUTURES_API_KEY")
-            or "TOvJbfI2fWMcWK1BDXjsXElId1lOCi52Q5p6UQtk08G9iGvohJ5RdAstsQKivc1E"
-        )
-        api_secret = (
-            os.getenv("ATLAS_BINANCE_FUTURES_API_SECRET")
-            or os.getenv("BINANCE_FUTURES_API_SECRET")
-            or "lwHH9eG6B26klQRkVf21dzC9VEZKDuouUHzo7uwfHPateSPXPecKnMS6gD1ORIUT"
-        )
-        if api_key and api_secret:
-            from algotrader.application.testnet_trader import TestnetTrader
-
-            _testnet_trader = TestnetTrader(
-                api_key=api_key,
-                api_secret=api_secret,
-                max_trades_24h=5,
-                max_trades_per_cycle=3,
-                max_order_usd=100.0,
-                min_conviction_score=90.0,
-                min_risk_reward=2.0,
-                leverage=3,
-                data_dir="data",
-            )
-    return _testnet_trader
-
-
-@portal_router.get("/testnet/status")
-async def get_testnet_status() -> dict[str, Any]:
-    """Returns Binance Futures Testnet automation status, 24h quota, balance, and recent trades."""
-    trader = get_testnet_trader()
-    if not trader:
-        return {"enabled": False, "reason": "Testnet API keys not configured"}
-    return await trader.get_status()
-
-
-@portal_router.get("/testnet/watchlist")
-async def get_testnet_watchlist() -> dict[str, Any]:
-    """Returns the multi-cycle 24-48h incubation watchlist."""
-    trader = get_testnet_trader()
-    if not trader:
-        return {"watchlist": [], "count": 0}
-    wl = trader.load_watchlist()
-    return {"watchlist": list(wl.values()), "count": len(wl)}
 

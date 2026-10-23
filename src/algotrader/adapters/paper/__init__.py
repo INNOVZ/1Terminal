@@ -1,1 +1,0 @@
-"""Deterministic paper execution adapter."""

@@ -1,17 +1,18 @@
 services:
   atlas:
     build: .
-    env_file: .env
+    image: atlas-screener:${ATLAS_IMAGE_TAG:-local}
     ports:
       - "0.0.0.0:8000:8000"
     volumes:
       - atlas-state:/app/state
-      - ./data:/app/data
-      - ./src:/app/src:ro
+      - ${ATLAS_DATA_DIR:-./data}:/app/data
     environment:
       ATLAS_STATE_DB_PATH: /app/state/atlas_state.sqlite3
-      PYTHONPATH: /app/src
-      ATLAS_ENV: ${ATLAS_ENV:-production}
+      ATLAS_ENVIRONMENT: production
+      ATLAS_SCREENER_CRON_ENABLED: ${ATLAS_SCREENER_CRON_ENABLED:-true}
+      ATLAS_SCREENER_INTERVAL_HOURS: ${ATLAS_SCREENER_INTERVAL_HOURS:-4}
+      ATLAS_EXCLUDED_BASE_ASSETS: ${ATLAS_EXCLUDED_BASE_ASSETS:-USDT,USDC,FDUSD,TUSD,USDP,DAI,EUR}
     read_only: true
     tmpfs:
       - /tmp:size=64m,noexec,nosuid

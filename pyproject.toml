@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "atlas-algotrader"
 version = "0.1.2"
-description = "Testnet-first, multi-venue algorithmic trading platform"
+description = "Public-data cryptocurrency screener and research portal"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

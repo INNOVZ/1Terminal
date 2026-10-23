@@ -99,6 +99,7 @@ class CryptoOpportunityScreener:
     ) -> None:
         self._settings = settings
         self._macro_provider = macro_provider or MacroSentimentProvider()
+        self.scan_counts: dict[str, int] = {"selected": 0, "evaluated": 0, "failed": 0}
 
     async def screen(
         self,
@@ -112,9 +113,6 @@ class CryptoOpportunityScreener:
         mode: ScreenerMode = ScreenerMode.ACCUMULATION,
         coi_score: float | Decimal | None = None,
     ) -> list[CryptoOpportunity]:
-        # Institutional Grade Floor: Setups must achieve at least Grade B standard (>= 68.0)
-        cutoff_score = min_score if min_score is not None else Decimal("68.0")
-
         # 1. Fetch Macro Context Concurrently
         macro_context = await self._macro_provider.get_context()
         log.info("screener_macro_loaded", narrative=macro_context.narrative())
@@ -123,8 +121,8 @@ class CryptoOpportunityScreener:
         effective_coi: float | None = None
         if coi_score is not None:
             effective_coi = float(coi_score)
-        elif hasattr(macro_context, "coi_score") and getattr(macro_context, "coi_score") is not None:
-            effective_coi = float(getattr(macro_context, "coi_score"))
+        elif hasattr(macro_context, "coi_score") and macro_context.coi_score is not None:
+            effective_coi = float(macro_context.coi_score)
 
         # 2. Universe & Liquidity Filtering (Stages 1-5 of AGENT.md V2.5)
         instruments = await market.instruments()
@@ -180,9 +178,7 @@ class CryptoOpportunityScreener:
                     best_by_base[base] = inst
                 elif vol_curr > vol_new * Decimal("1.05"):
                     pass  # keep curr
-                elif inst.quote_asset == "USDT" and curr.quote_asset != "USDT":
-                    best_by_base[base] = inst
-                elif vol_new > vol_curr:
+                elif (inst.quote_asset == "USDT" and curr.quote_asset != "USDT") or vol_new > vol_curr:
                     best_by_base[base] = inst
         liquid_instruments = list(best_by_base.values())
 
@@ -254,6 +250,7 @@ class CryptoOpportunityScreener:
         if not selected_instruments:
             selected_instruments = liquid_instruments[:(target_core + target_discovery)]
 
+        self.scan_counts["selected"] = len(selected_instruments)
         log.info(
             "universe_liquidity_filtered",
             total=len(instruments),
@@ -309,6 +306,8 @@ class CryptoOpportunityScreener:
             *(eval_instrument(inst) for inst in selected_instruments),
             return_exceptions=True,
         )
+        self.scan_counts["evaluated"] = sum(isinstance(result, list) for result in results)
+        self.scan_counts["failed"] = len(results) - self.scan_counts["evaluated"]
 
         stage1_survivors: list[CryptoOpportunity] = []
         stage1_threshold = min(Decimal("55.0"), min_score) if min_score is not None else Decimal("55.0")
@@ -390,8 +389,9 @@ class CryptoOpportunityScreener:
         )
 
         opportunities: list[CryptoOpportunity] = []
-        for opp in enriched_results:
-            if isinstance(opp, CryptoOpportunity):
+        for enriched in enriched_results:
+            if isinstance(enriched, CryptoOpportunity):
+                opp = enriched
                 eff_score = opp.conviction if opp.conviction is not None else opp.score
                 if min_score is not None:
                     if eff_score < min_score:
@@ -566,11 +566,6 @@ class CryptoOpportunityScreener:
 
         closed_1h = sorted([c for c in c1h if c.closed], key=lambda x: x.closed_at)
         closed_4h = sorted([c for c in c4h if c.closed], key=lambda x: x.closed_at)
-        closed_1w = (
-            sorted([c for c in c1w if c.closed], key=lambda x: x.closed_at)
-            if (not isinstance(c1w, BaseException) and c1w)
-            else []
-        )
         candles_1d = resample_candles(closed_4h, "1d")
         candles_1w = list(c1w) if (not isinstance(c1w, BaseException) and c1w and len(c1w) >= 15) else (resample_candles(candles_1d, "1w") if candles_1d else [])
 
@@ -1469,20 +1464,12 @@ class CryptoOpportunityScreener:
 
         rsi_4h_series = rsi(closes_4h, 14)
         rsi_4h = rsi_4h_series[-1] if rsi_4h_series else Decimal("50")
-        prev_rsi_4h = rsi_4h_series[-2] if len(rsi_4h_series) >= 2 else rsi_4h
 
         rsi_1d_series = rsi(closes_1d, 14) if len(closes_1d) >= 15 else []
         rsi_1d = rsi_1d_series[-1] if rsi_1d_series else rsi_4h
-        prev_rsi_1d = rsi_1d_series[-2] if len(rsi_1d_series) >= 2 else rsi_1d
 
         rsi_1w_series = rsi(closes_1w, 14) if len(closes_1w) >= 15 else []
         rsi_1w = rsi_1w_series[-1] if rsi_1w_series else (rsi_1d if rsi_1d else rsi_4h)
-
-        is_4h_rsi_overbought = rsi_4h >= Decimal("65.0") or (prev_rsi_4h >= Decimal("68.0") and rsi_4h < prev_rsi_4h)
-        is_1d_rsi_overbought = rsi_1d >= Decimal("68.0") or (prev_rsi_1d >= Decimal("70.0") and rsi_1d < prev_rsi_1d)
-        is_1w_rsi_overbought = rsi_1w >= Decimal("70.0")
-
-        mtf_rsi_count = sum([1 if is_4h_rsi_overbought else 0, 1 if is_1d_rsi_overbought else 0, 1 if is_1w_rsi_overbought else 0])
 
         # 3. Bearish Divergence Algorithms (RSI & MACD)
         rsi_divs_4h = confirmed_rsi_divergences(closed_4h, lookback=48, min_rsi_delta=Decimal("2.0"))

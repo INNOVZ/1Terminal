@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import os
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -38,7 +38,7 @@ class WatchlistService:
         self._seed_if_empty()
 
     @contextlib.contextmanager
-    def _get_connection(self):
+    def _get_connection(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:

@@ -222,9 +222,9 @@ function WatchlistCard({
                   padding: "2px 7px",
                   borderRadius: "6px",
                 }}
-                title="Empirical institutional setup win rate"
+                title="Research score has not been calibrated against forward outcomes"
               >
-                WIN {item.estimated_win_rate_pct}%
+                Uncalibrated
               </span>
             )}
             <span className={isGradeAPlus ? "badge-grade-a-plus" : "badge-grade-a"}>

@@ -33,6 +33,8 @@ coverage/
 *.db
 *.sqlite3
 atlas_state.sqlite3
+data/testnet_trades.json
+data/testnet_watchlist.json
 
 # Node.js & Next.js Frontend
 node_modules/

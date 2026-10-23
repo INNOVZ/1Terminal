@@ -1,97 +1,58 @@
-from __future__ import annotations
-
-from typing import Any, Protocol, cast
 from unittest.mock import AsyncMock
 
 import httpx
-from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
 
+from algotrader.api import portal
 from algotrader.api.app import create_app
-from algotrader.config import Environment, Settings
+from algotrader.config import Settings
 
 
-class IncludedRouter(Protocol):
-    original_router: Any
+def test_supported_entry_points_are_the_same_screener():
+    from algotrader.api.app import app as old_entry
+    from algotrader.api.portal_app import app as new_entry
+    assert old_entry is new_entry
+    paths = set(new_entry.openapi()["paths"])
+    assert "/api/screener/live" in paths
+    assert not any(path.startswith(("/v1/", "/api/testnet")) for path in paths)
 
 
-def test_every_operator_route_inherits_router_level_authentication() -> None:
-    app = create_app(Settings.model_validate({"operator_token": "x" * 32}))
-    route_groups = [
-        cast(IncludedRouter, route).original_router
-        for route in app.routes
-        if hasattr(route, "original_router")
-    ]
-    protected: list[Any] = [
-        route
-        for group in route_groups
-        for route in group.routes
-        if isinstance(route, APIRoute) and route.path.startswith("/v1/")
-    ] or [
-        route
-        for route in app.routes
-        if isinstance(route, APIRoute) and route.path.startswith("/v1/")
-    ]
-
-    assert protected
-    assert all(route.dependant.dependencies for route in protected)
+async def test_removed_trading_endpoints_are_unreachable():
+    app = create_app(Settings(_env_file=None, screener_cron_enabled=False))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
+        for path in ("/api/testnet/status", "/api/testnet/watchlist", "/v1/status", "/v1/run-once"):
+            for method in ("GET", "POST"):
+                response = await client.request(method, path)
+                assert response.status_code == 404
+        root = (await client.get("/")).json()
+        assert root["mode"] == "screener"
+        assert root["order_execution_enabled"] is False
 
 
-def test_production_disables_interactive_api_schema() -> None:
-    app = create_app(
-        Settings.model_validate(
-            {
-                "environment": Environment.PRODUCTION,
-                "operator_token": "x" * 32,
-            }
-        )
-    )
+def test_lifespan_closes_runtime_and_cancels_cron(monkeypatch):
+    runtime = AsyncMock()
+    runtime.readiness.return_value = (True, {"status": "ready"})
+    monkeypatch.setattr(portal, "_shared_runtime", runtime)
+    app = create_app(Settings(_env_file=None, screener_cron_enabled=True))
+    with TestClient(app) as client:
+        assert client.get("/readyz").status_code == 200
+        assert portal._cron_task is not None
+    runtime.close.assert_awaited_once()
+    assert portal._cron_task is None
+    assert portal._shared_runtime is None
 
+
+async def test_readiness_does_not_claim_ready_before_startup():
+    app = create_app(Settings(_env_file=None, screener_cron_enabled=False))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
+        assert (await client.get("/readyz")).status_code == 503
+        response = await client.get("/healthz")
+        assert response.status_code == 200
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["cache-control"] == "no-store"
+
+
+def test_production_disables_interactive_schema():
+    app = create_app(Settings(_env_file=None, environment="production"))
     assert app.docs_url is None
     assert app.openapi_url is None
-
-
-async def test_operator_route_rejects_missing_bearer_token_before_runtime_access() -> None:
-    app = create_app(Settings.model_validate({"operator_token": "x" * 32}))
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://localhost",
-    ) as client:
-        response = await client.get("/v1/status")
-
-    assert response.status_code == 401
-    assert response.headers["www-authenticate"] == "Bearer"
-
-
-async def test_security_headers_are_applied_centrally() -> None:
-    app = create_app(Settings.model_validate({"operator_token": "x" * 32}))
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://localhost",
-    ) as client:
-        response = await client.get("/healthz")
-
-    assert response.status_code == 200
-    assert response.headers["x-content-type-options"] == "nosniff"
-    assert response.headers["x-frame-options"] == "DENY"
-    assert "camera=()" in response.headers["permissions-policy"]
-    assert response.headers["cache-control"] == "no-store"
-
-
-async def test_readiness_returns_503_when_runtime_is_not_ready() -> None:
-    app = create_app(Settings.model_validate({"operator_token": "x" * 32}))
-    runtime = AsyncMock()
-    runtime.readiness.return_value = (
-        False,
-        {"status": "not_ready", "state_store": "ok", "scheduler": "stopped"},
-    )
-    app.state.runtime = runtime
-
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://localhost",
-    ) as client:
-        response = await client.get("/readyz")
-
-    assert response.status_code == 503
-    assert response.json()["status"] == "not_ready"
-    assert response.json() == {"status": "not_ready"}

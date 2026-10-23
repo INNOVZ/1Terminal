@@ -45,11 +45,9 @@ async def execute_screener_job(
     print(f"[{now.strftime('%Y-%m-%d %H:%M:%S UTC')}] 🚀 Starting {interval_hours}-Hour USD-M Screener Cron Job...")
 
     settings = load_settings()
-    futures = next(
-        c.market_data for c in runtime.system._contexts if c.market_data.venue.value == "binance_usdm"
-    )
+    futures = runtime.futures_market
 
-    opportunities = await runtime.system.crypto_screen(
+    opportunities = await runtime.crypto_screen(
         settings=settings,
         min_score=Decimal(str(min_score)),
         max_symbols=max_symbols,
@@ -74,9 +72,9 @@ async def execute_screener_job(
 
     qualified_shorts = [
         s for s in deduped_shorts
-        if (getattr(s, "conviction", None) is None or s.conviction >= Decimal("55.0"))
+        if (s.conviction is None or s.conviction >= Decimal("55.0"))
         and s.score >= Decimal("60.0")
-        and (getattr(s, "checklist_verification", None) is None or s.checklist_verification.passed_count >= 3)
+        and (s.checklist_verification is None or s.checklist_verification.passed_count >= 3)
     ]
     balanced_picks = deduped_longs + qualified_shorts
     if not balanced_picks:
@@ -105,9 +103,9 @@ async def execute_screener_job(
     # Load baseline candles store to enrich
     candles_file = Path("frontend/public/baseline_candles.json")
     candle_store: dict[str, list[dict[str, Any]]] = {}
-    if candles_file.exists():
+    if await asyncio.to_thread(candles_file.exists):
         with contextlib.suppress(Exception):
-            candle_store = json.loads(candles_file.read_text())
+            candle_store = json.loads(await asyncio.to_thread(candles_file.read_text))
 
     opps_list: list[dict[str, Any]] = []
     for opp in balanced_picks:
@@ -144,8 +142,8 @@ async def execute_screener_job(
 
     # Save enriched candle store
     try:
-        candles_file.parent.mkdir(parents=True, exist_ok=True)
-        candles_file.write_text(json.dumps(candle_store))
+        await asyncio.to_thread(candles_file.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(candles_file.write_text, json.dumps(candle_store))
     except Exception as e:
         print(f"⚠️ Warning saving baseline candles: {e}")
 
@@ -158,7 +156,11 @@ async def execute_screener_job(
         "timestamp": now.isoformat(),
         "next_scan_at": next_cycle.isoformat(),
         "scan_interval_hours": interval_hours,
-        "total_scanned": 490,
+        "total_scanned": runtime.last_scan_counts.get("evaluated", 0),
+        "scan_counts": runtime.last_scan_counts,
+        "mode": "screener",
+        "order_execution_enabled": False,
+        "validation_status": "uncalibrated_research",
         "qualifying_count": len(opps_list),
         "long_count": len([o for o in opps_list if o["direction"] == "long"]),
         "short_count": len([o for o in opps_list if o["direction"] == "short"]),
@@ -168,7 +170,7 @@ async def execute_screener_job(
 
     # Persist latest results to disk atomically (fsync + rename)
     out_dir = Path("data")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(out_dir.mkdir, parents=True, exist_ok=True)
     latest_file = out_dir / "screener_latest.json"
     atomic_write_json(latest_file, result_payload)
 
@@ -176,7 +178,7 @@ async def execute_screener_job(
     history_file = out_dir / "screener_runs.jsonl"
     audit_entry = {
         "timestamp": now.isoformat(),
-        "total_scanned": 490,
+        "total_scanned": runtime.last_scan_counts.get("evaluated", 0),
         "qualifying_count": len(opps_list),
         "longs": [o["symbol"] for o in opps_list if o["direction"] == "long"],
         "shorts": [o["symbol"] for o in opps_list if o["direction"] == "short"],
@@ -190,17 +192,6 @@ async def execute_screener_job(
         f"persisted to {latest_file}."
     )
     print(f"👉 Next scheduled run: {next_cycle.strftime('%Y-%m-%d %H:%M:%S UTC')}")
-
-    # Trigger automated Binance Testnet execution for top-conviction setups
-    try:
-        from algotrader.api.portal import get_testnet_trader
-        trader = get_testnet_trader()
-        if trader and opps_list:
-            trades = await trader.evaluate_and_execute_candidates(opps_list)
-            if trades:
-                print(f"⚡ [Testnet Auto-Trader] Placed {len(trades)} trades on Binance Testnet!")
-    except Exception as trade_err:
-        print(f"⚠️ [Testnet Auto-Trader] Note: {trade_err}")
 
     return result_payload
 

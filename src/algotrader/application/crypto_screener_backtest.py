@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 import json
 import math
-from pathlib import Path
 import time
-from typing import Any, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -22,7 +23,7 @@ from algotrader.adapters.external.models import (
 )
 from algotrader.application.crypto_screener import CryptoOpportunityScreener
 from algotrader.config import Settings, load_settings
-from algotrader.domain.crypto_screener_models import CryptoOpportunity, ScreenerMode, SetupLabel
+from algotrader.domain.crypto_screener_models import CryptoOpportunity, SetupLabel
 from algotrader.domain.indicators import (
     snapshot,
     taker_buy_ratio_from_candles,
@@ -32,9 +33,7 @@ from algotrader.domain.models import (
     DerivativesSnapshot,
     Direction,
     Instrument,
-    MarketKind,
     Quote,
-    Venue,
 )
 from algotrader.infrastructure.runtime import FUTURES_LIVE_URL
 
@@ -223,10 +222,7 @@ class CryptoScreenerBacktester:
         """Execute the multi-symbol backtest across historical candles."""
         should_close_client = False
         if client is None:
-            settings = load_settings()
-            api_key = settings.binance_futures_api_key or SecretStr("")
-            api_secret = settings.binance_futures_api_secret or SecretStr("")
-            client = BinanceHttpClient(FUTURES_LIVE_URL, api_key, api_secret)
+            client = BinanceHttpClient(FUTURES_LIVE_URL)
             should_close_client = True
 
         try:
@@ -265,7 +261,7 @@ class CryptoScreenerBacktester:
             )
 
             cache_dir = Path("data/cache/backtest")
-            cache_dir.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(cache_dir.mkdir, parents=True, exist_ok=True)
             sem = asyncio.Semaphore(2)
 
             def _serialize_c(candles: list[Candle]) -> list[dict[str, Any]]:
@@ -317,7 +313,7 @@ class CryptoScreenerBacktester:
                     except Exception:
                         pass
                 async with sem:
-                    candles = await adapter.historical_candles(inst, interval, req_bars)
+                    candles = list(await adapter.historical_candles(inst, interval, req_bars))
                     await asyncio.sleep(0.1)
                 try:
                     with cache_file.open("w") as f:
@@ -369,7 +365,7 @@ class CryptoScreenerBacktester:
                             )
                             await asyncio.sleep(0.05)
                         if isinstance(fr_payload, list):
-                            parsed = [
+                            parsed: list[dict[str, Any]] = [
                                 {
                                     "time": datetime.fromtimestamp(int(d["fundingTime"]) / 1000, UTC),
                                     "rate": Decimal(str(d["fundingRate"])),
@@ -465,7 +461,7 @@ class CryptoScreenerBacktester:
         """Event-driven bar-by-bar walk-forward simulation."""
         # Find global timeline of 4H bars across symbols
         all_4h_times = set()
-        for sym, d in symbol_data.items():
+        for d in symbol_data.values():
             for c in d["4h"]:
                 all_4h_times.add(c.closed_at)
         timeline = sorted(all_4h_times)
@@ -511,7 +507,7 @@ class CryptoScreenerBacktester:
             ),
         )
 
-        for step_idx, current_time in enumerate(eval_timeline):
+        for current_time in eval_timeline:
             # 1. Update Active Trades on current bar
             still_active: list[ActiveTrade] = []
             for trade in active_trades:
@@ -543,11 +539,7 @@ class CryptoScreenerBacktester:
                     t2_hit = cur_bar.high >= trade.target2
 
                     # Conservative: if both stop and target touched in same bar, assume stop hit first
-                    if stop_hit and (t1_hit or t2_hit):
-                        closed = True
-                        exit_price = trade.current_stop * (ONE - slippage_rate)
-                        exit_reason = "STOP_LOSS" if not trade.scaled_out else "BREAKEVEN_STOP"
-                    elif stop_hit:
+                    if stop_hit and (t1_hit or t2_hit) or stop_hit:
                         closed = True
                         exit_price = trade.current_stop * (ONE - slippage_rate)
                         exit_reason = "STOP_LOSS" if not trade.scaled_out else "BREAKEVEN_STOP"
@@ -577,11 +569,7 @@ class CryptoScreenerBacktester:
                     t1_hit = cur_bar.low <= trade.target1
                     t2_hit = cur_bar.low <= trade.target2
 
-                    if stop_hit and (t1_hit or t2_hit):
-                        closed = True
-                        exit_price = trade.current_stop * (ONE + slippage_rate)
-                        exit_reason = "STOP_LOSS" if not trade.scaled_out else "BREAKEVEN_STOP"
-                    elif stop_hit:
+                    if stop_hit and (t1_hit or t2_hit) or stop_hit:
                         closed = True
                         exit_price = trade.current_stop * (ONE + slippage_rate)
                         exit_reason = "STOP_LOSS" if not trade.scaled_out else "BREAKEVEN_STOP"
@@ -739,7 +727,6 @@ class CryptoScreenerBacktester:
             if available_slots > 0:
                 # Slices BTC history
                 btc_history_1h = [c for c in btc_1h if c.closed_at <= current_time]
-                btc_history_4h = [c for c in btc_4h if c.closed_at <= current_time]
                 btc_ret_1h = (
                     (btc_history_1h[-1].close - btc_history_1h[-2].close) / btc_history_1h[-2].close
                     if len(btc_history_1h) >= 2
@@ -876,7 +863,7 @@ class CryptoScreenerBacktester:
                             is_breakout_confirmed = (
                                 chosen_opp.breakout_readiness_status == "BREAKOUT_CONFIRMED"
                                 or chosen_opp.execution_mode == "CEILING_BREAKOUT"
-                                or chosen_opp.setup_label in (SetupLabel.BREAKOUT_LONG, SetupLabel.BREAKDOWN_SHORT)
+                                or chosen_opp.setup_label in (SetupLabel.BREAKOUT_LONG, SetupLabel.BREAKOUT_SHORT)
                             )
                             if is_breakout_confirmed:
                                 entry_price = chosen_opp.breakout_trigger

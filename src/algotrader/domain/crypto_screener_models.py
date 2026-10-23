@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Any
 
 from algotrader.domain.models import Direction, Instrument
 
@@ -174,6 +175,9 @@ class CryptoOpportunity:
 
         return {
             "symbol": self.instrument.id.symbol,
+            "validation_status": "uncalibrated_research",
+            "order_execution_enabled": False,
+            "score_semantics": "Heuristic ranking; win-rate and EV fields are uncalibrated model assumptions.",
             "base_asset": self.instrument.base_asset,
             "quote_asset": self.instrument.quote_asset,
             "direction": self.direction.value,

@@ -18,7 +18,7 @@ function BottomDock({
 }: BottomDockProps) {
   const pathname = usePathname();
   const [internalRefreshing, setInternalRefreshing] = useState(false);
-  const [cronInfo, setCronInfo] = useState<string>("Auto-Scan: Every 1h");
+  const [cronInfo, setCronInfo] = useState<string>("Auto-Scan: Loading schedule");
 
   useEffect(() => {
     fetch("/api/screener/cron/status")
@@ -30,7 +30,7 @@ function BottomDock({
             hour: "2-digit",
             minute: "2-digit",
           });
-          const interval = data.interval_hours || 1;
+          const interval = data.interval_hours || 4;
           setCronInfo(`Auto-Scan: Every ${interval}h (Next: ${timeStr})`);
         }
       })

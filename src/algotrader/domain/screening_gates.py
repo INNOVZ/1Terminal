@@ -501,7 +501,6 @@ def evaluate_short_gates(
     # 1. Gate S1: Mandatory Macro Run-Up (Universal)
     # Token must have demonstrated a genuine upward expansion into highs.
     # Excludes tokens whose price has simply plummeted over the last 14 to 30 days.
-    ema50_peak_excursion = (inputs.high_7d - inputs.ema50_4h) / max(inputs.ema50_4h, EPSILON)
     has_recent_surge = (inputs.ret_14d >= Decimal("0.18")) or (
         inputs.high_7d >= inputs.close * Decimal("1.08") and inputs.ret_14d >= Decimal("0.08")
     )

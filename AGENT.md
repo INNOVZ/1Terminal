@@ -1,3 +1,12 @@
+# Historical strategy specification
+
+The product is now a pure public-data screener. Current architecture and the ordered work plan
+are in docs/architecture.md and docs/screener-research-roadmap.md. The rules below describe an
+older research hypothesis and differ from current implementation; they are not validation evidence.
+Do not restore exchange execution, credentials or trading workers to the screener runtime.
+
+---
+
 # ATLAS INSTITUTIONAL CRYPTO SCREENER — MASTER AGENT.MD SPECIFICATION
 
 ## 1. SYSTEM CONTEXT & HEXAGONAL ARCHITECTURE
@@ -409,7 +418,6 @@ def evaluate_long_gates(s: GateEvaluationInput, archetype: str) -> tuple[bool, s
             return False, "REJECT_L6_BULL_TRAP_RESISTANCE"
 
     return True, None
-
 
 def evaluate_short_gates(s: GateEvaluationInput) -> tuple[bool, str | None]:
     # Gate S1: Mandatory Macro Run-Up

@@ -1,70 +1,77 @@
-# GCP single-node deployment
+# Pure-screener deployment and migration
 
-This is the supported deployment shape while Atlas uses SQLite: one Compute Engine VM, one worker
-process, and one attached Persistent Disk mounted for `/app/state`. It is suitable for paper and
-testnet burn-in. It is not highly available and is not approved for live capital.
+The existing topology remains one GCP VM, one Compose project named alfa-terminal, one API worker,
+a persistent SQLite volume, and the Vercel frontend. This migration changes the deployed capability
+to public-data screening. It does not require a database reset.
 
-Cloud Run is intentionally excluded from this phase. Its container filesystem is disposable, and
-its instance lifecycle and horizontal scaling conflict with local SQLite plus a continuously running
-singleton scheduler. Move durable state and leader fencing to PostgreSQL before reconsidering Cloud
-Run or multiple replicas.
+## Before rollout
 
-## Topology
+1. Record the currently running image and Compose project name. Confirm that the production project
+   really is alfa-terminal before using the workflow; a different name would select a different
+   SQLite volume and could leave the previous container running.
+2. Back up SQLite using its backup API or a stopped-container copy including any WAL state.
+   Preserve /home/deploy/alfa-terminal/data and existing watchlists.
+3. Inspect VM cron, systemd and other containers for old atlas worker/run-once or testnet-trader
+   processes. Stop those specific legacy services. Replacing this API cannot stop a separate VM
+   process or another deployment.
+4. Review any existing exchange orders/positions directly in Binance. Removing code does not cancel
+   or close them. Do not blindly cancel protective orders around an open position.
+5. Revoke the previously committed testnet credentials and remove exchange keys from VM/GitHub
+   environment storage. Removing source literals does not revoke credentials or erase Git history.
+   This release deliberately does not rewrite shared Git history.
+6. Ensure /home/deploy/alfa-terminal/data is writable by container UID 10001. Existing deployments
+   previously granted broad permissions; use explicit owner/group permissions instead.
+7. Keep existing frontend API_BACKEND_URL pointing to this backend. No trading endpoint is needed
+   by the current frontend.
 
-```text
-operator/IAP or TLS proxy
-          |
-          v
-single Compute Engine VM
-  Docker Compose: exactly 1 atlas container / 1 uvicorn worker
-          |
-          v
-zonal Persistent Disk mounted by the atlas-state volume
-  /app/state/atlas_state.sqlite3 (+ WAL/SHM)
+## What the release changes
+
+- Docker always starts algotrader.api.portal_app:app with one worker.
+- The compatibility algotrader.api.app:app path also serves only the screener.
+- No exchange credentials are loaded or forwarded by Compose.
+- ATLAS_SCREENER_CRON_ENABLED controls scanning only; default true.
+- ATLAS_SCREENER_INTERVAL_HOURS defaults to 4 and must divide 24.
+- Runtime data is not copied into the image.
+- Source bind mounts are removed; the container runs the built application.
+- Watchlist volume and data directory are retained.
+
+The workflow runs backend tests, source linting, strict typing, frontend lint/build, and a
+network-disabled container smoke test. Deployment waits for these jobs. It creates a detached
+release worktree for the exact verified commit instead of resetting the mutable VM checkout.
+Images use the commit SHA tag. Compose builds before replacing the service and waits for health.
+
+The data bind mount uses ATLAS_DATA_DIR=/home/deploy/alfa-terminal/data. The named state volume
+uses the existing alfa-terminal project prefix. Do not change those during migration.
+Release worktrees/images need a later bounded retention policy; never delete the active or
+rollback release.
+
+## Verify after rollout
+
+```bash
+docker compose --project-name alfa-terminal --file /home/deploy/atlas-releases/COMMIT_SHA/compose.yaml ps
+curl --fail http://127.0.0.1:8000/healthz
+curl --fail http://127.0.0.1:8000/readyz
+curl --fail http://127.0.0.1:8000/
 ```
 
-## Release flow
+Root must report mode=screener and order_execution_enabled=false.
+GET /api/testnet/status, GET /api/testnet/watchlist, and former /v1 routes must return 404.
+Run one controlled scan through the frontend, verify candles/watchlist persistence and scheduler
+status, and watch for provider failures. No Binance account permission or API key should be needed.
 
-1. Build the image from a reviewed source snapshot and tag it with an immutable release identifier,
-   not only `latest`.
-2. Push it to a private Artifact Registry repository using the Google credential helper or a
-   short-lived access token. Avoid downloadable service-account keys.
-3. Give the VM service account only Artifact Registry Reader plus the minimum monitoring/secret
-   permissions it needs. Binance credentials must not be baked into the image.
-4. Attach and mount one zonal Persistent Disk. Keep it single-writer; ordinary filesystems and
-   SQLite are not a multi-writer HA design.
-5. Put the production/testnet environment file on the VM with owner-only permissions, or materialize
-   it at startup from Secret Manager. Verify `ATLAS_ALLOWED_HOSTS`, the 32+ character operator token,
-   execution mode, testnet keys, and `/app/state/atlas_state.sqlite3` before starting Compose.
-6. Start exactly one Compose project and confirm both `/healthz` and `/readyz`. The Compose health
-   check uses `/readyz`; it fails if SQLite is unavailable or automation is enabled but its scheduler
-   task stopped.
-7. Run `atlas doctor`, reconciliation, and kill-switch drills before enabling automation. Keep
-   testnet burn-in for at least 30 days and shadow live data for several weeks before any canary.
+The API currently retains public watchlist mutation and scan-refresh behaviour for frontend
+compatibility. Public exposure still needs authentication/ownership, TLS and rate limits.
+The existing direct port mapping is retained to avoid silently breaking Vercel connectivity.
+Use a trusted reverse proxy or restricted ingress as the next operations milestone.
 
-## Operations constraints
+## Failure and rollback
 
-- Keep the API private where possible (IAP/VPN or a restricted load balancer). If reachable beyond
-  localhost, terminate TLS at a trusted proxy, rate-limit it, and never transmit the bearer token on
-  plain HTTP.
-- Use a reserved egress IP and restrict Binance API keys to it. Disable withdrawals and grant only
-  the exact trading permissions required by the selected venue.
-- Alert on container unhealthy/restarts, `/readyz` failures, kill-switch activation, scheduler
-  failures, reconciliation mismatch, disk usage, clock drift, and stale market data.
-- Back up SQLite with a transactionally consistent SQLite backup or a stopped container. Copying
-  only the main database while WAL mode is active can omit committed state. Test restoration on a
-  separate VM.
-- Deploy by image digest, retain the previous digest, and stop the old container before starting the
-  new one. Never overlap two workers against the same account, even briefly.
-- Do not attach the disk read-write to multiple VMs. HA requires PostgreSQL, a fenced leader lease,
-  exchange user-data replay, and tested failover—not a shared SQLite volume.
+A failed build leaves the running service untouched. A failed Compose health wait fails deployment;
+the workflow does not claim success and does not automatically restore an older trading image.
+Inspect container logs and readiness. Prefer rolling forward with a corrected screener build.
+Once a known-good screener release exists, restore that exact image/worktree with the same state
+volume and data directory. Restoring the pre-migration image can re-enable trading.
 
-## Go/no-go checks
-
-- All tests, Ruff, and strict mypy pass for the exact image source.
-- Container runs as the non-root `atlas` user with a read-only root filesystem; `/app/state` is the
-  only durable writable path.
-- State survives a container recreation and VM reboot.
-- Unknown-order, scheduler-failure, and position-mismatch drills activate the persistent kill switch.
-- Restore drill reproduces order intents, results, open trades, management state, and kill-switch
-  state before automation is re-enabled.
+Local verification cannot establish the VM's current process inventory, exchange state, backups or
+firewall configuration. Check these in the deployment environment before treating the migration
+as complete.

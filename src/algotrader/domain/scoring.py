@@ -533,10 +533,7 @@ def calculate_continuous_short_factor_scores(
     if close <= ema20_4h <= ema50_4h:
         # Check for oversold extension below EMA20
         dist_below_ema20 = (ema20_4h - close) / max(ema20_4h, EPSILON)
-        if dist_below_ema20 > Decimal("0.07"):
-            ema_score = Decimal("45.0")  # Overextended dump, high snapback risk
-        else:
-            ema_score = Decimal("68.0")
+        ema_score = Decimal("45.0") if dist_below_ema20 > Decimal("0.07") else Decimal("68.0")
     elif close <= ema50_4h:
         ema_score = Decimal("55.0")
     else:
