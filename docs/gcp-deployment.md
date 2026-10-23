@@ -19,8 +19,10 @@ to public-data screening. It does not require a database reset.
 5. Revoke the previously committed testnet credentials and remove exchange keys from VM/GitHub
    environment storage. Removing source literals does not revoke credentials or erase Git history.
    This release deliberately does not rewrite shared Git history.
-6. Ensure /home/deploy/alfa-terminal/data is writable by container UID 10001. Existing deployments
-   previously granted broad permissions; use explicit owner/group permissions instead.
+6. Ensure /home/deploy/alfa-terminal/data and the `alfa-terminal_atlas-state` Docker volume are
+   writable by container UID 10001 before `docker compose up`. Existing deployments previously
+   granted broad permissions; use explicit owner/group permissions instead. The startup path can
+   fail with SQLite permission errors if either mount is still owned by root.
 7. Keep existing frontend API_BACKEND_URL pointing to this backend. No trading endpoint is needed
    by the current frontend.
 

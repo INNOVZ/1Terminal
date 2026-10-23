@@ -86,8 +86,15 @@ jobs:
             export ATLAS_DATA_DIR=/home/deploy/alfa-terminal/data
             export ATLAS_IMAGE_TAG="$RELEASE_SHA"
             mkdir -p "$ATLAS_DATA_DIR"
-            # One-time migration: ensure this directory is writable by container UID 10001.
-            # Deliberately do not make runtime data world-writable.
+            # Preserve deploy data and the SQLite state volume for the non-root container UID 10001.
+            # The bound data path and named state volume are root-owned by default and must be fixed
+            # before Compose starts the app or startup fails with permission-denied writes.
+            docker volume inspect alfa-terminal_atlas-state >/dev/null 2>&1 || docker volume create alfa-terminal_atlas-state
+            docker run --rm \
+              -v alfa-terminal_atlas-state:/state \
+              -v "$ATLAS_DATA_DIR:/data" \
+              alpine:3.20 \
+              sh -c 'chown -R 10001:10001 /state /data && chmod -R u+rwX /state /data'
             docker compose --project-name alfa-terminal --file "$release/compose.yaml" build
             docker compose --project-name alfa-terminal --file "$release/compose.yaml" up -d --wait --wait-timeout 120 --remove-orphans
             docker compose --project-name alfa-terminal --file "$release/compose.yaml" exec -T atlas python -c "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/')); assert d['mode']=='screener' and d['order_execution_enabled'] is False"
