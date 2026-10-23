@@ -96,5 +96,5 @@ jobs:
               alpine:3.20 \
               sh -c 'chown -R 10001:10001 /state /data && chmod -R u+rwX /state /data'
             docker compose --project-name alfa-terminal --file "$release/compose.yaml" build
-            docker compose --project-name alfa-terminal --file "$release/compose.yaml" up -d --wait --wait-timeout 120 --remove-orphans
+            docker compose --project-name alfa-terminal --file "$release/compose.yaml" up -d --wait --wait-timeout 300 --remove-orphans
             docker compose --project-name alfa-terminal --file "$release/compose.yaml" exec -T atlas python -c "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/')); assert d['mode']=='screener' and d['order_execution_enabled'] is False"
