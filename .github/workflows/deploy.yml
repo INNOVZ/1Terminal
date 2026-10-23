@@ -61,6 +61,7 @@ jobs:
   deploy:
     needs: [backend, frontend, container]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment: GCP_VM_IP
     runs-on: ubuntu-latest
     steps:
       - name: Deploy verified commit to GCP
