@@ -529,6 +529,9 @@ class CryptoOpportunityScreener:
         explicit_derivatives: DerivativesSnapshot | None = None,
     ) -> list[CryptoOpportunity]:
         """Evaluate a single instrument across 1h, 4h, derivatives, and alpha factors."""
+        c1h: Sequence[Candle] | BaseException
+        c4h: Sequence[Candle] | BaseException
+        c1w: Sequence[Candle] | BaseException
         if preloaded_candles is not None:
             c1h = preloaded_candles[0]
             c4h = preloaded_candles[1]
