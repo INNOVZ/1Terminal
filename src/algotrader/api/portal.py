@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -113,6 +115,26 @@ def _get_fresh_baseline_opportunities() -> dict[str, Any]:
         "macro_narrative": "Awaiting initial live algorithmic scan across Binance universe...",
         "opportunities": [],
     }
+
+
+def warm_screener_cache(path: Path | str = "data/screener_latest.json") -> dict[str, Any] | None:
+    """Pre-populates the in-memory screener cache from persistent disk storage on cold start."""
+    global _screener_cache, _cache_timestamp
+    p = Path(path)
+    if p.exists():
+        try:
+            raw = p.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            if isinstance(data, dict) and data.get("opportunities"):
+                _screener_cache = data
+                ts_str = data.get("timestamp")
+                if ts_str:
+                    with contextlib.suppress(Exception):
+                        _cache_timestamp = datetime.fromisoformat(ts_str)
+                return _screener_cache
+        except Exception:
+            pass
+    return None
 
 
 # Screener background and on-demand execution state
@@ -286,7 +308,11 @@ async def get_live_screener(
             "is_scanning": True,
         }
 
-    # If no live scan exists yet in memory, trigger one on demand
+    # If no live scan exists yet in memory, attempt warm-up from persistent disk before initiating scan
+    if not _screener_cache:
+        warm_screener_cache()
+
+    # If still no live scan exists yet, trigger one on demand
     if not _screener_cache:
         async with _screener_task_lock:
             if _screener_task is None or _screener_task.done():

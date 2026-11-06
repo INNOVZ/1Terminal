@@ -17,6 +17,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        portal.warm_screener_cache()
         application.state.runtime = await portal.get_portal_runtime(app_settings)
         if app_settings.screener_cron_enabled:
             portal.start_screener_cron(interval_hours=app_settings.screener_interval_hours)
