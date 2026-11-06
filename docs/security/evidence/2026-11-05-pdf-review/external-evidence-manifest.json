@@ -1,0 +1,15 @@
+{
+  "pdf_sha256": "d12277dcde516581b3cb87c40ffb0c4dd36326b9c9823953c24968d58a11af15",
+  "external_script_sha256": "e29b8d726b9e878e03cd7b27001140347862a0ec601bc0fdc6c81812f417012e",
+  "reproduced_population_equals_saved_result": true,
+  "external_input_hashes": {
+    "faithful_48h_replay.py": "1975626327e1996d2fbf5ec9b981705edfedf32e8bd7c346e583ca3ffadc1481",
+    "trace_nov5_gainers_counterfactual.py": "6f987a79838dae8fbefb5cd02de5f6141e79f061c6fb8557c08f71eeeb1a8819",
+    "verify_strategy_outperformance.py": "e29b8d726b9e878e03cd7b27001140347862a0ec601bc0fdc6c81812f417012e",
+    "faithful_inputs_20261103T1200Z.json": "9515073b70216531bd3be5de299960579639eed497d649e9afc324347798c83a",
+    "nov5_gainers_inputs_20261105T0800Z.json": "1b00aba8e0f7f5aac038ef2f756745954f9d1731d13cbe096fb9d27231f4627d",
+    "nov5_gainers_counterfactual_20261105T0800Z.json": "93f17e1208cb45ce5362c2f5afdda61f7a5ce0bf309648351a5342cff4e7a664",
+    "faithful_replay_results_20261103T1200Z.json": "f8726ff48b2d8c84b0cedafb3cda95ae27444436497f526cfa2c8e8b817abb2a",
+    "strategy_outperformance_verification.json": "b9a9cd492265df718cbcc596775ff6c8231a0ab13ce318ea53e59a6dddb2ec25"
+  }
+}

@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ("localhost", "127.0.0.1")
     screener_cron_enabled: bool = True
     screener_interval_hours: int = Field(default=4, ge=1, le=24)
+    research_archive_dir: Path = Path("data/research")
 
     # The following parameters are retained for offline research simulations only.
     account_risk_per_trade: Decimal = Field(default=Decimal("0.0025"), gt=0, le=Decimal("0.01"))

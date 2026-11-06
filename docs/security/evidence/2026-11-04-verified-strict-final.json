@@ -1,0 +1,629 @@
+{
+  "schema": "atlas-verified-replay-v1",
+  "strict_status": "unavailable",
+  "total_observations": 72,
+  "strict_eligible_observations": 0,
+  "negative_forecasts": 0,
+  "strict_unavailable_reasons": [
+    "historical_universe_not_recorded",
+    "synthetic_spread",
+    "neutral_macro",
+    "unknown_basis_and_depth",
+    "arrival_provenance_not_recorded",
+    "original_source_and_configuration_not_frozen"
+  ],
+  "observations": [
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-01T15:59:59.999000+00:00",
+      "decision_at": "2026-11-01T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-01T15:59:59.999000+00:00",
+      "decision_at": "2026-11-01T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-01T15:59:59.999000+00:00",
+      "decision_at": "2026-11-01T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-01T15:59:59.999000+00:00",
+      "decision_at": "2026-11-01T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-01T15:59:59.999000+00:00",
+      "decision_at": "2026-11-01T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-01T15:59:59.999000+00:00",
+      "decision_at": "2026-11-01T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-01T19:59:59.999000+00:00",
+      "decision_at": "2026-11-01T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-01T19:59:59.999000+00:00",
+      "decision_at": "2026-11-01T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-01T19:59:59.999000+00:00",
+      "decision_at": "2026-11-01T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-01T19:59:59.999000+00:00",
+      "decision_at": "2026-11-01T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-01T19:59:59.999000+00:00",
+      "decision_at": "2026-11-01T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-01T19:59:59.999000+00:00",
+      "decision_at": "2026-11-01T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-01T23:59:59.999000+00:00",
+      "decision_at": "2026-11-02T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-01T23:59:59.999000+00:00",
+      "decision_at": "2026-11-02T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-01T23:59:59.999000+00:00",
+      "decision_at": "2026-11-02T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-01T23:59:59.999000+00:00",
+      "decision_at": "2026-11-02T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-01T23:59:59.999000+00:00",
+      "decision_at": "2026-11-02T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-01T23:59:59.999000+00:00",
+      "decision_at": "2026-11-02T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-02T03:59:59.999000+00:00",
+      "decision_at": "2026-11-02T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-02T03:59:59.999000+00:00",
+      "decision_at": "2026-11-02T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-02T03:59:59.999000+00:00",
+      "decision_at": "2026-11-02T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-02T03:59:59.999000+00:00",
+      "decision_at": "2026-11-02T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-02T03:59:59.999000+00:00",
+      "decision_at": "2026-11-02T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-02T03:59:59.999000+00:00",
+      "decision_at": "2026-11-02T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-02T07:59:59.999000+00:00",
+      "decision_at": "2026-11-02T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-02T07:59:59.999000+00:00",
+      "decision_at": "2026-11-02T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-02T07:59:59.999000+00:00",
+      "decision_at": "2026-11-02T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-02T07:59:59.999000+00:00",
+      "decision_at": "2026-11-02T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-02T07:59:59.999000+00:00",
+      "decision_at": "2026-11-02T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-02T07:59:59.999000+00:00",
+      "decision_at": "2026-11-02T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-02T11:59:59.999000+00:00",
+      "decision_at": "2026-11-02T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-02T11:59:59.999000+00:00",
+      "decision_at": "2026-11-02T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-02T11:59:59.999000+00:00",
+      "decision_at": "2026-11-02T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-02T11:59:59.999000+00:00",
+      "decision_at": "2026-11-02T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-02T11:59:59.999000+00:00",
+      "decision_at": "2026-11-02T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-02T11:59:59.999000+00:00",
+      "decision_at": "2026-11-02T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-02T15:59:59.999000+00:00",
+      "decision_at": "2026-11-02T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-02T15:59:59.999000+00:00",
+      "decision_at": "2026-11-02T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-02T15:59:59.999000+00:00",
+      "decision_at": "2026-11-02T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-02T15:59:59.999000+00:00",
+      "decision_at": "2026-11-02T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-02T15:59:59.999000+00:00",
+      "decision_at": "2026-11-02T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-02T15:59:59.999000+00:00",
+      "decision_at": "2026-11-02T16:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-02T19:59:59.999000+00:00",
+      "decision_at": "2026-11-02T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-02T19:59:59.999000+00:00",
+      "decision_at": "2026-11-02T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-02T19:59:59.999000+00:00",
+      "decision_at": "2026-11-02T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-02T19:59:59.999000+00:00",
+      "decision_at": "2026-11-02T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-02T19:59:59.999000+00:00",
+      "decision_at": "2026-11-02T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-02T19:59:59.999000+00:00",
+      "decision_at": "2026-11-02T20:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-02T23:59:59.999000+00:00",
+      "decision_at": "2026-11-03T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-02T23:59:59.999000+00:00",
+      "decision_at": "2026-11-03T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-02T23:59:59.999000+00:00",
+      "decision_at": "2026-11-03T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-02T23:59:59.999000+00:00",
+      "decision_at": "2026-11-03T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-02T23:59:59.999000+00:00",
+      "decision_at": "2026-11-03T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-02T23:59:59.999000+00:00",
+      "decision_at": "2026-11-03T00:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-03T03:59:59.999000+00:00",
+      "decision_at": "2026-11-03T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-03T03:59:59.999000+00:00",
+      "decision_at": "2026-11-03T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-03T03:59:59.999000+00:00",
+      "decision_at": "2026-11-03T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-03T03:59:59.999000+00:00",
+      "decision_at": "2026-11-03T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-03T03:59:59.999000+00:00",
+      "decision_at": "2026-11-03T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-03T03:59:59.999000+00:00",
+      "decision_at": "2026-11-03T04:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-03T07:59:59.999000+00:00",
+      "decision_at": "2026-11-03T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-03T07:59:59.999000+00:00",
+      "decision_at": "2026-11-03T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-03T07:59:59.999000+00:00",
+      "decision_at": "2026-11-03T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-03T07:59:59.999000+00:00",
+      "decision_at": "2026-11-03T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-03T07:59:59.999000+00:00",
+      "decision_at": "2026-11-03T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-03T07:59:59.999000+00:00",
+      "decision_at": "2026-11-03T08:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "signal_cutoff": "2026-11-03T11:59:59.999000+00:00",
+      "decision_at": "2026-11-03T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "signal_cutoff": "2026-11-03T11:59:59.999000+00:00",
+      "decision_at": "2026-11-03T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "signal_cutoff": "2026-11-03T11:59:59.999000+00:00",
+      "decision_at": "2026-11-03T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "signal_cutoff": "2026-11-03T11:59:59.999000+00:00",
+      "decision_at": "2026-11-03T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "signal_cutoff": "2026-11-03T11:59:59.999000+00:00",
+      "decision_at": "2026-11-03T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    },
+    {
+      "symbol": "BEATUSDT",
+      "signal_cutoff": "2026-11-03T11:59:59.999000+00:00",
+      "decision_at": "2026-11-03T12:00:59.999000+00:00",
+      "data_errors": [],
+      "strict_status": "unavailable"
+    }
+  ],
+  "mode": "strict",
+  "status": "unavailable",
+  "candidate_results": null,
+  "input_sha256": "79748f20c4330baf669d8e83900b0bbc1543d0d148485fddd0d3e3ef303b5e39",
+  "identity": {
+    "policy": "atlas-v2.7-data-contract-1",
+    "source_hash": "e0ee5118b606822d2da74d294f58d4c5e70e6762692bcddfd37674cadab99a17",
+    "source_files": {
+      "__init__.py": "cc89b4f8ab993ebc2f57faaaab30d935dd1dc61024a40df98bce34a11a80e05c",
+      "adapters/__init__.py": "ddb067fae64510db7c46aba2b47fec386a136d7644b77366a0158410f52b49c9",
+      "adapters/binance/__init__.py": "4cf5f946090fbf6d5034b72dca025743bc75ad54e4408bcc1ab6d99da9b2b723",
+      "adapters/binance/base.py": "d1755a75129694a1286ba90ff4bd6d43bf521e81a1a11e474db6e399b37fb576",
+      "adapters/binance/client.py": "c9f050a4da27db4aa1e82454f157daa3f79b8fe477545866425b74f1e5768e0b",
+      "adapters/binance/futures.py": "66e4436d346428a031193c6906786bdb8ce229b0331a8e217a5f1d254149bdfb",
+      "adapters/binance/research.py": "80f04d1a346b29f95a908da443bbe7b94ad81606037999c15aee4ffa1203c9e7",
+      "adapters/binance/shadow.py": "66103520f6bea0712ab7716c7c2085478455ad630594bad4c1fa0da12437d6ae",
+      "adapters/binance/spot.py": "4cf830c8fb3a34299a2dac61853b6bd9645d37fc45ffb3fd3bb078e44413fcfb",
+      "adapters/external/__init__.py": "8d0accd72babc66889592db76a4691b53375ed90a1aded63e2800bbdd6123770",
+      "adapters/external/coingecko.py": "31a1d5f97646ac63d583190a694b19e690659ea33771c9849ea9ef451493849e",
+      "adapters/external/defillama.py": "c97806bba1df9fdd62e042260a48ba0fbe9ad79c624837254a537f6ade4ff531",
+      "adapters/external/fear_greed.py": "4bbdf109113a95f3ae35b4d98c904524f654a7c141f31817a27b08cfc9267ffb",
+      "adapters/external/macro_provider.py": "1435e6636a827ed2a1427ba5be6dacfa8401c7e5e524a92c50b8c4787bc7ef18",
+      "adapters/external/models.py": "1738194df891a56db3cbce236d7767d9db805fd9c52c54203c9e6ced0e66ae1c",
+      "api/__init__.py": "6d659d9f05587f908be873f5e58efe2edce6b222106bc75219c4806647849137",
+      "api/app.py": "da9552c182d617136fe28b4768ebe630e43a4357293ff1a2f675ec11871e6afa",
+      "api/portal.py": "3fd0fae708690b354c5b674f078d790cbc4311c782bff16fad751b5c75f4bedc",
+      "api/portal_app.py": "b20728beeb77022b64253f4e1cdc273105d350e5cb40497c7e79e21dd8a8bfd1",
+      "application/alpha.py": "08e8fc2f73e51246e515e1996aaafa6ed16c845486a9170ba9326a14316c4b0a",
+      "application/alt_momentum.py": "80937fc471be2bdc851947428306acf4a111ccf9792a49a24be7e7f42e7db20b",
+      "application/backtest.py": "379618fac5613a9f4f7bd7388e44578201badf4fc7c10b712676753351b09098",
+      "application/chart_visualizer.py": "ca27a58e3bb58932e37a16abaa36d47d3632d3ac632018dea9e7f50ca95f8707",
+      "application/crypto_screener.py": "94f3626e9a3e75a852698c9917af5806e936929842e24d2c2baddb85f28b664e",
+      "application/crypto_screener_backtest.py": "50bddb507c604a68cdf9125c2fff51e23da5593c3d7a1a235312d05db1733cd0",
+      "application/forward_observer.py": "dc0a75719c8d8683159686808352c47a502210113568a5cb9f7ef7c9cadcccf0",
+      "application/macro_service.py": "776c9aa4c6ef2ff996bceeb24fb62140944ea78c6a7150937491c96125443a8a",
+      "application/position_manager.py": "a1372a308628ca20789d104cebc2d8e8597b35eeb162c0e330c3137f360de16d",
+      "application/rank_collector.py": "c72266042fea2026f8707d3dc2cfe4ab7a3121b950e622e3a6f03fbedb0dbecd",
+      "application/research.py": "3ff794a722d4bd1b6218ab12650d862bb91fb025d6815b584d449a6b6d004934",
+      "application/research_outcome_worker.py": "7003a12693ce87654c47de5087b1aaf773bfb46c293655c76b588a129ee81f2c",
+      "application/research_rank_worker.py": "b2b55e3790623301c2f18b446e961c51863344be844d97fea74bc547a17b2ab2",
+      "application/research_sessions.py": "ff673d219eb92ed0efc1fb4244d0039ee597337ab4712b3a84a00273c28bf590",
+      "application/risk.py": "6c75e64eda0a124429135fa534f994da3adad7475f61030b1bff4bb91b8b64dc",
+      "application/scan_recording.py": "c90ce4d0968398a375a48d1fbd19cce3a029180411879085853bf3285fae5dfe",
+      "application/scan_replay.py": "523bf27d5d88971c7b7a68797ea7f5b6a5f3f98f169ef77e76c63bd755175c5d",
+      "application/screener.py": "a04c14d4811dc731e1362d908e9bf88245c88390b44632153eca993ed3f485f7",
+      "application/shadow_benchmark.py": "a1cc2fbdd6e41e3eb844d1786ccfeb3566bc09333a8c52c03d9ceea83e64e193",
+      "application/shadow_budget.py": "b2337ffa99a89c75dc921a921220dd52ffde475ef75619437659a6d67cb157ce",
+      "application/shadow_observer.py": "525e73a0adc97a8c77b21bf729c041f7698e99eca25b9bf7e826f3c60010ad9a",
+      "application/shadow_replay.py": "b7885525183d6b4cd69654c6c8d8185ef7da75cd3702a94dbdf5fed007755e12",
+      "application/shadow_runner.py": "dccaa4b02fed63426e9b019cb16bf6a71696365a11b1fe1c6fa2f3381d45a625",
+      "application/strategy.py": "e42415d1aad17224f40fcf2898573358a7b9b50895d9547eea769c02cf61dddd",
+      "application/watchlist_service.py": "b681f83407c846a69cb343380f31aeba189a3046a31347f8acc2aeb52a1b8c3d",
+      "cli.py": "1c749806df83422912b68903977883c476e08c6793cead6556802f351a2cc8a5",
+      "config.py": "7fd871529883dcda72c618faefc5a91bfd760d691378e0ac848328052533ef85",
+      "domain/__init__.py": "6192e7ee1a557ed4dad98890786e9d46023594c022233ce1e444801f215df9bd",
+      "domain/archetypes.py": "eb68231d361ed225c1a61a77a913a9e26bae2f21e270069b98d7a7e3062b6597",
+      "domain/crypto_screener_models.py": "5bad062bea095000fd9d270476309a20a00591cd8fe61e332f5ea78ad59c5a1f",
+      "domain/errors.py": "d86f631a0deef3f306b447f1170539159cf389647e7a72d91cb5f0b298b5270a",
+      "domain/execution_brackets.py": "a3493a19adf2894ae81c1b03a1a79d56d6fd33d7f09fd458eb0b0de22566918e",
+      "domain/fills.py": "91e72cbd86521821fd17a432433ce9e5f318e07f0dd492d4031d2a772d1ddecd",
+      "domain/forward_outcomes.py": "97c6184449447c7b94a65f3a60c878c7bdcb89581f51b3b2cd80920e62aee700",
+      "domain/indicators.py": "0f1527eeea9c6f9ea28195ab652d115eff1ce9e5498bc8a859d259ba91d2c378",
+      "domain/liquidity.py": "09e975dfc9ab9cdfbbfa927a13a2825ddccf67b9a6a8c4a034b5c818389b0cd5",
+      "domain/macro_overextension.py": "e63ac9973d20854ca831eecc4f38192dbfbe8f21d077c09718782c3b7623a322",
+      "domain/models.py": "55fb799d814203e2e7b497a8ee9451566d6160507e99cb871d5fdea42cec3e73",
+      "domain/ports.py": "1e591b9c2daaee8519fe463a01196b00bca9ab5a40b4ef897dac0baf38a55054",
+      "domain/precision.py": "c7b84811278a67d341f83ca8d24dedbd0f811f4582e93b95b0061b09c657fe6e",
+      "domain/rank_observations.py": "2b67cac5761fc8c61ad32c23a71381a423c4a8b467143dc1deb329c7c0d44865",
+      "domain/rank_timeline.py": "f02a35383ba6bdee1a67f8ad2d318b7b9d5c835b1bcb0295e1cd3d18b4b92951",
+      "domain/research_sessions.py": "dab6e1b4481ac1bb0a070d2ac81ecb42eda154ae64757cffd9e5e5d6581b144d",
+      "domain/resistance_absorption.py": "815d21b0fc5d7adc177b11d46ed8ee6a8db3947c8529dfab8f10800461ca4929",
+      "domain/scan_observations.py": "08d1abcd3958644140b65849bf2c69121bce98a34274ca1ff9be51137b4e95a2",
+      "domain/scoring.py": "a6a711ae4a60b37b71f0417c53c838791231b868193eaffffc311748b8498b9a",
+      "domain/screener_gates.py": "17745664ddca94c08a19269dc332150ce1637cc3c22ffbf40a0323ef1bf75963",
+      "domain/screener_policy.py": "1b92dc0655891b6d20712810631a17d90579dca0c6e31088a3c4fe2a77c23e6a",
+      "domain/screening_gates.py": "abeab6097dca01407ecc8451bd63ac23794650e501ec3387ec622cd12f401c0c",
+      "domain/shadow_benchmark.py": "35ed68a3be7138aa6b33757df5f9cb04151c6a06d6da964150d0a029c2fbfc30",
+      "domain/shadow_discovery.py": "9b47fdba28210d181841ed628c1904e465cd7642fe5429582ee7a7cc02207c9b",
+      "domain/shadow_observations.py": "9ea6963db467727346c00b96c75d43eed2d2d1cf01bc797b3a054d9d332a42d0",
+      "domain/structure.py": "b5ad740aaa878164be06c921d43fcb5cf4f8d5e7635a4da1e0e04a4899a79a0a",
+      "domain/watchlist_models.py": "96aa3173c240f800abea933cc9092a43378106b60badbe401b90e7b7c4955195",
+      "infrastructure/__init__.py": "436a641dfd835d8f30ac23aa059e263d6275a9f93fb9fc9556c71db273305dc9",
+      "infrastructure/persistence.py": "2f7a15e74abaf07cdc72e15a0d83534adeb1d8b8e10d6f77c0d9ce8b6a077cde",
+      "infrastructure/rank_archive.py": "f0a7dd94ef10ec28513a505f90c4c5366585c3c9df61ed8bd4139d7418bbe1f7",
+      "infrastructure/research_sessions.py": "b64538be95e0e4a7787b73dd366e4d1fc926538403768cec84389ee8abe485e8",
+      "infrastructure/runtime.py": "5768b045b346fd4f338c58c10da0cdff121992698f799acfd52dd6cd72d54a5e",
+      "infrastructure/scan_archive.py": "120b4745246da47db1a44873d1704913bf0a8cfb51d82a6f0dd9c45b96fb7a94",
+      "infrastructure/shadow_archive.py": "05c8a85a1b1f5305fc84f332c777a4daedc45cff7a296130ac4cbad08b73c6b4",
+      "infrastructure/sqlite_state.py": "0044477cf954585ba7124ff95f7a1ed9f53e2fe176876e3dd18157d0830f85c6",
+      "jobs/__init__.py": "6ff8030e1612d29dd611e017d96e361eaa1d43ad7605ebd2a6778c71cecb9c7e",
+      "jobs/outcome_observer.py": "fd08187a194a48b2a56afdc880155c16b580a0a46bac38f0a3db89d42a5fd00e",
+      "jobs/research_worker.py": "ed3faf5aeb18331f9d9adab4a50ba28ef16ea942bb142866200281f84bf43ec8",
+      "jobs/screener_cron.py": "1875b42f9ba92324b5b2942e1487713a83caf34ca9c3e4cf27f268fb5b1d6f71",
+      "jobs/shadow_scan.py": "4c1fe65094dba113bbcbb5ab95003d00ab3c973108258d27bde0d3a5c164f325"
+    },
+    "python": "3.13.9",
+    "packages": {
+      "atlas-algotrader": "0.1.2",
+      "pydantic": "2.13.4",
+      "httpx": "0.28.1"
+    },
+    "git_revision": "3f9b36f5e5f34c892e886b6aca86bfb8fc860d57"
+  },
+  "replay_tool_sha256": {
+    "replay_contract.py": "eaf52161b0226ca0befd3e5b8137c6f1331daac5051dc9565f64f267398ddc73",
+    "research_verified_replay.py": "d79d329b23ddd66fcfd158091ba6ccf6142c04712c564d842e293571751ec099",
+    "diagnostics/legacy_faithful_48h.py": "be7b0084c0fb04501d6501eb9e175c9c3c9f96577eb3bd626b2f7687dc9ac83b"
+  }
+}

@@ -1,0 +1,1 @@
+{"requested_at": "2026-11-05T09:35:40.857040+00:00", "base": "http://34.141.95.32:8000", "status": {"error": "<urlopen error [Errno 1] Operation not permitted>"}, "live": {"skipped": "avoid triggering an empty-cache scan"}}

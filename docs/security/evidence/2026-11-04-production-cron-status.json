@@ -1,0 +1,1 @@
+{"status":"running","interval_hours":4,"schedule":"Every 4 hours at aligned UTC candle closes plus 60 seconds","last_run":"2026-11-04T08:01:00.000713+00:00","next_run":"2026-11-04T12:01:00.000171+00:00","seconds_remaining":11965,"total_universe_scanned":320}

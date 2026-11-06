@@ -163,7 +163,7 @@ function VerificationPanel({
       adaptedLevels?.stopPrice ?? Number(opportunity.suggested_stop || 0);
     const entryPrice =
       adaptedLevels?.entryPrice ??
-      Number(opportunity.pullback_entry || opportunity.suggested_entry || 0);
+      Number(opportunity.suggested_entry || opportunity.pullback_entry || 0);
     const triggerPrice =
       adaptedLevels?.breakoutTrigger ??
       Number(
@@ -459,11 +459,8 @@ function VerificationPanel({
                 fontWeight: 700,
               }}
             >
-              R:R{" "}
-              {Math.min(
-                Number(opportunity.risk_reward_ratio || 0),
-                8.0,
-              ).toFixed(2)}
+              R:R (T{opportunity.risk_reward_target_index ?? 2}){" "}
+              {Number(opportunity.risk_reward_ratio || 0).toFixed(2)}
               :1
             </span>
           </div>
@@ -553,12 +550,16 @@ function VerificationPanel({
           >
             <div style={{ display: "flex", flexDirection: "column" }}>
               <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-                Limit Retest Entry
+                {opportunity.execution_mode === "CEILING_BREAKOUT"
+                  ? "Breakout Entry"
+                  : opportunity.execution_mode?.includes("EXPANSION")
+                    ? (isShort ? "Breakdown Entry" : "Breakout Entry")
+                    : "Limit Retest Entry"}
               </span>
               <span style={{ fontSize: "9px", color: "var(--text-muted)" }}>
-                {isShort
-                  ? "POC / EMA50 Resistance Ceiling"
-                  : "POC / EMA50 Support Shelf"}
+                {opportunity.execution_mode === "CEILING_BREAKOUT"
+                  ? "Conditional on breakout trigger"
+                  : isShort ? "POC / EMA50 Resistance Ceiling" : "POC / EMA50 Support Shelf"}
               </span>
             </div>
             <strong

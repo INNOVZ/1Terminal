@@ -1,0 +1,112 @@
+{
+  "HOT_T32_trace": [
+    {
+      "actual_label": "BREAKOUT_LONG",
+      "oi7d": "1.088184353963717237822405714",
+      "ret7d": "0.157319952774498229043683589",
+      "bbw": "0.2192755818077721903245978057",
+      "actual_gates": [
+        false,
+        {
+          "L1": false,
+          "L2": true,
+          "L3": true,
+          "L4": true,
+          "L5": true,
+          "L6": true
+        }
+      ],
+      "OI_label_counterfactual_gates": [
+        true,
+        {
+          "L1": true,
+          "L2": true,
+          "L3": true,
+          "L4": true,
+          "L5": true,
+          "L6": true
+        }
+      ],
+      "late_OI_fallback_matches": true
+    },
+    {
+      "actual_label": "BREAKOUT_LONG",
+      "oi7d": "1.088184353963717237822405714",
+      "ret7d": "0.157319952774498229043683589",
+      "bbw": "0.2192755818077721903245978057",
+      "actual_gates": [
+        false,
+        {
+          "L1": false,
+          "L2": true,
+          "L3": true,
+          "L4": true,
+          "L5": true,
+          "L6": true
+        }
+      ],
+      "OI_label_counterfactual_gates": [
+        true,
+        {
+          "L1": true,
+          "L2": true,
+          "L3": true,
+          "L4": true,
+          "L5": true,
+          "L6": true
+        }
+      ],
+      "late_OI_fallback_matches": true
+    }
+  ],
+  "original_task286_score_differences": [
+    {
+      "symbol": "HOTUSDT",
+      "time": "T-36h",
+      "original_score": 61.6,
+      "reproduction_score": 60.8
+    },
+    {
+      "symbol": "HOTUSDT",
+      "time": "T-32h",
+      "original_score": 73.5,
+      "reproduction_score": 72.8
+    },
+    {
+      "symbol": "HOTUSDT",
+      "time": "T-28h",
+      "original_score": 66.6,
+      "reproduction_score": 65.9
+    },
+    {
+      "symbol": "HOTUSDT",
+      "time": "T-24h",
+      "original_score": 68.0,
+      "reproduction_score": 67.3
+    },
+    {
+      "symbol": "HOTUSDT",
+      "time": "T-16h",
+      "original_score": 65.4,
+      "reproduction_score": 64.6
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "time": "T-8h",
+      "original_score": 70.5,
+      "reproduction_score": 70.5
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "time": "T-32h",
+      "original_score": 52.3,
+      "reproduction_score": 52.4
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "time": "T-8h",
+      "original_score": 52.9,
+      "reproduction_score": 53.0
+    }
+  ]
+}

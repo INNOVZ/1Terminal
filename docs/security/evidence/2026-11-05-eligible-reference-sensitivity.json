@@ -1,0 +1,204 @@
+{
+  "scope": "eligibility sensitivity using inspected current-checkout policy/config, not an attested historical deployment policy",
+  "analysis_sha256": "abef42c7b8af82dfac872eef146b16da7787b730339648461126d23230ccc655",
+  "eligible_count": 512,
+  "excluded_bases": [
+    "BTC",
+    "COPPER",
+    "DAI",
+    "ETH",
+    "EUR",
+    "FDUSD",
+    "PAXG",
+    "QQQ",
+    "SPY",
+    "TUSD",
+    "USDC",
+    "USDP",
+    "USDT",
+    "WLFI",
+    "XAG",
+    "XAU"
+  ],
+  "excluded_symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "PAXGUSDT",
+    "USDCUSDT",
+    "WLFIUSDT",
+    "\u54c8\u57fa\u7c73USDT",
+    "\u5e01\u5b89\u4eba\u751fUSDT",
+    "\u6211\u8e0f\u9a6c\u6765\u4e86USDT",
+    "\u725b\u6765USDT",
+    "\u9f99\u867eUSDT"
+  ],
+  "periods": [
+    {
+      "period": "yesterday_calendar_day",
+      "population": 512,
+      "top10": [
+        "ELSAUSDT",
+        "CAPUSDT",
+        "JCTUSDT",
+        "CLANKERUSDT",
+        "FLUIDUSDT",
+        "BATUSDT",
+        "TRUSTUSDT",
+        "RAYSOLUSDT",
+        "INITUSDT",
+        "FOLKSUSDT"
+      ],
+      "references": [
+        {
+          "reference": "pre24h_return_pct",
+          "selections": [
+            "AGTUSDT",
+            "HOTUSDT",
+            "CLANKERUSDT",
+            "BMTUSDT",
+            "IDOLUSDT",
+            "ICNTUSDT",
+            "AIOUSDT",
+            "RUNEUSDT",
+            "FLUIDUSDT",
+            "KMNOUSDT"
+          ],
+          "hits": [
+            "CLANKERUSDT",
+            "FLUIDUSDT"
+          ]
+        },
+        {
+          "reference": "pre6h_quote_volume_vs_prior18h",
+          "selections": [
+            "CLANKERUSDT",
+            "PORTALUSDT",
+            "SKRUSDT",
+            "BLURUSDT",
+            "AIOUSDT",
+            "POWERUSDT",
+            "CCUSDT",
+            "RAVEUSDT",
+            "TWTUSDT",
+            "SAGAUSDT"
+          ],
+          "hits": [
+            "CLANKERUSDT"
+          ]
+        },
+        {
+          "reference": "lagged_6h_oi_units_change_pct",
+          "selections": [
+            "CLANKERUSDT",
+            "FLUIDUSDT",
+            "AIOUSDT",
+            "2ZUSDT",
+            "AKEUSDT",
+            "INITUSDT",
+            "DOSUSDT",
+            "QUSDT",
+            "DOODUSDT",
+            "ICNTUSDT"
+          ],
+          "hits": [
+            "CLANKERUSDT",
+            "FLUIDUSDT",
+            "INITUSDT"
+          ]
+        }
+      ],
+      "combined": {
+        "selected": 4,
+        "hits": [
+          "CLANKERUSDT",
+          "FLUIDUSDT"
+        ]
+      }
+    },
+    {
+      "period": "current_closed_hour_proxy",
+      "population": 512,
+      "top10": [
+        "ELSAUSDT",
+        "JCTUSDT",
+        "CAPUSDT",
+        "FLUIDUSDT",
+        "LYNUSDT",
+        "FOGOUSDT",
+        "CLANKERUSDT",
+        "BEAMXUSDT",
+        "UAIUSDT",
+        "AIOUSDT"
+      ],
+      "references": [
+        {
+          "reference": "pre24h_return_pct",
+          "selections": [
+            "CLANKERUSDT",
+            "BMTUSDT",
+            "IDOLUSDT",
+            "HOTUSDT",
+            "AIOUSDT",
+            "BIRBUSDT",
+            "VVVUSDT",
+            "FLUIDUSDT",
+            "USELESSUSDT",
+            "ZECUSDT"
+          ],
+          "hits": [
+            "AIOUSDT",
+            "CLANKERUSDT",
+            "FLUIDUSDT"
+          ]
+        },
+        {
+          "reference": "pre6h_quote_volume_vs_prior18h",
+          "selections": [
+            "BIRBUSDT",
+            "ELSAUSDT",
+            "USELESSUSDT",
+            "LSKUSDT",
+            "CGPTUSDT",
+            "FLUIDUSDT",
+            "ATHUSDT",
+            "CLANKERUSDT",
+            "IDUSDT",
+            "EVAAUSDT"
+          ],
+          "hits": [
+            "CLANKERUSDT",
+            "ELSAUSDT",
+            "FLUIDUSDT"
+          ]
+        },
+        {
+          "reference": "lagged_6h_oi_units_change_pct",
+          "selections": [
+            "CLANKERUSDT",
+            "FLUIDUSDT",
+            "AKEUSDT",
+            "AIOUSDT",
+            "CGPTUSDT",
+            "HYPEUSDT",
+            "IDUSDT",
+            "USELESSUSDT",
+            "LSKUSDT",
+            "BIRBUSDT"
+          ],
+          "hits": [
+            "AIOUSDT",
+            "CLANKERUSDT",
+            "FLUIDUSDT"
+          ]
+        }
+      ],
+      "combined": {
+        "selected": 24,
+        "hits": [
+          "CLANKERUSDT",
+          "FLUIDUSDT"
+        ]
+      }
+    }
+  ]
+}

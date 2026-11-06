@@ -5,17 +5,28 @@ import asyncio
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+import structlog
+
 from algotrader.adapters.binance.client import BinanceHttpClient
 from algotrader.adapters.binance.futures import BinanceUsdmAdapter
 from algotrader.adapters.binance.spot import BinanceSpotAdapter
 from algotrader.adapters.external.macro_provider import MacroSentimentProvider
-from algotrader.application.crypto_screener import CryptoOpportunityScreener
+from algotrader.application.scan_recording import capture_scan
 from algotrader.config import Settings
 from algotrader.domain.crypto_screener_models import CryptoOpportunity, ScreenerMode
 from algotrader.domain.models import Direction
+from algotrader.domain.scan_observations import ScanReceipt
+from algotrader.infrastructure.scan_archive import LocalScanArchive
 
 SPOT_LIVE_URL = "https://api.binance.com"
 FUTURES_LIVE_URL = "https://fapi.binance.com"
+
+
+@dataclass(frozen=True)
+class ScreeningRun:
+    opportunities: list[CryptoOpportunity]
+    counts: dict[str, int]
+    receipt: ScanReceipt
 
 
 @dataclass(slots=True)
@@ -28,7 +39,7 @@ class Runtime:
     last_scan_counts: dict[str, int] = field(default_factory=dict)
     _closed: bool = False
 
-    async def crypto_screen(
+    async def run_crypto_scan(
         self,
         *,
         settings: Settings | None = None,
@@ -38,21 +49,35 @@ class Runtime:
         max_symbols: int | None = None,
         mode: ScreenerMode = ScreenerMode.ACCUMULATION,
         coi_score: float | Decimal | None = None,
-    ) -> list[CryptoOpportunity]:
+    ) -> ScreeningRun:
         self.last_scan_counts = {}
-        screener = CryptoOpportunityScreener(settings or self.settings, self.macro_provider)
-        opportunities = await screener.screen(
-            self.futures_market,
-            derivatives_port=self.futures_market,
-            min_score=min_score,
-            target_direction=target_direction,
-            top_n=top_n,
-            max_symbols=max_symbols,
-            mode=mode,
-            coi_score=coi_score,
-        )
-        self.last_scan_counts = dict(screener.scan_counts)
-        return opportunities
+        effective = settings or self.settings
+        captured = await capture_scan(self.futures_market, self.futures_market, self.macro_provider, effective,
+            {"min_score": min_score, "target_direction": target_direction, "top_n": top_n,
+             "max_symbols": max_symbols, "mode": mode, "coi_score": coi_score, "enforce_quality": True})
+        self.last_scan_counts = dict(captured.record.counts)  # Compatibility only; callers use run.counts.
+        try:
+            receipt = await asyncio.to_thread(LocalScanArchive(effective.research_archive_dir).write_scan, captured.record)
+            if captured.recording_error is not None:
+                receipt = ScanReceipt(captured.record.scan_id, "unavailable", captured.recording_error)
+                structlog.get_logger(__name__).error("scan_recording_incomplete", scan_id=receipt.scan_id, error=receipt.error)
+        except Exception as exc:
+            receipt = ScanReceipt(captured.record.scan_id, "unavailable", type(exc).__name__)
+            structlog.get_logger(__name__).error("scan_archive_unavailable", scan_id=receipt.scan_id, error=receipt.error)
+        if captured.failure is not None:
+            structlog.get_logger(__name__).warning("scan_failed", scan_id=receipt.scan_id, archive_status=receipt.status)
+            raise captured.failure
+        return ScreeningRun(captured.opportunities, dict(captured.record.counts), receipt)
+
+    async def crypto_screen(
+        self, *, settings: Settings | None = None, min_score: Decimal | None = None,
+        target_direction: Direction | None = None, top_n: int | None = None,
+        max_symbols: int | None = None, mode: ScreenerMode = ScreenerMode.ACCUMULATION,
+        coi_score: float | Decimal | None = None,
+    ) -> list[CryptoOpportunity]:
+        run = await self.run_crypto_scan(settings=settings, min_score=min_score, target_direction=target_direction,
+            top_n=top_n, max_symbols=max_symbols, mode=mode, coi_score=coi_score)
+        return run.opportunities
 
     async def close(self) -> None:
         if self._closed:

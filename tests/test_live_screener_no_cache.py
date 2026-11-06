@@ -11,6 +11,8 @@ from algotrader.api.portal import (
     _get_fresh_baseline_opportunities,
     get_live_screener,
 )
+from algotrader.domain.scan_observations import ScanReceipt
+from algotrader.infrastructure.runtime import ScreeningRun
 
 
 def test_baseline_opportunities_never_contains_cached_candidates() -> None:
@@ -52,11 +54,8 @@ async def test_live_screener_returns_empty_while_scanning() -> None:
 @pytest.mark.asyncio
 async def test_do_crypto_screen_returns_empty_when_no_candidates_pass() -> None:
     """Verifies that if 0 setups qualify, _do_crypto_screen does NOT fall back to disk cache."""
-    mock_system = AsyncMock()
-    mock_system.crypto_screen.return_value = []
     mock_runtime = AsyncMock()
-    mock_runtime.crypto_screen = mock_system.crypto_screen
-    mock_runtime.last_scan_counts = {"selected": 12, "evaluated": 10, "failed": 2}
+    mock_runtime.run_crypto_scan.return_value = ScreeningRun([], {"selected": 12, "evaluated": 10, "failed": 2}, ScanReceipt("fixture", "saved"))
 
     with (
         patch("algotrader.api.portal.get_portal_runtime", return_value=mock_runtime),
@@ -66,6 +65,6 @@ async def test_do_crypto_screen_returns_empty_when_no_candidates_pass() -> None:
         result = await portal_module._do_crypto_screen()
         assert result["opportunities"] == []
         assert result["qualifying_count"] == 0
-        mock_system.crypto_screen.assert_awaited_once()
+        assert result["scan_archive"]["status"] == "saved"
         assert result["total_scanned"] == 10
         assert result["order_execution_enabled"] is False

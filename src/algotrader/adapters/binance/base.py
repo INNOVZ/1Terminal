@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -147,6 +147,30 @@ class BinanceMarketDataBase:
             end_time = int(page[0][0]) - 1
             await asyncio.sleep(0.15)
         return self._parse_candle_rows(rows[-limit:])
+
+    async def minute_candles_between(self, instrument: Instrument, start: datetime, end: datetime) -> Sequence[Candle]:
+        """Bounded historical public minutes, including archived/delisted symbol identities."""
+        if start.utcoffset() is None or end.utcoffset() is None or not timedelta(0) < end - start <= timedelta(hours=48):
+            raise ValueError("minute history requires aware timestamps and a window up to 48h")
+        first, finish = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+        if first % 60000 or finish % 60000:
+            raise ValueError("minute history bounds must be minute-aligned")
+        cursor = first
+        rows: list[Sequence[Any]] = []
+        while cursor < finish:
+            page = await self._client.request("GET", self.klines_path, params={"symbol": instrument.id.symbol,
+                "interval": "1m", "startTime": cursor, "endTime": finish - 1, "limit": 1000})
+            if not page:
+                break
+            if len(page) > 1000 or any(not cursor <= int(row[0]) < finish for row in page):
+                raise ValueError("provider returned minutes outside the requested page")
+            last_open = int(page[-1][0])
+            rows.extend(page)
+            cursor = last_open + 60000
+            if len(page) < 1000:
+                break
+            await asyncio.sleep(0.2)
+        return self._parse_candle_rows(rows)
 
     @staticmethod
     def _parse_candle_rows(payload: Sequence[Sequence[Any]]) -> list[Candle]:

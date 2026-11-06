@@ -1,0 +1,39 @@
+{
+  "exact_checker_actual_call_targets": [
+    "(BRAIN_DIR / 'faithful_replay_results_20261103T1200Z.json').read_text",
+    "(BRAIN_DIR / 'nov5_gainers_counterfactual_20261105T0800Z.json').read_text",
+    "cohort2_replay['summary_by_symbol'].items",
+    "cohort3_replay['summary_by_symbol'].items",
+    "json.loads"
+  ],
+  "actual_repairs_executed_by_exact_checker": false,
+  "reported_current_publication_total": 2,
+  "relabeled_enriched_publication_total": 9,
+  "positive_token_cohort_cases": 5,
+  "unique_positive_symbols": [
+    "HOTUSDT",
+    "ICNTUSDT",
+    "MEGAUSDT",
+    "TRUSTUSDT"
+  ],
+  "diagnostic_first_entry_missing": 14,
+  "diagnostic_performance_flag": false,
+  "funding_median_hours": {
+    "JCTUSDT": 4.0,
+    "ELSAUSDT": 4.0,
+    "CAPUSDT": 4.0,
+    "AIOUSDT": 4.0,
+    "FLUIDUSDT": 4.0,
+    "FOGOUSDT": 4.0,
+    "CLANKERUSDT": 4.0,
+    "LYNUSDT": 4.0,
+    "UAIUSDT": 4.0,
+    "INITUSDT": 4.0,
+    "BATUSDT": 8.0,
+    "TRUSTUSDT": 4.0,
+    "RAYSOLUSDT": 4.0,
+    "FOLKSUSDT": 4.0
+  },
+  "normal_scan_archive_current_source_present": true,
+  "proxy_core_selected_stablecoin": true
+}

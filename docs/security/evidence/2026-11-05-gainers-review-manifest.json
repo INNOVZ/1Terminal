@@ -1,0 +1,20 @@
+{
+  "artifacts": {
+    "scripts/research_gainers_bottleneck_audit.py": "7214d748b41ead0437ebf6234b2f3e2466b95f08f53c44f5a96fe93c28046d2f",
+    "docs/security/2026-11-05-gainers-bottleneck-research.md": "1807d6b57476698241b331eeddfa7c9d303e0082c8d883cf491c535b27b6374c",
+    "docs/security/evidence/2026-11-05-gainers-bottleneck-analysis-verified.json": "abef42c7b8af82dfac872eef146b16da7787b730339648461126d23230ccc655",
+    "docs/security/evidence/2026-11-05-gainers-independent-check.py": "ded55945809a57d7d3b5e274a889551540982c6b2de8747690ff6cc0689526ff",
+    "docs/security/evidence/2026-11-05-gainers-independent-verification.json": "c2f4929356af2705fd234e73f6946687d4745428522a29009275ede1e9d31350",
+    "docs/security/evidence/2026-11-05-eligible-reference-sensitivity.json": "52f09286093074989cdc864599c395341051485d87bc5e698ff099bc59422e23",
+    "docs/security/evidence/2026-11-05-eligible-sensitivity-reproduce.py": "500376043dc05687d03c5f0868c7da61d55c7e4497015dcd7f0829c4f2376c2c",
+    "docs/security/evidence/2026-11-05-inspected-source-hashes.json": "2766d46a0b2d9cdefa97a3c9526a21a4d27a6755544118b26a93151d1eb72ca0",
+    "docs/security/evidence/2026-11-05-local-scan-log-excerpt.txt": "3ce58d6dfa11157ab7bf703db4b9cf12ec3fd154334a736d2309779b0b9e6bd4",
+    "docs/security/evidence/2026-11-05-local-api-verified.json": "f9afe2a4da048c070ef0e9a0dd8997099942396fe83fb26a1fa47c11d51f5bc8",
+    "docs/security/evidence/2026-11-05-production-api-verified.json": "9792b6707f553964eedf8ccb0cb7a493f17c15277823b6dca2604b25213ac27a"
+  },
+  "inspected_production_sources_unchanged_during_research": true,
+  "analysis_reproduced_byte_identically": true,
+  "independent_checker_reproduced_byte_identically": true,
+  "strategy_changed": false,
+  "deployed": false
+}

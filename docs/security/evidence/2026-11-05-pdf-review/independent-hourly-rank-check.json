@@ -1,0 +1,6 @@
+{
+  "exact_rational_hourly_rank_boundaries_checked": 34,
+  "boundary_ties": [],
+  "observed_memberships_match": true,
+  "scope": "cohort hourly proxy, not historical live rolling leaderboard"
+}

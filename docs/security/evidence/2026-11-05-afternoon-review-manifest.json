@@ -1,0 +1,18 @@
+{
+  "artifact_sha256": {
+    "scripts/research_gainers_afternoon_followup.py": "9da3eb4f4e849f37b29e218842438f8c15d05f3603c24a1ff99b8e5c8ea84000",
+    "docs/security/2026-11-05-afternoon-gainers-followup.md": "73b1945a0a798f10bc5b2d860d99dcd4d5dc0ace80dd9441cfa92f40003e0a65",
+    "docs/security/evidence/2026-11-05-afternoon-market.json": "4422f24cc0e1c26e8239594f458592876522b71668c25395eafd2e04e2039c9b",
+    "docs/security/evidence/2026-11-05-afternoon-api.json": "610677af345e4b96afd1104287da543b17d6ebbdb67032586f1f4d6fefde765a",
+    "docs/security/evidence/2026-11-05-afternoon-local-screener.json": "cb6fa9cd36287806ae4bfd5904b879a64f6fdb47a7cc2516f79f8a032a2bffd7",
+    "docs/security/evidence/2026-11-05-afternoon-new-entrants-history.json": "08bf27e634b9d641a2aaf4516f8321f70cfaf6b5b3cb5dd83fdfe911f4361042",
+    "docs/security/evidence/2026-11-05-afternoon-analysis-verified.json": "3b548d5f23614e6fb7e6e14dcbf096212f9967ba4f1ebe6e0694bf9d5ed44afc",
+    "docs/security/evidence/2026-11-05-gainers-review-manifest.json": "4a184695158d4e27316dd81a20f5af3ea2b51cbb4e7b91e50a7e7c28c0104c72"
+  },
+  "original_review_manifest_preserved": true,
+  "followup_exact_reproduction": true,
+  "import_has_no_output_side_effect": true,
+  "three_retained_long_snapshots_have_no_afternoon_top10_overlap": true,
+  "no_strategy_or_deployment_change": true,
+  "performance_claims_permitted": false
+}

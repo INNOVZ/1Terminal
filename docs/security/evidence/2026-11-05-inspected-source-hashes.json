@@ -1,0 +1,8 @@
+{
+  "src/algotrader/application/crypto_screener.py": "94f3626e9a3e75a852698c9917af5806e936929842e24d2c2baddb85f28b664e",
+  "src/algotrader/domain/archetypes.py": "eb68231d361ed225c1a61a77a913a9e26bae2f21e270069b98d7a7e3062b6597",
+  "src/algotrader/domain/screening_gates.py": "abeab6097dca01407ecc8451bd63ac23794650e501ec3387ec622cd12f401c0c",
+  "src/algotrader/api/portal.py": "3fd0fae708690b354c5b674f078d790cbc4311c782bff16fad751b5c75f4bedc",
+  "src/algotrader/infrastructure/runtime.py": "5768b045b346fd4f338c58c10da0cdff121992698f799acfd52dd6cd72d54a5e",
+  "src/algotrader/config.py": "7fd871529883dcda72c618faefc5a91bfd760d691378e0ac848328052533ef85"
+}

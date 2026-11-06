@@ -1,0 +1,10 @@
+{
+  "unknown_basis_and_depth_marked_healthy": true,
+  "quote_observed_at_is_after_cutoff": true,
+  "expired_funding_still_healthy": {
+    "degraded": false,
+    "funding_age_hours": 707.9999991666666
+  },
+  "12h_stale_taker_candles_still_healthy": true,
+  "insufficient_warmup_returned_without_error": 10
+}

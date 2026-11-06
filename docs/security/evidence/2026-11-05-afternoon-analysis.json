@@ -1,0 +1,371 @@
+{
+  "captured_at": "2026-11-05T14:19:43Z",
+  "universe_unchanged": true,
+  "universe_count": 522,
+  "unknown_tickers": [],
+  "afternoon_top10": [
+    {
+      "rank": 1,
+      "symbol": "LYNUSDT",
+      "return_pct": "33.630"
+    },
+    {
+      "rank": 2,
+      "symbol": "AIOUSDT",
+      "return_pct": "24.894"
+    },
+    {
+      "rank": 3,
+      "symbol": "FOGOUSDT",
+      "return_pct": "22.893"
+    },
+    {
+      "rank": 4,
+      "symbol": "FLUIDUSDT",
+      "return_pct": "21.674"
+    },
+    {
+      "rank": 5,
+      "symbol": "ARIAUSDT",
+      "return_pct": "20.032"
+    },
+    {
+      "rank": 6,
+      "symbol": "SOLVUSDT",
+      "return_pct": "17.122"
+    },
+    {
+      "rank": 7,
+      "symbol": "ONUSDT",
+      "return_pct": "17.073"
+    },
+    {
+      "rank": 8,
+      "symbol": "CAPUSDT",
+      "return_pct": "15.545"
+    },
+    {
+      "rank": 9,
+      "symbol": "ELSAUSDT",
+      "return_pct": "14.413"
+    },
+    {
+      "rank": 10,
+      "symbol": "TRUTHUSDT",
+      "return_pct": "13.181"
+    }
+  ],
+  "new_relative_to_morning": [
+    "ARIAUSDT",
+    "ONUSDT",
+    "SOLVUSDT",
+    "TRUTHUSDT"
+  ],
+  "left_relative_to_morning": [
+    "CLANKERUSDT",
+    "INITUSDT",
+    "JCTUSDT",
+    "UAIUSDT"
+  ],
+  "retained": 6,
+  "normal_scan_timestamp": "2026-11-05T12:01:22.323394+00:00",
+  "normal_scan_longs": [
+    "TAGUSDT"
+  ],
+  "long_overlap": [],
+  "normal_scan_receipt": null,
+  "morning_winner_marks": [
+    {
+      "symbol": "AIOUSDT",
+      "morning_price": "0.0433300",
+      "afternoon_price": "0.0470100",
+      "mark_to_mark_change_pct": "8.492960996999769213016385900",
+      "morning_rolling_return_pct": "20.228",
+      "afternoon_rolling_return_pct": "24.894"
+    },
+    {
+      "symbol": "CAPUSDT",
+      "morning_price": "0.0965700",
+      "afternoon_price": "0.1045800",
+      "mark_to_mark_change_pct": "8.294501397949673811742777300",
+      "morning_rolling_return_pct": "30.482",
+      "afternoon_rolling_return_pct": "15.545"
+    },
+    {
+      "symbol": "CLANKERUSDT",
+      "morning_price": "16.47000",
+      "afternoon_price": "16.81000",
+      "mark_to_mark_change_pct": "2.064359441408621736490588900",
+      "morning_rolling_return_pct": "13.900",
+      "afternoon_rolling_return_pct": "4.735"
+    },
+    {
+      "symbol": "ELSAUSDT",
+      "morning_price": "0.1016300",
+      "afternoon_price": "0.0849400",
+      "mark_to_mark_change_pct": "-16.42231624520318803502902686",
+      "morning_rolling_return_pct": "38.234",
+      "afternoon_rolling_return_pct": "14.413"
+    },
+    {
+      "symbol": "FLUIDUSDT",
+      "morning_price": "2.617000",
+      "afternoon_price": "2.661000",
+      "mark_to_mark_change_pct": "1.681314482231562858234619800",
+      "morning_rolling_return_pct": "20.211",
+      "afternoon_rolling_return_pct": "21.674"
+    },
+    {
+      "symbol": "FOGOUSDT",
+      "morning_price": "0.0026360",
+      "afternoon_price": "0.0027270",
+      "mark_to_mark_change_pct": "3.452200303490136570561456800",
+      "morning_rolling_return_pct": "15.868",
+      "afternoon_rolling_return_pct": "22.893"
+    },
+    {
+      "symbol": "INITUSDT",
+      "morning_price": "0.1446400",
+      "afternoon_price": "0.1370900",
+      "mark_to_mark_change_pct": "-5.219856194690265486725663720",
+      "morning_rolling_return_pct": "12.412",
+      "afternoon_rolling_return_pct": "-0.638"
+    },
+    {
+      "symbol": "JCTUSDT",
+      "morning_price": "0.0060670",
+      "afternoon_price": "0.0039270",
+      "mark_to_mark_change_pct": "-35.27278720949398384704137135",
+      "morning_rolling_return_pct": "41.819",
+      "afternoon_rolling_return_pct": "-26.926"
+    },
+    {
+      "symbol": "LYNUSDT",
+      "morning_price": "0.0184300",
+      "afternoon_price": "0.0210200",
+      "mark_to_mark_change_pct": "14.05317417254476397178513290",
+      "morning_rolling_return_pct": "13.836",
+      "afternoon_rolling_return_pct": "33.630"
+    },
+    {
+      "symbol": "UAIUSDT",
+      "morning_price": "0.1009000",
+      "afternoon_price": "0.0995000",
+      "mark_to_mark_change_pct": "-1.387512388503468780971258670",
+      "morning_rolling_return_pct": "12.486",
+      "afternoon_rolling_return_pct": "10.802"
+    }
+  ],
+  "new_entrant_events": [
+    {
+      "symbol": "ARIAUSDT",
+      "strongest_hour_open": "2026-11-05T13:00:00+00:00",
+      "strongest_hour_return_pct": "4.557546905628675441052926400",
+      "before_strongest_hour": {
+        "as_of": "2026-11-05T13:00:00+00:00",
+        "prior_24h_return_pct": "18.47366238075487349647449190",
+        "prior_6h_return_pct": "10.57602973056673892846082380",
+        "quote_volume_ratio": "2.124322913192229726721168376",
+        "lagged_6h_oi_units_pct": "0.939551390481541353348970300",
+        "latest_oi_event_time": "2026-11-05T12:00:00+00:00"
+      },
+      "first_five_minute_transition": {
+        "confirmed_boundary": "2026-11-05T07:45:00+00:00",
+        "quote_volume_ratio": "15.80888801173783260963588935"
+      }
+    },
+    {
+      "symbol": "ONUSDT",
+      "strongest_hour_open": "2026-11-05T12:00:00+00:00",
+      "strongest_hour_return_pct": "7.764317180616740088105726900",
+      "before_strongest_hour": {
+        "as_of": "2026-11-05T12:00:00+00:00",
+        "prior_24h_return_pct": "15.01901140684410646387832700",
+        "prior_6h_return_pct": "15.53150859325270528325907070",
+        "quote_volume_ratio": "12.24223957833675831597472317",
+        "lagged_6h_oi_units_pct": "7.216319317284714206077815900",
+        "latest_oi_event_time": "2026-11-05T11:00:00+00:00"
+      },
+      "first_five_minute_transition": {
+        "confirmed_boundary": "2026-11-05T07:25:00+00:00",
+        "quote_volume_ratio": "5.453885946960183999931543274"
+      }
+    },
+    {
+      "symbol": "SOLVUSDT",
+      "strongest_hour_open": "2026-11-04T16:00:00+00:00",
+      "strongest_hour_return_pct": "8.246373122932043777042504500",
+      "before_strongest_hour": {
+        "as_of": "2026-11-04T16:00:00+00:00",
+        "prior_24h_return_pct": "-11.50641747354199504616077460",
+        "prior_6h_return_pct": "-7.551164431898376852505292870",
+        "quote_volume_ratio": "1.853006007905146424750271564",
+        "lagged_6h_oi_units_pct": "-1.531011098992565709291867180",
+        "latest_oi_event_time": "2026-11-04T15:00:00+00:00"
+      },
+      "first_five_minute_transition": {
+        "confirmed_boundary": "2026-11-04T22:35:00+00:00",
+        "quote_volume_ratio": "8.820309314569023519090200729"
+      }
+    },
+    {
+      "symbol": "TRUTHUSDT",
+      "strongest_hour_open": "2026-11-05T11:00:00+00:00",
+      "strongest_hour_return_pct": "4.220499569336778639104220500",
+      "before_strongest_hour": {
+        "as_of": "2026-11-05T11:00:00+00:00",
+        "prior_24h_return_pct": "7.384917881101087207957437000",
+        "prior_6h_return_pct": "3.000887508320390503660971800",
+        "quote_volume_ratio": "1.280176218377848294093184666",
+        "lagged_6h_oi_units_pct": "-0.8786623643180140018893400800",
+        "latest_oi_event_time": "2026-11-05T10:00:00+00:00"
+      },
+      "first_five_minute_transition": {
+        "confirmed_boundary": "2026-11-04T16:20:00+00:00",
+        "quote_volume_ratio": "5.589337824644280612029898906"
+      }
+    }
+  ],
+  "frozen_morning_feature_cutoff": "2026-11-05T09:00:00+00:00",
+  "exploratory_references": [
+    {
+      "reference": "prior_24h_return_pct",
+      "selected": [
+        "ELSAUSDT",
+        "JCTUSDT",
+        "CAPUSDT",
+        "FLUIDUSDT",
+        "LYNUSDT",
+        "FOGOUSDT",
+        "CLANKERUSDT",
+        "BEAMXUSDT",
+        "UAIUSDT",
+        "AIOUSDT"
+      ],
+      "afternoon_top10_overlap": [
+        "AIOUSDT",
+        "CAPUSDT",
+        "ELSAUSDT",
+        "FLUIDUSDT",
+        "FOGOUSDT",
+        "LYNUSDT"
+      ],
+      "new_entrant_overlap": []
+    },
+    {
+      "reference": "quote_volume_ratio",
+      "selected": [
+        "THEUSDT",
+        "FOGOUSDT",
+        "BANANAS31USDT",
+        "MAGMAUSDT",
+        "SUPERUSDT",
+        "XTZUSDT",
+        "JCTUSDT",
+        "AINUSDT",
+        "ONUSDT",
+        "GWEIUSDT"
+      ],
+      "afternoon_top10_overlap": [
+        "FOGOUSDT",
+        "ONUSDT"
+      ],
+      "new_entrant_overlap": [
+        "ONUSDT"
+      ]
+    },
+    {
+      "reference": "lagged_6h_oi_units_pct",
+      "selected": [
+        "THEUSDT",
+        "FOGOUSDT",
+        "HUMAUSDT",
+        "FLUIDUSDT",
+        "INJUSDT",
+        "XTZUSDT",
+        "BERAUSDT",
+        "ACTUSDT",
+        "JCTUSDT",
+        "MAGMAUSDT"
+      ],
+      "afternoon_top10_overlap": [
+        "FLUIDUSDT",
+        "FOGOUSDT"
+      ],
+      "new_entrant_overlap": []
+    }
+  ],
+  "new_entrant_frozen_features": {
+    "ARIAUSDT": {
+      "as_of": "2026-11-05T09:00:00+00:00",
+      "prior_24h_return_pct": "6.459800229245128541018503400",
+      "prior_6h_return_pct": "2.806767868437697659709044900",
+      "quote_volume_ratio": "0.9032166376735912656802380254",
+      "lagged_6h_oi_units_pct": "0.686937387267839082646058300",
+      "latest_oi_event_time": "2026-11-05T08:00:00+00:00"
+    },
+    "ONUSDT": {
+      "as_of": "2026-11-05T09:00:00+00:00",
+      "prior_24h_return_pct": "2.054794520547945205479452100",
+      "prior_6h_return_pct": "5.266538214515093127809890800",
+      "quote_volume_ratio": "3.420556978830432889063357587",
+      "lagged_6h_oi_units_pct": "0.641270311495884195707413200",
+      "latest_oi_event_time": "2026-11-05T08:00:00+00:00"
+    },
+    "SOLVUSDT": {
+      "as_of": "2026-11-05T09:00:00+00:00",
+      "prior_24h_return_pct": "11.68003775365738555922605000",
+      "prior_6h_return_pct": "2.913676886279626005653402900",
+      "quote_volume_ratio": "0.7963629806900674022460278321",
+      "lagged_6h_oi_units_pct": "-0.8177313997615361453809899200",
+      "latest_oi_event_time": "2026-11-05T08:00:00+00:00"
+    },
+    "TRUTHUSDT": {
+      "as_of": "2026-11-05T09:00:00+00:00",
+      "prior_24h_return_pct": "4.980273314654925953456458300",
+      "prior_6h_return_pct": "2.096424400822999499527331400",
+      "quote_volume_ratio": "1.089963042088577333390893148",
+      "lagged_6h_oi_units_pct": "-1.111361904614242247475516120",
+      "latest_oi_event_time": "2026-11-05T08:00:00+00:00"
+    }
+  },
+  "input_sha256": {
+    "2026-11-05-market-input.json": "14939ccada501f110f5968a35fa488b4ade91eeccd22e28177c8b7c97dfad2f8",
+    "2026-11-05-afternoon-market.json": "4422f24cc0e1c26e8239594f458592876522b71668c25395eafd2e04e2039c9b",
+    "2026-11-05-gainers-bottleneck-analysis-verified.json": "abef42c7b8af82dfac872eef146b16da7787b730339648461126d23230ccc655",
+    "2026-11-05-afternoon-local-screener.json": "cb6fa9cd36287806ae4bfd5904b879a64f6fdb47a7cc2516f79f8a032a2bffd7",
+    "2026-11-05-afternoon-new-entrants-history.json": "08bf27e634b9d641a2aaf4516f8321f70cfaf6b5b3cb5dd83fdfe911f4361042",
+    "2026-11-05-afternoon-api.json": "610677af345e4b96afd1104287da543b17d6ebbdb67032586f1f4d6fefde765a",
+    "2026-11-05-universe-hourly-000.json": "a413ea5a70cdbfa2cf3f45ac81c6ce7ffa37125697c2e4a88551bfb2ca2db0cc",
+    "2026-11-05-universe-hourly-048.json": "81c70672bed5b63f0a8c3a6a42d91e44489fc6f90c617d50bfdb703c7ea3782b",
+    "2026-11-05-universe-hourly-096.json": "86afc10545c842f8b57307b4e05aad37cc4692b040b24428f6930baea2443c3d",
+    "2026-11-05-universe-hourly-144.json": "b0a61d0e44408c4066c8b1b732561bda021b1b78b80be23a1d8260cbd8d58eb8",
+    "2026-11-05-universe-hourly-192.json": "d2a4ce5c6904c3301a8f5d1e41d34e406cb62a04e2d201686bec9a961dd8ebe1",
+    "2026-11-05-universe-hourly-240.json": "c793192fc2bc17ab47f031bd2af7022d9978203d660eb8ff6810b42e1e85b953",
+    "2026-11-05-universe-hourly-288.json": "b4a3c0bccb8461b26503b52b1a148477c8d8864ec865e444248263753082aac1",
+    "2026-11-05-universe-hourly-336.json": "039227a1cac05af44a46c31b1ee5f3f88f40b71ec77f5899d7452b1e0de64871",
+    "2026-11-05-universe-hourly-384.json": "7bdfd62ce92304778e72057e3c9e14726a0f90d974d24287917010fdef309b84",
+    "2026-11-05-universe-hourly-432.json": "c7d66d4f006f6ea71e8ca75220d8b8707fa2a1f869dca11bf8fb33222b4020c8",
+    "2026-11-05-universe-hourly-480.json": "21c483103395b40ec443074aacb0f2bee0c9f79a833948575bf396155d79af61",
+    "2026-11-05-universe-oi-000.json": "ad4e631bbab131a9b5ce3340299e85774b0f452c1250f0ca4f75ff98bfb89ebf",
+    "2026-11-05-universe-oi-048.json": "a9ff6e41740efd5ea95936e0c378cfedec335aca0db9d504928b7363d32e1dfd",
+    "2026-11-05-universe-oi-096.json": "f40d52aebbaad14e58ce3c190c036e2089b258112fc1f83802d20c28068b024e",
+    "2026-11-05-universe-oi-144.json": "a4991875ed799324a0ffc68bceb0f3c76de0b4b748a5d5b16f1a46b3c8e7fd62",
+    "2026-11-05-universe-oi-192.json": "ee04c270082b011ae6b46c49336aa1742bac170bebc4d83230e6d6fe0a81a855",
+    "2026-11-05-universe-oi-240.json": "1e0acf73cccb6a6aa723c0faa4b4aae6166c630fc88a1341b5a58297284b93a3",
+    "2026-11-05-universe-oi-288.json": "a64af9662eb2f1b194a0e76dd523fdbdae4b730fb27cb3bf7db431ea52bd61d8",
+    "2026-11-05-universe-oi-336.json": "86e4193f60bdeb494e67105ac06fb70aeefd0dd21bb74213c32d67769bb1eb37",
+    "2026-11-05-universe-oi-384.json": "1b5643dfd7e3e97be4e35389e97ed47226e9184a68ce8d1e6011961bc67acf11",
+    "2026-11-05-universe-oi-432.json": "8a757c84e0b37d63c18df031f65c792562c4d5791cbacf28645c676e7e417f16",
+    "2026-11-05-universe-oi-480.json": "434fe0f9860fda2899f5f8c547ca1ded01e53667f0426ab8132471decab2af56"
+  },
+  "script_sha256": "bf3992e986514a4b09f5881b5fdf6c4f6cc3959b54e83feb3197a4523713ea62",
+  "performance_claims_permitted": false,
+  "limitations": [
+    "not preregistered",
+    "later selected-winner histories are retrospective",
+    "rolling rank is not forward price return",
+    "mark changes are not executed returns or excursions",
+    "missing intervening candidate journals prevent never-alerted claims"
+  ]
+}

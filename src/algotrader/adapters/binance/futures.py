@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import random
 from collections.abc import Sequence
-from decimal import Decimal
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from algotrader.adapters.binance.base import BinanceMarketDataBase, _decimal
 from algotrader.domain.errors import VenueError
 from algotrader.domain.models import (
+    Candle,
     DerivativesSnapshot,
     Instrument,
     InstrumentId,
@@ -25,6 +27,19 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
     ticker_24h_path = "/fapi/v1/ticker/24hr"
     book_ticker_path = "/fapi/v1/ticker/bookTicker"
     klines_path = "/fapi/v1/klines"
+
+    async def candles(self, instrument: Instrument, interval: str, limit: int) -> Sequence[Candle]:
+        candles = await super().candles(instrument, interval, limit)
+        interval_ms = {"1h": 3_600_000, "4h": 14_400_000, "1w": 604_800_000}.get(interval)
+        if interval_ms is not None:
+            closed = [candle for candle in candles if candle.closed]
+            if not closed:
+                raise VenueError(f"Binance returned no closed {interval} candles for {instrument.id.symbol}")
+            now_ms = int(datetime.now(UTC).timestamp() * 1000)
+            latest_closed_ms = int(max(candle.closed_at for candle in closed).timestamp() * 1000)
+            if now_ms - latest_closed_ms > interval_ms + 300_000:
+                raise VenueError(f"Binance returned stale {interval} candles for {instrument.id.symbol}")
+        return candles
 
     async def _request_with_retry(
         self,
@@ -62,17 +77,17 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
                 has_degraded_telemetry = True
                 return None
 
-        # Stage 2: /futures/data/openInterestHist (period=4h, limit=42) + takerlongshortRatio (period=1h, limit=6)
+        # One hourly OI series supplies timestamp-checked 1h, 4h, 24h and 7d changes.
         results = await asyncio.gather(
             fetch_endpoint("/fapi/v1/premiumIndex", {"symbol": symbol}),
             fetch_endpoint("/fapi/v1/openInterest", {"symbol": symbol}),
             fetch_endpoint(
                 "/futures/data/openInterestHist",
-                {"symbol": symbol, "period": "4h", "limit": 42},
+                {"symbol": symbol, "period": "1h", "limit": 200},
             ),
             fetch_endpoint(
                 "/futures/data/takerlongshortRatio",
-                {"symbol": symbol, "period": "1h", "limit": 6},
+                {"symbol": symbol, "period": "1h", "limit": 26},
             ),
             fetch_endpoint("/fapi/v1/depth", {"symbol": symbol, "limit": 20}),
             return_exceptions=True,
@@ -87,44 +102,100 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
             raise VenueError("Binance returned invalid derivatives snapshot objects")
 
         funding_rate: Decimal | None = None
-        if premium and "lastFundingRate" in premium:
-            funding_rate = Decimal(str(premium["lastFundingRate"]))
-        elif not premium:
-            funding_rate = None
+        try:
+            candidate_funding = Decimal(str(premium["lastFundingRate"]))
+            if candidate_funding.is_finite():
+                funding_rate = candidate_funding
+        except (InvalidOperation, KeyError, TypeError, ValueError):
+            pass
+        if funding_rate is None:
             has_degraded_telemetry = True
-        else:
-            funding_rate = Decimal("0")
+
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        try:
+            reference_at = int(open_interest.get("time") or premium["time"])
+            provider_clock_fresh = -60_000 <= now_ms - reference_at <= 300_000
+        except (KeyError, TypeError, ValueError):
+            reference_at = now_ms
+            provider_clock_fresh = False
+        if not provider_clock_fresh:
+            has_degraded_telemetry = True
 
         mark = Decimal(str(premium.get("markPrice", "0")))
         index = Decimal(str(premium.get("indexPrice", "0")))
         basis = (mark - index) / index if index > 0 else Decimal("0")
 
+        oi_samples: dict[int, Decimal] = {}
+        for row in oi_history:
+            if not isinstance(row, dict):
+                continue
+            try:
+                timestamp = int(row["timestamp"])
+                quantity = Decimal(str(row["sumOpenInterest"]))
+            except (InvalidOperation, KeyError, TypeError, ValueError):
+                continue
+            if timestamp > 0 and quantity.is_finite() and quantity > 0:
+                oi_samples[timestamp] = quantity
+
+        oi_change_1h: Decimal | None = None
         oi_change_4h: Decimal | None = None
         oi_change_24h: Decimal | None = None
         oi_change_7d: Decimal | None = None
-        if len(oi_history) >= 2:
-            current_oi = Decimal(str(oi_history[-1].get("sumOpenInterestValue", "0")))
-            prev_4h = Decimal(str(oi_history[-2].get("sumOpenInterestValue", "0")))
-            if prev_4h > 0:
-                oi_change_4h = (current_oi - prev_4h) / prev_4h
-            if len(oi_history) >= 7:
-                prev_24h = Decimal(str(oi_history[-7].get("sumOpenInterestValue", "0")))
-                if prev_24h > 0:
-                    oi_change_24h = (current_oi - prev_24h) / prev_24h
-            first_oi = Decimal(str(oi_history[0].get("sumOpenInterestValue", "0")))
-            if first_oi > 0:
-                oi_change_7d = (current_oi - first_oi) / first_oi
-        elif results[2] is None:
+        if oi_samples:
+            latest_at = max(oi_samples)
+            if provider_clock_fresh and -300_000 <= reference_at - latest_at <= 3_900_000:
+                latest_quantity = oi_samples[latest_at]
+
+                def change_over(hours: int) -> Decimal | None:
+                    target_at = latest_at - hours * 3_600_000
+                    baseline_at = min(oi_samples, key=lambda at: abs(at - target_at))
+                    if abs(baseline_at - target_at) > 300_000:
+                        return None
+                    baseline = oi_samples[baseline_at]
+                    return (latest_quantity - baseline) / baseline
+
+                oi_change_1h = change_over(1)
+                oi_change_4h = change_over(4)
+                oi_change_24h = change_over(24)
+                oi_change_7d = change_over(168)
+            else:
+                has_degraded_telemetry = True
+        else:
             has_degraded_telemetry = True
 
-        oi_change_1h = oi_change_4h
+        hour_ms = 3_600_000
+        latest_closed_start = (reference_at // hour_ms) * hour_ms - hour_ms
+        taker_samples: dict[int, tuple[Decimal, Decimal]] = {}
+        for row in taker:
+            if not isinstance(row, dict):
+                continue
+            try:
+                timestamp = int(row["timestamp"])
+                buy_volume = Decimal(str(row["buyVol"]))
+                sell_volume = Decimal(str(row["sellVol"]))
+            except (InvalidOperation, KeyError, TypeError, ValueError):
+                continue
+            if buy_volume.is_finite() and sell_volume.is_finite() and buy_volume >= 0 and sell_volume >= 0:
+                taker_samples[timestamp] = (buy_volume, sell_volume)
 
-        if taker:
-            taker_ratio = Decimal(str(taker[-1].get("buySellRatio", "1")))
-        else:
-            taker_ratio = Decimal("1")
-            if results[3] is None:
-                has_degraded_telemetry = True
+        def taker_ratio_over(hours: int) -> Decimal | None:
+            if not provider_clock_fresh:
+                return None
+            samples = [
+                taker_samples.get(latest_closed_start - offset * hour_ms)
+                for offset in range(hours)
+            ]
+            if any(sample is None for sample in samples):
+                return None
+            total_buy = sum((sample[0] for sample in samples if sample is not None), Decimal("0"))
+            total_sell = sum((sample[1] for sample in samples if sample is not None), Decimal("0"))
+            return total_buy / total_sell if total_sell > 0 else None
+
+        taker_ratio_1h = taker_ratio_over(1)
+        taker_ratio_4h = taker_ratio_over(4)
+        taker_ratio_24h = taker_ratio_over(24)
+        if taker_ratio_1h is None:
+            has_degraded_telemetry = True
 
         def depth_notional(side: object) -> Decimal:
             if not isinstance(side, list):
@@ -143,12 +214,14 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
             basis_rate=basis,
             open_interest=Decimal(str(open_interest.get("openInterest", "0"))),
             open_interest_change_1h=oi_change_1h,
-            taker_buy_sell_ratio=taker_ratio,
+            taker_buy_sell_ratio=taker_ratio_1h,
             bid_depth_notional=depth_notional(depth.get("bids")),
             ask_depth_notional=depth_notional(depth.get("asks")),
             open_interest_change_4h=oi_change_4h,
             open_interest_change_24h=oi_change_24h,
             open_interest_change_7d=oi_change_7d,
+            taker_buy_sell_ratio_4h=taker_ratio_4h,
+            taker_buy_sell_ratio_24h=taker_ratio_24h,
             degraded_telemetry=has_degraded_telemetry,
         )
 

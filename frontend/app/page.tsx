@@ -191,6 +191,20 @@ function RadarPageContent() {
   const [scanNotification, setScanNotification] = useState<string | null>(null);
   const [showLeftSidebar, setShowLeftSidebar] = useState(true);
   const [showRightPanel, setShowRightPanel] = useState(true);
+  const [adaptedLevelsMap, setAdaptedLevelsMap] = useState<
+    Record<
+      string,
+      {
+        pocPrice: number;
+        vahPrice: number;
+        valPrice: number;
+        entryPrice: number;
+        stopPrice: number;
+        breakoutTrigger: number;
+        targets: number[];
+      }
+    >
+  >({});
 
   // User indicator & timeframe preferences (persisted across tokens and browser reloads)
   const [showLevels, setShowLevels] = useLocalStorage(
@@ -348,6 +362,7 @@ function RadarPageContent() {
       }
 
       setOpportunities(dedupedEnriched);
+      setAdaptedLevelsMap({});
 
       // Preserve active token or activate targeted candidate
       setActiveOpportunity((prev) => {
@@ -683,21 +698,6 @@ function RadarPageContent() {
     };
   }, [opportunities]);
 
-  const [adaptedLevelsMap, setAdaptedLevelsMap] = useState<
-    Record<
-      string,
-      {
-        pocPrice: number;
-        vahPrice: number;
-        valPrice: number;
-        entryPrice: number;
-        stopPrice: number;
-        breakoutTrigger: number;
-        targets: number[];
-      }
-    >
-  >({});
-
   const handleLevelsUpdated = useCallback(
     (levels: {
       pocPrice: number;
@@ -759,7 +759,8 @@ function RadarPageContent() {
       oiChange: activeOpportunity.oi_change_7d_pct || "N/A",
       isOiNegative: String(activeOpportunity.oi_change_7d_pct).includes("-"),
       fundingRate: cleanFunding,
-      riskReward: Math.min(Number(activeOpportunity.risk_reward_ratio || 0), 8.0).toFixed(2),
+      riskReward: Number(activeOpportunity.risk_reward_ratio || 0).toFixed(2),
+      riskRewardTarget: activeOpportunity.risk_reward_target_index ?? 2,
     };
   }, [activeOpportunity, livePrices, adaptedLevelsMap]);
 
@@ -812,8 +813,8 @@ function RadarPageContent() {
     const adapted = adaptedLevelsMap[activeOpportunity.symbol];
     if (adapted?.entryPrice) return adapted.entryPrice;
     return Number(
-      activeOpportunity.pullback_entry ||
-        activeOpportunity.suggested_entry ||
+      activeOpportunity.suggested_entry ||
+        activeOpportunity.pullback_entry ||
         0,
     );
   }, [activeOpportunity, adaptedLevelsMap]);
@@ -1211,7 +1212,7 @@ function RadarPageContent() {
                 </strong>
               </div>
               <div>
-                <span style={{ color: "var(--text-muted)" }}>R:R: </span>
+                <span style={{ color: "var(--text-muted)" }}>R:R (T{headerMetrics.riskRewardTarget}): </span>
                 <strong style={{ color: "var(--accent-emerald)" }}>
                   {headerMetrics.riskReward}:1
                 </strong>
@@ -1331,6 +1332,7 @@ function RadarPageContent() {
               key={activeOpportunity.symbol}
               symbol={activeOpportunity.symbol}
               direction={activeOpportunity.direction}
+              preservePublishedLevels={activeOpportunity.risk_reward_target_index != null}
               candles={activeCandles}
               pocPrice={pocPriceVal}
               vahPrice={vahPriceVal}

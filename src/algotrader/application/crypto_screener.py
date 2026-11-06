@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import structlog
@@ -10,6 +11,7 @@ from algotrader.adapters.external.macro_provider import MacroSentimentProvider
 from algotrader.adapters.external.models import MacroSentimentContext
 from algotrader.application.alt_momentum import _participation_ratio, _return_over
 from algotrader.application.research import beta_correlation
+from algotrader.application.scan_recording import MacroContextSource
 from algotrader.config import Settings
 from algotrader.domain.archetypes import (
     LongArchetypeFeatures,
@@ -57,8 +59,9 @@ from algotrader.domain.models import (
     Quote,
 )
 from algotrader.domain.ports import DerivativesDataPort, MarketDataPort
-from algotrader.domain.precision import normalize_quantity
+from algotrader.domain.precision import normalize_price, normalize_quantity
 from algotrader.domain.resistance_absorption import compute_resistance_absorption
+from algotrader.domain.scan_observations import ScanDecisionJournal
 from algotrader.domain.scoring import (
     OpportunityGrade,
     calculate_adx_subscore,
@@ -67,6 +70,17 @@ from algotrader.domain.scoring import (
     classify_opportunity_grade,
     compute_3tier_ev_r,
     compute_p_win_and_conviction,
+)
+from algotrader.domain.screener_policy import (
+    COI_OVEREXTENDED_THRESHOLD,
+    COI_OVERSOLD_THRESHOLD,
+    publication_rejection_reasons,
+)
+from algotrader.domain.screener_policy import (
+    COI_STANDARD_CONVICTION_FLOOR as COI_STANDARD_CONVICTION_FLOOR,
+)
+from algotrader.domain.screener_policy import (
+    COI_TIGHTENED_CONVICTION_FLOOR as COI_TIGHTENED_CONVICTION_FLOOR,
 )
 from algotrader.domain.screening_gates import (
     LongGateInputs,
@@ -82,24 +96,27 @@ ZERO = Decimal("0")
 ONE = Decimal("1")
 HUNDRED = Decimal("100")
 
-# Regime-aware COI thresholds and conviction floors
-COI_OVEREXTENDED_THRESHOLD: float = 75.0
-COI_OVERSOLD_THRESHOLD: float = 25.0
-COI_TIGHTENED_CONVICTION_FLOOR: Decimal = Decimal("70.0")
-COI_STANDARD_CONVICTION_FLOOR: Decimal = Decimal("65.0")
-
-
 class CryptoOpportunityScreener:
     """Institutional-grade multi-factor crypto screening engine."""
 
     def __init__(
         self,
         settings: Settings,
-        macro_provider: MacroSentimentProvider | None = None,
+        macro_provider: MacroContextSource | None = None,
+        *,
+        evaluated_at: datetime | None = None,
+        journal: ScanDecisionJournal | None = None,
     ) -> None:
         self._settings = settings
         self._macro_provider = macro_provider or MacroSentimentProvider()
-        self.scan_counts: dict[str, int] = {"selected": 0, "evaluated": 0, "failed": 0}
+        self.scan_counts: dict[str, int] = {}
+        self._evaluated_at = evaluated_at
+        self._journal = journal
+        self._fetch_failures: set[str] = set()
+
+    def _note(self, symbol: str, stage: str, reason: str, **details: object) -> None:
+        if self._journal is not None:
+            self._journal.note(symbol, stage, reason, **details)
 
     async def screen(
         self,
@@ -112,7 +129,20 @@ class CryptoOpportunityScreener:
         max_symbols: int | None = None,
         mode: ScreenerMode = ScreenerMode.ACCUMULATION,
         coi_score: float | Decimal | None = None,
+        enforce_quality: bool = False,
     ) -> list[CryptoOpportunity]:
+        self._fetch_failures.clear()
+        self.scan_counts = {
+            "eligible": 0,
+            "liquid": 0,
+            "selected": 0,
+            "evaluated": 0,
+            "failed": 0,
+            "stage1_survivors": 0,
+            "stage2_shortlist": 0,
+            "stage2_probes": 0,
+            "returned": 0,
+        }
         # 1. Fetch Macro Context Concurrently
         macro_context = await self._macro_provider.get_context()
         log.info("screener_macro_loaded", narrative=macro_context.narrative())
@@ -142,6 +172,10 @@ class CryptoOpportunityScreener:
             and inst.quote_asset in ("USDT", "USDC")
             # Stage 3: DO NOT block 1000x multiplier contracts (1000SHIB, 1000PEPE, etc.)
         ]
+        self.scan_counts["eligible"] = len(eligible_instruments)
+        eligible_ids = {inst.id for inst in eligible_instruments}
+        for inst in instruments:
+            self._note(inst.id.symbol, "universe", "eligible" if inst.id in eligible_ids else "universe_excluded")
 
         if not eligible_instruments:
             log.warning("no_eligible_instruments_in_universe")
@@ -149,16 +183,35 @@ class CryptoOpportunityScreener:
 
         quotes = await market.quotes(eligible_instruments)
         quotes_by_symbol = {q.instrument_id.symbol: q for q in quotes}
+        if self._journal is not None:
+            # Canonical eligible cohort, including quote-less and illiquid tokens, for recall.
+            cohort: dict[str, Instrument] = {}
+            for inst in eligible_instruments:
+                current = cohort.get(inst.base_asset)
+                q = quotes_by_symbol.get(inst.id.symbol)
+                previous_q = quotes_by_symbol.get(current.id.symbol) if current else None
+                if current is None or (q is not None and previous_q is None):
+                    cohort[inst.base_asset] = inst
+                elif q is not None and previous_q is not None:
+                    if (q.quote_volume_24h > previous_q.quote_volume_24h * Decimal("1.05")
+                        or (previous_q.quote_volume_24h <= q.quote_volume_24h * Decimal("1.05")
+                            and ((inst.quote_asset == "USDT" and current.quote_asset != "USDT")
+                                 or q.quote_volume_24h > previous_q.quote_volume_24h))):
+                        cohort[inst.base_asset] = inst
+            self._journal.cohort = tuple(cohort.values())
 
         # Stage 4: Filter by liquidity: min $500k 24h volume, max 50 bps spread
         liquid_instruments: list[Instrument] = []
         for inst in eligible_instruments:
             q = quotes_by_symbol.get(inst.id.symbol)
             if q is None:
+                self._note(inst.id.symbol, "liquidity", "missing_quote")
                 continue
             if q.quote_volume_24h < Decimal("500000"):
+                self._note(inst.id.symbol, "liquidity", "low_volume")
                 continue
             if q.spread_bps > Decimal("50"):
+                self._note(inst.id.symbol, "liquidity", "wide_spread")
                 continue
             liquid_instruments.append(inst)
 
@@ -180,7 +233,18 @@ class CryptoOpportunityScreener:
                     pass  # keep curr
                 elif (inst.quote_asset == "USDT" and curr.quote_asset != "USDT") or vol_new > vol_curr:
                     best_by_base[base] = inst
+        canonical_ids = {inst.id for inst in best_by_base.values()}
+        for inst in liquid_instruments:
+            if inst.id not in canonical_ids:
+                self._note(inst.id.symbol, "liquidity", "pair_deduplicated")
         liquid_instruments = list(best_by_base.values())
+        if self._journal is not None:
+            # Prefer the exact liquid pair used by selection; retain an eligible fallback
+            # only for bases without a liquid pair. This keeps every published pair observed.
+            cohort_by_base = {inst.base_asset: inst for inst in self._journal.cohort}
+            cohort_by_base.update(best_by_base)
+            self._journal.cohort = tuple(cohort_by_base.values())
+        self.scan_counts["liquid"] = len(liquid_instruments)
 
         # Stage 5: Dynamic 265-Pair Funnel (Top 215 ILI Core + Top 50 Pre-Pump Anomaly Discovery)
         target_core = 215 if max_symbols is None else min(max_symbols, max(1, int(max_symbols * (215 / 265))))
@@ -251,6 +315,9 @@ class CryptoOpportunityScreener:
             selected_instruments = liquid_instruments[:(target_core + target_discovery)]
 
         self.scan_counts["selected"] = len(selected_instruments)
+        selected_ids = {inst.id for inst in selected_instruments}
+        for inst in liquid_instruments:
+            self._note(inst.id.symbol, "selection", "selected" if inst.id in selected_ids else "selection_limit")
         log.info(
             "universe_liquidity_filtered",
             total=len(instruments),
@@ -308,6 +375,9 @@ class CryptoOpportunityScreener:
         )
         self.scan_counts["evaluated"] = sum(isinstance(result, list) for result in results)
         self.scan_counts["failed"] = len(results) - self.scan_counts["evaluated"]
+        for inst, result in zip(selected_instruments, results, strict=True):
+            self._note(inst.id.symbol, "stage1", "fetch_or_evaluation_failure" if isinstance(result, BaseException) or (not result and inst.id.symbol in self._fetch_failures)
+                       else "no_setup" if not result else "setup", error=type(result).__name__ if isinstance(result, BaseException) else None)
 
         stage1_survivors: list[CryptoOpportunity] = []
         stage1_threshold = min(Decimal("55.0"), min_score) if min_score is not None else Decimal("55.0")
@@ -321,8 +391,35 @@ class CryptoOpportunityScreener:
 
         # Sort surviving Stage 1 candidates descending by preliminary structural score
         stage1_survivors.sort(key=lambda o: o.score, reverse=True)
+        self.scan_counts["stage1_survivors"] = len(stage1_survivors)
         # Cap Stage 2 derivatives enrichment at top 45 Stage 1 survivors
         stage2_shortlist = stage1_survivors[:45]
+        self.scan_counts["stage2_shortlist"] = len(stage2_shortlist)
+
+        # A derivatives-led setup may have no Stage 1 archetype before OI is fetched.
+        # Probe a small, separate quote-anomaly lane without displacing core survivors.
+        shortlisted_symbols = {opp.instrument.id.symbol for opp in stage2_shortlist}
+        stage2_probes: list[Instrument] = []
+        if derivatives_port is not None and mode != ScreenerMode.BREAKOUT:
+            ranked_probes: list[tuple[Decimal, Instrument]] = []
+            for inst in selected_instruments:
+                q = quotes_by_symbol[inst.id.symbol]
+                if inst.id.symbol in shortlisted_symbols:
+                    continue
+                if q.quote_volume_24h < Decimal("1500000") or q.spread_bps > Decimal("25"):
+                    continue
+                funding_signal = max(Decimal("0"), Decimal("-0.00005") - (q.funding_rate or ZERO)) if q.funding_rate is not None else ZERO
+                basis_signal = max(ZERO, (q.basis_pct or ZERO) - Decimal("0.0008"))
+                if funding_signal <= ZERO and basis_signal <= ZERO:
+                    continue
+                anomaly_rank = funding_signal * Decimal("100000") + basis_signal * Decimal("10000")
+                ranked_probes.append((anomaly_rank, inst))
+            ranked_probes.sort(key=lambda item: (item[0], quotes_by_symbol[item[1].id.symbol].quote_volume_24h), reverse=True)
+            stage2_probes = [inst for _, inst in ranked_probes[:15]]
+        self.scan_counts["stage2_probes"] = len(stage2_probes)
+        admitted = shortlisted_symbols | {inst.id.symbol for inst in stage2_probes}
+        for inst in selected_instruments:
+            self._note(inst.id.symbol, "stage2", "admitted" if inst.id.symbol in admitted else "not_admitted")
 
         # Stage 2: Deep Derivatives Enrichment ONLY for surviving shortlist
         stage2_semaphore = asyncio.Semaphore(8)
@@ -383,67 +480,85 @@ class CryptoOpportunityScreener:
                     )
                     return None
 
+        async def enrich_probe(inst: Instrument) -> CryptoOpportunity | None:
+            if derivatives_port is None:
+                return None
+            cached_c = candle_cache.get(inst.id.symbol)
+            if cached_c is None:
+                return None
+            async with stage2_semaphore:
+                try:
+                    deriv_res = await asyncio.wait_for(
+                        derivatives_port.derivatives_snapshot(inst), timeout=4.0
+                    )
+                    if not isinstance(deriv_res, DerivativesSnapshot) or deriv_res.degraded_telemetry:
+                        return None
+                    res_enriched = await self._evaluate_single(
+                        inst=inst,
+                        quote=quotes_by_symbol[inst.id.symbol],
+                        market=market,
+                        derivatives_port=None,
+                        btc_candles=btc_candles_1h,
+                        macro_context=macro_context,
+                        mode=mode,
+                        target_direction=target_direction,
+                        is_btc_cascade=is_btc_cascade,
+                        btc_ret_1h=btc_ret_1h,
+                        min_score=min_score,
+                        is_discovery_tier=inst.id.symbol in discovery_tier_set,
+                        preloaded_candles=cached_c,
+                        explicit_derivatives=deriv_res,
+                    )
+                    return res_enriched[0] if res_enriched else None
+                except Exception as exc:
+                    log.warning("stage2_probe_failed", symbol=inst.id.symbol, error=str(exc))
+                    return None
+
         enriched_results = await asyncio.gather(
             *(enrich_opportunity(opp) for opp in stage2_shortlist),
+            *(enrich_probe(inst) for inst in stage2_probes),
             return_exceptions=True,
         )
 
         opportunities: list[CryptoOpportunity] = []
-        for enriched in enriched_results:
+        stage2_symbols = [opp.instrument.id.symbol for opp in stage2_shortlist] + [inst.id.symbol for inst in stage2_probes]
+        for symbol, enriched in zip(stage2_symbols, enriched_results, strict=True):
+            if not isinstance(enriched, CryptoOpportunity):
+                self._note(symbol, "stage2", "enrichment_unavailable_or_no_setup")
             if isinstance(enriched, CryptoOpportunity):
                 opp = enriched
+                self._note(symbol, "pre_publication", "evaluated", candidate=opp.as_dict())
                 eff_score = opp.conviction if opp.conviction is not None else opp.score
                 if min_score is not None:
                     if eff_score < min_score:
+                        self._note(symbol, "publication", "requested_score_floor")
                         continue
-                else:
-                    # Institutional Quality Gating:
-                    # 1. Strictly eliminate below-threshold setups
-                    if opp.grade is OpportunityGrade.BELOW_THRESHOLD or str(opp.grade) == "Below Threshold":
-                        continue
-                    # 2. Strict score & conviction floor (Tiered: Core vs Discovery)
-                    min_score_floor = Decimal("71.0") if opp.is_discovery_tier else Decimal("68.0")
-                    min_conv_floor = Decimal("69.0") if opp.is_discovery_tier else Decimal("65.0")
-                    if eff_score < min_score_floor or opp.score < min_score_floor:
-                        continue
-                    if opp.conviction is not None and opp.conviction < min_conv_floor:
-                        continue
-                    # 3. Minimum 3 of 5 multi-system checklist consensus
-                    if opp.checklist_verification is not None and opp.checklist_verification.passed_count < 3:
-                        continue
-                    # 4. Mandatory positive mathematical expectancy and asymmetric R/R
-                    min_rr = Decimal("1.50") if opp.direction is Direction.SHORT else Decimal("2.00")
-                    if opp.risk_reward_ratio < min_rr or opp.expected_value_r < Decimal("0.20"):
-                        continue
-                    # 5. Regime-aware conviction floor governed by COI
-                    if effective_coi is not None and effective_coi >= COI_OVEREXTENDED_THRESHOLD:
-                        base_req = COI_TIGHTENED_CONVICTION_FLOOR if opp.direction is Direction.LONG else min_conv_floor
-                        req_conviction = base_req + Decimal("4.0") if (opp.is_discovery_tier and opp.direction is Direction.LONG) else base_req
-                    elif effective_coi is not None and effective_coi <= COI_OVERSOLD_THRESHOLD:
-                        base_req = min_conv_floor if opp.direction is Direction.LONG else COI_TIGHTENED_CONVICTION_FLOOR
-                        req_conviction = base_req + Decimal("4.0") if (opp.is_discovery_tier and opp.direction is Direction.SHORT) else base_req
-                    else:
-                        req_conviction = min_conv_floor
-                    if (opp.conviction is not None and opp.conviction < req_conviction) or eff_score < req_conviction:
+                if enforce_quality or min_score is None:
+                    reasons = publication_rejection_reasons(opp, coi_score=effective_coi)
+                    if reasons:
+                        for reason in reasons:
+                            self._note(symbol, "publication", "publication:" + reason)
                         continue
                 if target_direction is not None and opp.direction is not target_direction:
+                    self._note(symbol, "publication", "direction_filter")
                     continue
                 opportunities.append(opp)
 
         # Estimate & Log Binance API request weight
         w_stage0 = 56
-        w_stage1 = len(selected_instruments) * 4 + 2
-        w_stage2 = len(stage2_shortlist) * 2 if derivatives_port is not None else 0
+        w_stage1 = len(selected_instruments) * 5 + 2
+        w_stage2 = (len(stage2_shortlist) + len(stage2_probes)) * 4 if derivatives_port is not None else 0
         total_scan_weight = w_stage0 + w_stage1 + w_stage2
         log.info(
             "binance_scan_weight_budget",
             total_estimated_weight=total_scan_weight,
             rate_limit_ceiling=2400,
-            budget_cap=1300,
+            target_budget=1300,
             stage0_weight=w_stage0,
             stage1_symbols=len(selected_instruments),
             stage1_weight=w_stage1,
-            stage2_candidates=len(stage2_shortlist),
+            stage2_candidates=len(stage2_shortlist) + len(stage2_probes),
+            stage2_probes=len(stage2_probes),
             stage2_weight=w_stage2,
         )
 
@@ -484,6 +599,10 @@ class CryptoOpportunityScreener:
                 deduped_shorts.append(o)
 
         effective_top_n = top_n if top_n is not None else 16
+        deduped_ids = {id(opp) for opp in (*deduped_longs, *deduped_shorts)}
+        for opp in opportunities:
+            if id(opp) not in deduped_ids:
+                self._note(opp.instrument.id.symbol, "curation", "candidate_deduplicated")
 
         # Regime-aware desk allocation caps governed by COI
         if effective_coi is not None and effective_coi >= COI_OVEREXTENDED_THRESHOLD:
@@ -505,10 +624,20 @@ class CryptoOpportunityScreener:
             max_longs = min(min(desk_max_longs, effective_top_n - max_shorts), len(deduped_longs))
             all_opps = deduped_longs[:max_longs] + deduped_shorts[:max_shorts]
             all_opps.sort(key=_conviction, reverse=True)
-            return all_opps[:effective_top_n]
+            final_opps = all_opps[:effective_top_n]
+            final_ids = {id(opp) for opp in final_opps}
+            for opp in (*deduped_longs, *deduped_shorts):
+                self._note(opp.instrument.id.symbol, "curation", "published" if id(opp) in final_ids else "desk_cap")
+            self.scan_counts["returned"] = len(final_opps)
+            return final_opps
 
         final_opps = deduped_longs if target_direction is Direction.LONG else deduped_shorts
-        return final_opps[:effective_top_n]
+        final_opps = final_opps[:effective_top_n]
+        final_ids = {id(opp) for opp in final_opps}
+        for opp in (*deduped_longs, *deduped_shorts):
+            self._note(opp.instrument.id.symbol, "curation", "published" if id(opp) in final_ids else "desk_cap")
+        self.scan_counts["returned"] = len(final_opps)
+        return final_opps
 
     async def _evaluate_single(
         self,
@@ -541,11 +670,17 @@ class CryptoOpportunityScreener:
                 for attempt in range(3):
                     try:
                         return await market.candles(inst, interval, limit)
-                    except Exception:
+                    except Exception as exc:
                         if attempt < 2:
                             await asyncio.sleep(0.35 * (attempt + 1))
                         else:
+                            self._fetch_failures.add(inst.id.symbol)
+                            self._note(inst.id.symbol, "input", "fetch_exhausted", interval=interval, error=type(exc).__name__)
                             return ()
+                    except asyncio.CancelledError:
+                        self._fetch_failures.add(inst.id.symbol)
+                        self._note(inst.id.symbol, "input", "fetch_cancelled", interval=interval)
+                        raise
                 return ()
 
             # Concurrently fetch 1h (240 bars, w=2), 4h (480 bars = 80d, w=2), and 1w (40 bars = 280d, w=1)
@@ -570,7 +705,8 @@ class CryptoOpportunityScreener:
         closed_1h = sorted([c for c in c1h if c.closed], key=lambda x: x.closed_at)
         closed_4h = sorted([c for c in c4h if c.closed], key=lambda x: x.closed_at)
         candles_1d = resample_candles(closed_4h, "1d")
-        candles_1w = list(c1w) if (not isinstance(c1w, BaseException) and c1w and len(c1w) >= 15) else (resample_candles(candles_1d, "1w") if candles_1d else [])
+        closed_1w = sorted((c for c in c1w if c.closed), key=lambda c: c.closed_at) if not isinstance(c1w, BaseException) else []
+        candles_1w = closed_1w if len(closed_1w) >= 15 else resample_candles(candles_1d, "1w")
 
         if len(closed_1h) < 120 or len(closed_4h) < 40:
             return []
@@ -916,13 +1052,13 @@ class CryptoOpportunityScreener:
         if oi_change is not None and oi_change < Decimal("-0.025"):
             return None
         oi_change_7d = derivatives.open_interest_change_7d if derivatives else None
-        taker_ratio_calc = taker_buy_ratio_from_candles(closed_4h[-6:] if len(closed_4h) >= 6 else closed_4h)
+        taker_ratio_calc = taker_buy_ratio_from_candles(closed_1h, hours=4)
         taker_ratio = (
-            derivatives.taker_buy_sell_ratio
-            if (derivatives and derivatives.taker_buy_sell_ratio)
+            derivatives.taker_buy_sell_ratio_4h
+            if (derivatives and derivatives.taker_buy_sell_ratio_4h is not None)
             else taker_ratio_calc
         )
-        taker_buy_ratio_4h = taker_ratio if taker_ratio is not None else Decimal("1.0000")
+        taker_buy_ratio_4h = taker_ratio
         cvd_metrics = cumulative_volume_delta_metrics(closed_1h, lookback_window=24)
 
         range_height_30d = (high_30d - low_30d) / max(low_30d, Decimal("1e-8"))
@@ -953,8 +1089,8 @@ class CryptoOpportunityScreener:
         )
 
         # Trigger C (Order-Flow Absorption):
-        oi_delta_4h_val = derivatives.open_interest_change_4h if (derivatives and derivatives.open_interest_change_4h is not None) else oi_change
-        oi_delta_24h_val = derivatives.open_interest_change_24h if (derivatives and derivatives.open_interest_change_24h is not None) else None
+        oi_delta_4h_val = derivatives.open_interest_change_4h if derivatives else None
+        oi_delta_24h_val = derivatives.open_interest_change_24h if derivatives else None
         taker_ratio_1h = derivatives.taker_buy_sell_ratio if derivatives else None
         of_absorption_1h = bool(
             oi_delta_4h_val is not None
@@ -1108,10 +1244,10 @@ class CryptoOpportunityScreener:
 
         absorption_score, breakout_status, absorption_flags = compute_resistance_absorption(
             cvd_zscore_24h=float(cvd_metrics.cvd_z_score or Decimal("0")),
-            taker_buy_ratio_4h=float(taker_buy_ratio_4h),
+            taker_buy_ratio_4h=float(taker_buy_ratio_4h) if taker_buy_ratio_4h is not None else None,
             oi_delta_7d=float(oi_change_7d) if oi_change_7d is not None else None,
-            oi_delta_4h=float(oi_change) if oi_change is not None else None,
-            funding_bps=float((funding or Decimal("0")) * 10000),
+            oi_delta_4h=float(oi_delta_4h_val) if oi_delta_4h_val is not None else None,
+            funding_bps=float(funding * 10000) if funding is not None else None,
             low_4h=low_4h,
             low_4h_prev=low_4h_prev,
             low_4h_prev2=low_4h_prev2,
@@ -1359,6 +1495,7 @@ class CryptoOpportunityScreener:
         )
 
         return CryptoOpportunity(
+            evaluated_at=self._evaluated_at or datetime.now(UTC),
             instrument=inst,
             direction=Direction.LONG,
             regime=CryptoMarketRegime.VOLATILITY_SQUEEZE,
@@ -1373,7 +1510,8 @@ class CryptoOpportunityScreener:
             suggested_entry=bracket.suggested_entry,
             suggested_stop=bracket.invalidation_stop,
             suggested_targets=bracket.targets,
-            risk_reward_ratio=bracket.asymmetric_rr,
+            risk_reward_ratio=bracket.r_t1 if close < poc_price else bracket.r_t2,
+            risk_reward_target_index=1 if close < poc_price else 2,
             estimated_win_rate_pct=(p_win * Decimal("100.0")).quantize(Decimal("0.1")),
             expected_value_r=ev_r,
             conviction=conviction,
@@ -1384,6 +1522,10 @@ class CryptoOpportunityScreener:
             funding_rate=funding,
             oi_change_1h=oi_change,
             taker_ratio=taker_ratio,
+            taker_ratio_1h=taker_ratio_1h,
+            taker_ratio_4h=taker_buy_ratio_4h,
+            taker_ratio_24h=derivatives.taker_buy_sell_ratio_24h if derivatives else None,
+            taker_ratio_window_hours=4,
             rationale=tuple(rationale),
             macro_narrative=macro_context.narrative(),
             poc_price=poc_price,
@@ -1542,12 +1684,19 @@ class CryptoOpportunityScreener:
         # Fix 2: Hard veto on Short setups when Stage 2 derivatives has missing 7d OI ("N/A")
         if derivatives is not None and oi_change_7d is None:
             return None
-        taker_ratio_calc = taker_buy_ratio_from_candles(closed_1h[-24:] if len(closed_1h) >= 24 else closed_1h)
-        if derivatives and derivatives.taker_buy_sell_ratio is not None:
-            taker_ratio = derivatives.taker_buy_sell_ratio
+        taker_ratio_calc = taker_buy_ratio_from_candles(closed_1h, hours=24)
+        taker_ratio: Decimal | None
+        if derivatives and derivatives.taker_buy_sell_ratio_24h is not None:
+            taker_ratio = derivatives.taker_buy_sell_ratio_24h
         else:
             taker_ratio = taker_ratio_calc
-        taker_buy_ratio_24h = taker_ratio if taker_ratio is not None else Decimal("1.0000")
+        taker_buy_ratio_24h = taker_ratio
+        taker_ratio_1h = derivatives.taker_buy_sell_ratio if derivatives else None
+        taker_buy_ratio_4h = (
+            derivatives.taker_buy_sell_ratio_4h
+            if derivatives and derivatives.taker_buy_sell_ratio_4h is not None
+            else taker_buy_ratio_from_candles(closed_1h, hours=4)
+        )
 
         # Position in range & run-up
         range_span_30d = high_30d - low_30d
@@ -1620,7 +1769,7 @@ class CryptoOpportunityScreener:
             funding_rate_8h=funding,
             oi_delta_7d=oi_change_7d,
             oi_delta_1h=oi_change,
-            taker_buy_ratio_1h=taker_ratio,
+            taker_buy_ratio_1h=taker_ratio_1h,
             low_72h=low_72h,
             high_24h=high_24h,
             open_4h=open_4h,
@@ -1677,8 +1826,8 @@ class CryptoOpportunityScreener:
             has_bearish_div=has_bearish_divergence,
             cvd_zscore=cvd_val,
             oi_change_7d=oi_change_7d,
-            oi_change_4h=oi_change,
-            taker_buy_ratio_4h=taker_buy_ratio_24h,
+            oi_change_4h=derivatives.open_interest_change_4h if derivatives else None,
+            taker_buy_ratio_4h=taker_buy_ratio_4h,
             funding_rate=funding,
             ema20_4h=ema20_4h,
             macd_hist_4h=macd_hist_4h,
@@ -1714,17 +1863,17 @@ class CryptoOpportunityScreener:
             (close <= primary_ceiling * Decimal("1.01"))
             and is_active_retest
             and (macd_hist_4h < ZERO and macd_hist_4h <= macd_hist_4h_prev)
-            and (taker_buy_ratio_24h <= Decimal("0.92"))
+            and taker_buy_ratio_24h is not None and (taker_buy_ratio_24h <= Decimal("0.92"))
         )
         trapped_longs_check = (
             (funding is not None and funding >= Decimal("0.00005"))
             or (basis_bps >= Decimal("4.0"))
-        ) and ((oi_change_7d or ZERO) >= Decimal("0.10") or taker_buy_ratio_24h <= Decimal("0.92"))
+        ) and ((oi_change_7d or ZERO) >= Decimal("0.10") or (taker_buy_ratio_24h is not None and taker_buy_ratio_24h <= Decimal("0.92")))
         squeeze_flush_check = (
             (funding is not None and funding <= Decimal("-0.0003"))
             and ((oi_change_7d or ZERO) >= Decimal("0.25"))
             and ((oi_change or ZERO) <= Decimal("-0.015"))
-            and (taker_buy_ratio_24h <= Decimal("0.85"))
+            and taker_ratio_1h is not None and (taker_ratio_1h <= Decimal("0.85"))
         )
 
         is_utad_or_climax = archetype in (SetupLabel.UTAD_DIVERGENCE_SHORT, SetupLabel.EXHAUSTION_REVERSAL_SHORT)
@@ -1756,7 +1905,7 @@ class CryptoOpportunityScreener:
             value_acceptance=bool(close <= (high_24h - Decimal("0.45") * atr14) or (close <= primary_ceiling * Decimal("1.01") and pos_in_range >= Decimal("0.45"))),
             volatility_structure=bool(track_a_pass or track_b_pass),
             momentum_alignment=bool(macd_hist_4h < macd_hist_4h_prev or macd_hist_4h < ZERO),
-            volume_microstructure=bool(upper_wick_ratio_4h >= Decimal("0.35") or taker_buy_ratio_24h <= Decimal("0.92")),
+            volume_microstructure=bool(upper_wick_ratio_4h >= Decimal("0.35") or (taker_buy_ratio_24h is not None and taker_buy_ratio_24h <= Decimal("0.92"))),
             derivatives_positioning=is_deriv_valid,
         )
 
@@ -1841,6 +1990,7 @@ class CryptoOpportunityScreener:
         )
 
         return CryptoOpportunity(
+            evaluated_at=self._evaluated_at or datetime.now(UTC),
             instrument=inst,
             direction=Direction.SHORT,
             regime=CryptoMarketRegime.VOLATILITY_SQUEEZE if bb_inside_kc else CryptoMarketRegime.MEAN_REVERTING_RANGE,
@@ -1852,7 +2002,7 @@ class CryptoOpportunityScreener:
             suggested_entry=bracket.suggested_entry,
             suggested_stop=bracket.invalidation_stop,
             suggested_targets=bracket.targets,
-            risk_reward_ratio=bracket.asymmetric_rr,
+            risk_reward_ratio=bracket.r_t2,
             estimated_win_rate_pct=(p_win * Decimal("100.0")).quantize(Decimal("0.1")),
             expected_value_r=ev_r,
             conviction=conviction,
@@ -1863,6 +2013,10 @@ class CryptoOpportunityScreener:
             funding_rate=funding,
             oi_change_1h=oi_change,
             taker_ratio=taker_ratio,
+            taker_ratio_1h=taker_ratio_1h,
+            taker_ratio_4h=taker_buy_ratio_4h,
+            taker_ratio_24h=taker_buy_ratio_24h,
+            taker_ratio_window_hours=24,
             rationale=tuple(rationale),
             macro_narrative=macro_context.narrative(),
             poc_price=poc_price,
@@ -2152,17 +2306,17 @@ class CryptoOpportunityScreener:
                         deriv_score += Decimal("15")
 
             # Taker Buy/Sell ratio
-            if is_long:
-                if derivatives.taker_buy_sell_ratio >= Decimal("1.15"):
+            if is_long and taker_ratio is not None:
+                if taker_ratio >= Decimal("1.15"):
                     deriv_score += Decimal("20")
-                    rationale.append(f"Taker buy aggression ({float(derivatives.taker_buy_sell_ratio):.2f})")
-                elif derivatives.taker_buy_sell_ratio >= Decimal("1.0"):
+                    rationale.append(f"Taker buy aggression ({float(taker_ratio):.2f})")
+                elif taker_ratio >= Decimal("1.0"):
                     deriv_score += Decimal("10")
-            else:
-                if derivatives.taker_buy_sell_ratio <= Decimal("0.85"):
+            elif not is_long and taker_ratio is not None:
+                if taker_ratio <= Decimal("0.85"):
                     deriv_score += Decimal("20")
-                    rationale.append(f"Taker sell aggression ({float(derivatives.taker_buy_sell_ratio):.2f})")
-                elif derivatives.taker_buy_sell_ratio <= Decimal("1.0"):
+                    rationale.append(f"Taker sell aggression ({float(taker_ratio):.2f})")
+                elif taker_ratio <= Decimal("1.0"):
                     deriv_score += Decimal("10")
 
             # Depth imbalance
@@ -2352,7 +2506,7 @@ class CryptoOpportunityScreener:
             target_1r = close + stop_dist
             target_2r = close + stop_dist * Decimal("2.0")
             target_3r = close + stop_dist * Decimal("3.0")
-            targets = (target_1r.quantize(close), target_2r.quantize(close), target_3r.quantize(close))
+            targets = tuple(normalize_price(target, inst.price_tick) for target in (target_1r, target_2r, target_3r))
         else:
             suggested_stop = close + stop_dist
             if resistance is not None and resistance > close and (resistance - close) < (Decimal("2.0") * atr14):
@@ -2360,12 +2514,24 @@ class CryptoOpportunityScreener:
             target_1r = max(close * Decimal("0.70"), close - stop_dist)
             target_2r = max(close * Decimal("0.50"), min(target_1r * Decimal("0.95"), close - stop_dist * Decimal("2.0")))
             target_3r = max(close * Decimal("0.30"), min(target_2r * Decimal("0.90"), close - stop_dist * Decimal("3.0")))
-            targets = (target_1r.quantize(close), target_2r.quantize(close), target_3r.quantize(close))
+            targets = tuple(normalize_price(target, inst.price_tick) for target in (target_1r, target_2r, target_3r))
 
-        suggested_stop = suggested_stop.quantize(close)
-        risk = max(Decimal("0.0001"), abs(close - suggested_stop))
-        reward = abs(targets[1] - close)
-        rr = max(Decimal("2.5"), (reward / risk).quantize(Decimal("0.1")))
+        suggested_entry = normalize_price(close, inst.price_tick)
+        suggested_stop = normalize_price(suggested_stop, inst.price_tick)
+        valid_levels = (
+            ZERO < suggested_stop < suggested_entry < targets[0] < targets[1] < targets[2]
+            if is_long else ZERO < targets[2] < targets[1] < targets[0] < suggested_entry < suggested_stop
+        )
+        if not valid_levels:
+            return None
+        risk = suggested_entry - suggested_stop if is_long else suggested_stop - suggested_entry
+        reward = targets[1] - suggested_entry if is_long else suggested_entry - targets[1]
+        if risk <= ZERO or reward <= ZERO:
+            return None
+        actual_rr = reward / risk
+        if actual_rr < (Decimal("2.0") if is_long else Decimal("1.5")):
+            return None
+        rr = actual_rr.quantize(Decimal("0.01"))
 
         breakdown = CryptoScreenerScoreBreakdown(
             trend_score=trend_score.quantize(Decimal("0.1")),
@@ -2471,6 +2637,7 @@ class CryptoOpportunityScreener:
         )
 
         return CryptoOpportunity(
+            evaluated_at=self._evaluated_at or datetime.now(UTC),
             instrument=inst,
             direction=direction,
             regime=regime,
@@ -2479,7 +2646,7 @@ class CryptoOpportunityScreener:
             score_breakdown=breakdown,
             current_price=close,
             atr14=atr14,
-            suggested_entry=close,
+            suggested_entry=suggested_entry,
             suggested_stop=suggested_stop,
             suggested_targets=targets,
             risk_reward_ratio=rr,
@@ -2494,6 +2661,10 @@ class CryptoOpportunityScreener:
             funding_rate=funding_rate,
             oi_change_1h=oi_change,
             taker_ratio=taker_ratio,
+            taker_ratio_1h=taker_ratio,
+            taker_ratio_4h=derivatives.taker_buy_sell_ratio_4h if derivatives else None,
+            taker_ratio_24h=derivatives.taker_buy_sell_ratio_24h if derivatives else None,
+            taker_ratio_window_hours=1,
             rationale=tuple(rationale),
             macro_narrative=macro_context.narrative(),
             poc_price=vp.poc_price,

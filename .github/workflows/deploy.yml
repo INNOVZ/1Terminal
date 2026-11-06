@@ -47,6 +47,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t atlas-screener:verify .
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --extra dev
+      - name: Verify isolated research packaging without exchange network
+        run: uv run python -m tests.research_container_smoke --image atlas-screener:verify
       - name: Verify packaged application without exchange access
         run: |
           docker run -d --name screener-check --network none -e ATLAS_SCREENER_CRON_ENABLED=false -e ATLAS_STATE_DB_PATH=/app/state/watchlist.sqlite3 atlas-screener:verify

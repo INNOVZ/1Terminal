@@ -34,5 +34,55 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  research-ranks:
+    profiles: [research]
+    build: .
+    image: atlas-screener:${ATLAS_IMAGE_TAG:-local}
+    user: "10001:10001"
+    command: [python, -m, algotrader.cli, research-worker, --role, ranks, --session-id, "${ATLAS_RESEARCH_SESSION_ID:-disabled}", --archive-dir, /app/data/research]
+    volumes:
+      - ${ATLAS_RESEARCH_ARCHIVE_DIR:-./data/research}:/app/data/research
+    environment:
+      ATLAS_SCREENER_CRON_ENABLED: "false"
+    read_only: true
+    tmpfs: ["/tmp:size=64m,noexec,nosuid"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    cpus: 0.5
+    stop_grace_period: 120s
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -m, algotrader.cli, research-health, --role, ranks, --session-id, "${ATLAS_RESEARCH_SESSION_ID:-disabled}", --archive-dir, /app/data/research]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+
+  research-outcomes:
+    profiles: [research]
+    build: .
+    image: atlas-screener:${ATLAS_IMAGE_TAG:-local}
+    user: "10001:10001"
+    command: [python, -m, algotrader.cli, research-worker, --role, outcomes, --session-id, "${ATLAS_RESEARCH_SESSION_ID:-disabled}", --archive-dir, /app/data/research]
+    volumes:
+      - ${ATLAS_RESEARCH_ARCHIVE_DIR:-./data/research}:/app/data/research
+    environment:
+      ATLAS_SCREENER_CRON_ENABLED: "false"
+    read_only: true
+    tmpfs: ["/tmp:size=64m,noexec,nosuid"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    cpus: 0.5
+    stop_grace_period: 120s
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -m, algotrader.cli, research-health, --role, outcomes, --session-id, "${ATLAS_RESEARCH_SESSION_ID:-disabled}", --archive-dir, /app/data/research]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+
 volumes:
   atlas-state:

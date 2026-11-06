@@ -1,0 +1,9 @@
+{
+  "fixed_landmark_rows_cross_checked": 1044,
+  "winner_transition_histories_cross_checked": 14,
+  "input_hashes_verified": 26,
+  "reference_rankings_and_hits_verified": true,
+  "same_cutoff_no_future_feature_bars": true,
+  "performance_claims_permitted": false,
+  "analysis_sha256": "abef42c7b8af82dfac872eef146b16da7787b730339648461126d23230ccc655"
+}

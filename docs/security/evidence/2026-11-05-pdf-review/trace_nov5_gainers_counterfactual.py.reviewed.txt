@@ -1,0 +1,404 @@
+"""Counterfactual Stage-Attrition Diagnostic for November 4/5 Top Gainers (2026-11-03 12:00Z to 2026-11-05 08:00Z).
+
+Explicitly labeled as a DIAGNOSTIC COUNTERFACTUAL (performance_claims_permitted = False).
+Answers for each of the 14 Nov 4/5 top-gainer contracts across 12 four-hour scan cutoffs:
+1. When did the contract first enter the hourly 522-symbol top-10 24h-return leaderboard?
+2. What was its full-universe 24h quote-volume rank among the 522 contracts at each scan cutoff
+   (would it pass Stage 0 top-320 selection)?
+3. In Stage 1 (un-enriched) and Stage 2 (with point-in-time historical funding & 168h OI),
+   which archetype(s) matched, which L1..L6 gates passed/failed, what was the resistance
+   absorption score, and did it pass publication_rejection_reasons BEFORE entering the top 10?
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+SCRATCH_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRATCH_DIR))
+
+from faithful_48h_replay import (  # noqa: E402
+    NeutralMacroSource,
+    PointInTimeReplayMarket,
+    _deserialize_candle,
+    _fetch_paged_klines,
+    _fetch_paged_oi_hist,
+    _serialize_candle,
+    _serialize_instrument,
+    trace_and_challenger_context,
+)
+
+from algotrader.application.crypto_screener import CryptoOpportunityScreener  # noqa: E402
+from algotrader.config import load_settings  # noqa: E402
+from algotrader.domain.crypto_screener_models import (  # noqa: E402
+    CryptoOpportunity,
+    ScreenerMode,
+)
+from algotrader.domain.models import Direction  # noqa: E402
+from algotrader.domain.screener_policy import publication_rejection_reasons  # noqa: E402
+from algotrader.infrastructure.runtime import build_runtime  # noqa: E402
+
+NOV5_RAW_PATH = SCRATCH_DIR / "nov5_gainers_inputs_20261105T0800Z.json"
+NOV5_DIAG_PATH = SCRATCH_DIR / "nov5_gainers_counterfactual_20261105T0800Z.json"
+
+ANCHOR_END_UTC = datetime(2026, 11, 5, 7, 59, 59, 999000, tzinfo=UTC)
+ANCHOR_END_MS = int(ANCHOR_END_UTC.timestamp() * 1000)
+
+# Union of Nov 5 current top 10 and Nov 4 Rome calendar-day top 10 (from 2026-11-05-gainers-bottleneck-research.md)
+NOV5_WINNER_SYMBOLS = (
+    "JCTUSDT",
+    "ELSAUSDT",
+    "CAPUSDT",
+    "AIOUSDT",
+    "FLUIDUSDT",
+    "FOGOUSDT",
+    "CLANKERUSDT",
+    "LYNUSDT",
+    "UAIUSDT",
+    "INITUSDT",
+    "BATUSDT",
+    "TRUSTUSDT",
+    "RAYSOLUSDT",
+    "FOLKSUSDT",
+)
+ALL_FETCH_SYMBOLS = ("BTCUSDT", *NOV5_WINNER_SYMBOLS)
+HORIZONS_HOURS = (44, 40, 36, 32, 28, 24, 20, 16, 12, 8, 4, 0)
+
+
+async def fetch_nov5_inputs() -> None:
+    rt = await build_runtime(load_settings())
+    try:
+        insts = await rt.futures_market.instruments()
+        by_sym = {i.id.symbol: i for i in insts if i.id.symbol in ALL_FETCH_SYMBOLS}
+        client = rt.futures_market._client
+        parser = rt.futures_market._parse_candle_rows
+
+        payload: dict[str, Any] = {
+            "metadata": {
+                "mode": "diagnostic_only",
+                "performance_claims_permitted": False,
+                "anchor_end_utc": ANCHOR_END_UTC.isoformat(),
+                "anchor_end_ms": ANCHOR_END_MS,
+                "fetched_at_utc": datetime.now(UTC).isoformat(),
+                "horizons_hours_ago": list(HORIZONS_HOURS),
+                "symbols": list(NOV5_WINNER_SYMBOLS),
+            },
+            "instruments": {sym: _serialize_instrument(by_sym[sym]) for sym in ALL_FETCH_SYMBOLS if sym in by_sym},
+            "symbols": {},
+        }
+
+        for sym in ALL_FETCH_SYMBOLS:
+            if sym not in by_sym:
+                print(f"Skipping {sym}: not in instruments")
+                continue
+            c1h = await _fetch_paged_klines(client, parser, sym, "1h", 560, ANCHOR_END_MS)
+            c4h = await _fetch_paged_klines(client, parser, sym, "4h", 540, ANCHOR_END_MS) if sym != "BTCUSDT" else []
+            c1w = await _fetch_paged_klines(client, parser, sym, "1w", 45, ANCHOR_END_MS) if sym != "BTCUSDT" else []
+            oi_hist = await _fetch_paged_oi_hist(client, sym, 240, ANCHOR_END_MS) if sym != "BTCUSDT" else []
+            funding_hist = (
+                await client.request(
+                    "GET",
+                    "/fapi/v1/fundingRate",
+                    params={"symbol": sym, "endTime": ANCHOR_END_MS + 60_000, "limit": 100},
+                )
+                if sym != "BTCUSDT"
+                else []
+            )
+            payload["symbols"][sym] = {
+                "candles_1h": [_serialize_candle(c) for c in c1h],
+                "candles_4h": [_serialize_candle(c) for c in c4h],
+                "candles_1w": [_serialize_candle(c) for c in c1w],
+                "open_interest_hist_1h": oi_hist,
+                "funding_rate_hist": funding_hist if isinstance(funding_hist, list) else [],
+                "forward_candles_1h": [],
+            }
+            print(
+                f"Fetched {sym:<12}: 1h={len(c1h)}, 4h={len(c4h)}, 1w={len(c1w)}, "
+                f"oi_1h={len(oi_hist)}, funding={len(payload['symbols'][sym]['funding_rate_hist'])}"
+            )
+
+        NOV5_RAW_PATH.write_text(json.dumps(payload, indent=2))
+        print(f"Saved Nov 5 diagnostic inputs to {NOV5_RAW_PATH}")
+    finally:
+        await rt.close()
+
+
+def _load_522_universe_volume_ranks_and_top10() -> tuple[dict[int, dict[str, int]], dict[str, str | None]]:
+    """Use the retained 522-symbol hourly evidence in docs/security/evidence/2026-11-05-universe-hourly-*.json
+    to compute exact 522-symbol 24h quote-volume ranks at each 4h cutoff and first top-10 entry time.
+    """
+    ev_dir = Path("/Users/jithinjacob/Desktop/trdindicator/docs/security/evidence")
+    verified_path = ev_dir / "2026-11-05-gainers-bottleneck-analysis-verified.json"
+    first_top10: dict[str, str | None] = {}
+    if verified_path.exists():
+        vdata = json.loads(verified_path.read_text())
+        for item in vdata.get("winner_five_minute_transitions", []):
+            if isinstance(item, dict) and "symbol" in item:
+                first_top10[item["symbol"]] = item.get("first_observed_hourly_top10_end") or item.get("first_top10_hour_end")
+
+    # Load all 522 hourly series
+    klines_by_sym: dict[str, list[list[Any]]] = {}
+    for p in sorted(ev_dir.glob("2026-11-05-universe-hourly-*.json")):
+        chunk = json.loads(p.read_text())
+        for sym, res in chunk.get("results", {}).items():
+            rows = res.get("result", []) if isinstance(res, dict) else res
+            if isinstance(rows, list):
+                klines_by_sym[sym] = rows
+
+    vol_ranks_by_close_ms: dict[int, dict[str, int]] = {}
+    for h in HORIZONS_HOURS:
+        cutoff_ms = ANCHOR_END_MS - h * 3_600_000
+        vols: list[tuple[float, str]] = []
+        for sym, rows in klines_by_sym.items():
+            w = [r for r in rows if int(r[6]) <= cutoff_ms][-24:]
+            if len(w) == 24:
+                qvol = sum(float(r[7]) for r in w)
+                vols.append((qvol, sym))
+        vols.sort(key=lambda x: (-x[0], x[1]))
+        vol_ranks_by_close_ms[cutoff_ms] = {sym: idx for idx, (_, sym) in enumerate(vols, 1)}
+
+    return vol_ranks_by_close_ms, first_top10
+
+
+async def run_counterfactual_trace() -> None:
+    raw = json.loads(NOV5_RAW_PATH.read_text())
+    vol_ranks_by_cutoff, first_top10 = _load_522_universe_volume_ranks_and_top10()
+    settings = load_settings()
+    macro_source = NeutralMacroSource()
+    macro_ctx = await macro_source.get_context()
+
+    btc_all_1h = [_deserialize_candle(d) for d in raw["symbols"]["BTCUSDT"]["candles_1h"]]
+    anchor_c1h_btc = btc_all_1h
+
+    out: dict[str, Any] = {
+        "metadata": raw["metadata"],
+        "summary_by_symbol": {},
+        "attrition_counts_across_168_scans": {
+            "total_symbol_scans": 0,
+            "stage0_outside_top320_volume": 0,
+            "no_archetype_matched": 0,
+            "failed_domain_gates_L1_L6": 0,
+            "failed_stage2_absorption_below_35": 0,
+            "failed_publication_policy": 0,
+            "passed_stage2_publication_control": 0,
+            "passed_stage2_publication_challenger": 0,
+            "passed_stage1_un_enriched_control": 0,
+        },
+        "scans_by_symbol": {},
+    }
+
+    for sym in NOV5_WINNER_SYMBOLS:
+        out["summary_by_symbol"][sym] = {
+            "first_top10_hour_utc": first_top10.get(sym),
+            "min_volume_rank_522": 999,
+            "max_volume_rank_522": 0,
+            "scans_outside_top320_vol": 0,
+            "scans_matching_archetype": 0,
+            "control_gate_pass": 0,
+            "control_stage1_pass": 0,
+            "control_stage2_published": 0,
+            "challenger_gate_pass": 0,
+            "challenger_stage2_published": 0,
+            "published_horizons_control": [],
+            "published_horizons_challenger": [],
+            "primary_rejection_bottlenecks": {},
+        }
+        out["scans_by_symbol"][sym] = []
+
+    for h in HORIZONS_HOURS:
+        cutoff_dt = anchor_c1h_btc[-1 - h].closed_at
+        cutoff_ms = int(cutoff_dt.timestamp() * 1000)
+        market = PointInTimeReplayMarket(raw, cutoff_dt)
+        quotes = {q.instrument_id.symbol: q for q in await market.quotes(await market.instruments())}
+        insts = {i.id.symbol: i for i in await market.instruments()}
+        btc_1h = [c for c in btc_all_1h if c.closed_at <= cutoff_dt][-240:]
+        screener = CryptoOpportunityScreener(settings, macro_source, evaluated_at=cutoff_dt)
+
+        btc_ret_1h = (btc_1h[-1].close - btc_1h[-2].close) / btc_1h[-2].close if len(btc_1h) >= 2 else Decimal("0")
+        btc_ret_4h = (btc_1h[-1].close - btc_1h[-5].close) / btc_1h[-5].close if len(btc_1h) >= 5 else Decimal("0")
+        is_btc_cascade = btc_ret_1h <= Decimal("-0.025") or btc_ret_4h <= Decimal("-0.045")
+
+        for sym in NOV5_WINNER_SYMBOLS:
+            if sym not in insts or sym not in quotes:
+                continue
+            out["attrition_counts_across_168_scans"]["total_symbol_scans"] += 1
+            inst = insts[sym]
+            q = quotes[sym]
+            c1h = await market.candles(inst, "1h", 240)
+            c4h = await market.candles(inst, "4h", 480)
+            c1w = await market.candles(inst, "1w", 40)
+            deriv = await market.derivatives_snapshot(inst)
+
+            vol_rank = vol_ranks_by_cutoff.get(cutoff_ms, {}).get(sym, 999)
+            sym_sum = out["summary_by_symbol"][sym]
+            sym_sum["min_volume_rank_522"] = min(sym_sum["min_volume_rank_522"], vol_rank)
+            sym_sum["max_volume_rank_522"] = max(sym_sum["max_volume_rank_522"], vol_rank)
+            if vol_rank > 320:
+                sym_sum["scans_outside_top320_vol"] += 1
+                out["attrition_counts_across_168_scans"]["stage0_outside_top320_volume"] += 1
+
+            # Stage 1 (un-enriched) check
+            s1_trace: dict[str, Any] = {}
+            with trace_and_challenger_context(enable_multi_hypothesis=False, trace_out=s1_trace):
+                s1_opps = await screener._evaluate_single(
+                    inst=inst,
+                    quote=q,
+                    market=market,
+                    derivatives_port=None,
+                    btc_candles=btc_1h,
+                    macro_context=macro_ctx,
+                    mode=ScreenerMode.ACCUMULATION,
+                    target_direction=Direction.LONG,
+                    is_btc_cascade=is_btc_cascade,
+                    btc_ret_1h=btc_ret_1h,
+                    preloaded_candles=(c1h, c4h, c1w),
+                    explicit_derivatives=None,
+                )
+            if s1_opps:
+                sym_sum["control_stage1_pass"] += 1
+                out["attrition_counts_across_168_scans"]["passed_stage1_un_enriched_control"] += 1
+
+            # Stage 2 Control
+            ctrl_trace: dict[str, Any] = {}
+            with trace_and_challenger_context(enable_multi_hypothesis=False, trace_out=ctrl_trace):
+                ctrl_opps = await screener._evaluate_single(
+                    inst=inst,
+                    quote=q,
+                    market=market,
+                    derivatives_port=None,
+                    btc_candles=btc_1h,
+                    macro_context=macro_ctx,
+                    mode=ScreenerMode.ACCUMULATION,
+                    target_direction=Direction.LONG,
+                    is_btc_cascade=is_btc_cascade,
+                    btc_ret_1h=btc_ret_1h,
+                    preloaded_candles=(c1h, c4h, c1w),
+                    explicit_derivatives=deriv,
+                )
+            ctrl_opp: CryptoOpportunity | None = ctrl_opps[0] if ctrl_opps else None
+            ctrl_reasons = (
+                publication_rejection_reasons(ctrl_opp, coi_score=50.0)
+                if ctrl_opp is not None
+                else ("no_stage2_opportunity",)
+            )
+
+            # Stage 2 Challenger (Multi-Hypothesis)
+            chal_trace: dict[str, Any] = {}
+            with trace_and_challenger_context(enable_multi_hypothesis=True, trace_out=chal_trace):
+                chal_opps = await screener._evaluate_single(
+                    inst=inst,
+                    quote=q,
+                    market=market,
+                    derivatives_port=None,
+                    btc_candles=btc_1h,
+                    macro_context=macro_ctx,
+                    mode=ScreenerMode.ACCUMULATION,
+                    target_direction=Direction.LONG,
+                    is_btc_cascade=is_btc_cascade,
+                    btc_ret_1h=btc_ret_1h,
+                    preloaded_candles=(c1h, c4h, c1w),
+                    explicit_derivatives=deriv,
+                )
+            chal_opp: CryptoOpportunity | None = chal_opps[0] if chal_opps else None
+            chal_reasons = (
+                publication_rejection_reasons(chal_opp, coi_score=50.0)
+                if chal_opp is not None
+                else ("no_stage2_opportunity",)
+            )
+
+            cands = ctrl_trace.get("candidate_archetypes", [])
+            ctrl_att = ctrl_trace.get("attempts", [{}])[0] if ctrl_trace.get("attempts") else {}
+            if cands:
+                sym_sum["scans_matching_archetype"] += 1
+            if ctrl_att.get("gates_passed"):
+                sym_sum["control_gate_pass"] += 1
+            if ctrl_opp is not None and not ctrl_reasons:
+                sym_sum["control_stage2_published"] += 1
+                sym_sum["published_horizons_control"].append(f"T-{h}h ({cutoff_dt.strftime('%m-%d %H:%MZ')})")
+                out["attrition_counts_across_168_scans"]["passed_stage2_publication_control"] += 1
+
+            chal_atts = chal_trace.get("attempts", [])
+            if any(a.get("gates_passed") for a in chal_atts):
+                sym_sum["challenger_gate_pass"] += 1
+            if chal_opp is not None and not chal_reasons:
+                sym_sum["challenger_stage2_published"] += 1
+                sym_sum["published_horizons_challenger"].append(f"T-{h}h ({cutoff_dt.strftime('%m-%d %H:%MZ')})")
+                out["attrition_counts_across_168_scans"]["passed_stage2_publication_challenger"] += 1
+
+            # Attribute exact Stage 2 Control bottleneck
+            if not cands or ctrl_att.get("archetype") is None:
+                b_key = "1_no_archetype_matched"
+                out["attrition_counts_across_168_scans"]["no_archetype_matched"] += 1
+            elif "gates_passed" not in ctrl_att:
+                b_key = f"2_pre_gate_veto({ctrl_att.get('archetype')})"
+                out["attrition_counts_across_168_scans"]["failed_domain_gates_L1_L6"] += 1
+            elif not ctrl_att.get("gates_passed"):
+                b_key = f"3_failed_gates_{'+'.join(ctrl_att.get('failed_gates', []))}({ctrl_att.get('archetype')})"
+                out["attrition_counts_across_168_scans"]["failed_domain_gates_L1_L6"] += 1
+            elif ctrl_opp is None:
+                b_key = f"4_failed_absorption_{ctrl_att.get('absorption_score')}({ctrl_att.get('archetype')})"
+                out["attrition_counts_across_168_scans"]["failed_stage2_absorption_below_35"] += 1
+            elif ctrl_reasons:
+                b_key = f"5_failed_publication_{'+'.join(ctrl_reasons)}({ctrl_opp.setup_label.value})"
+                out["attrition_counts_across_168_scans"]["failed_publication_policy"] += 1
+            else:
+                b_key = f"6_PUBLISHED({ctrl_opp.setup_label.value})"
+
+            sym_sum["primary_rejection_bottlenecks"][b_key] = (
+                sym_sum["primary_rejection_bottlenecks"].get(b_key, 0) + 1
+            )
+
+            out["scans_by_symbol"][sym].append(
+                {
+                    "horizon_hours_ago": h,
+                    "cutoff_utc": cutoff_dt.isoformat(),
+                    "close": str(q.last),
+                    "chg_24h_pct": round(float(q.price_change_pct_24h), 2),
+                    "vol_rank_522": vol_rank,
+                    "funding_rate": str(deriv.funding_rate) if deriv.funding_rate is not None else None,
+                    "oi_change_4h_pct": round(float(deriv.open_interest_change_4h) * 100, 2) if deriv.open_interest_change_4h is not None else None,
+                    "oi_change_7d_pct": round(float(deriv.open_interest_change_7d) * 100, 2) if deriv.open_interest_change_7d is not None else None,
+                    "candidate_archetypes": cands,
+                    "stage1_passed": bool(s1_opps),
+                    "stage1_trace": s1_trace.get("attempts", []),
+                    "control_stage2_bottleneck": b_key,
+                    "control_stage2_published": bool(ctrl_opp is not None and not ctrl_reasons),
+                    "control_score": float(ctrl_opp.score) if ctrl_opp else None,
+                    "control_conviction": float(ctrl_opp.conviction) if (ctrl_opp and ctrl_opp.conviction is not None) else None,
+                    "control_rr": float(ctrl_opp.risk_reward_ratio) if ctrl_opp else None,
+                    "challenger_stage2_published": bool(chal_opp is not None and not chal_reasons),
+                    "challenger_setup": chal_opp.setup_label.value if chal_opp else None,
+                    "challenger_score": float(chal_opp.score) if chal_opp else None,
+                    "challenger_rr": float(chal_opp.risk_reward_ratio) if chal_opp else None,
+                }
+            )
+
+    NOV5_DIAG_PATH.write_text(json.dumps(out, indent=2))
+    print("\n=== NOV 4/5 TOP GAINERS COUNTERFACTUAL PIPELINE SUMMARY (12 Scans: Nov 3 12:00Z to Nov 5 08:00Z) ===")
+    print("Aggregate across 168 symbol-scans:", json.dumps(out["attrition_counts_across_168_scans"], indent=2))
+    for sym in NOV5_WINNER_SYMBOLS:
+        s = out["summary_by_symbol"][sym]
+        print(
+            f"{sym:<12} | VolRank={s['min_volume_rank_522']:3d}..{s['max_volume_rank_522']:3d} "
+            f"(>320: {s['scans_outside_top320_vol']:2d}/12) | "
+            f"ArchMatch={s['scans_matching_archetype']:2d}/12 | "
+            f"CtrlGate={s['control_gate_pass']:2d}/12, S1Pass={s['control_stage1_pass']:2d}/12, S2Pub={s['control_stage2_published']:2d}/12 | "
+            f"ChalGate={s['challenger_gate_pass']:2d}/12, S2Pub={s['challenger_stage2_published']:2d}/12 | "
+            f"CtrlPubAt={s['published_horizons_control']} | ChalPubAt={s['published_horizons_challenger']}"
+        )
+        print(f"             Bottlenecks: {s['primary_rejection_bottlenecks']}")
+
+
+async def main() -> None:
+    if not NOV5_RAW_PATH.exists():
+        await fetch_nov5_inputs()
+    await run_counterfactual_trace()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

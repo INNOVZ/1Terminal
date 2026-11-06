@@ -1,0 +1,2 @@
+2026-11-05 09:01:02 [info     ] universe_liquidity_filtered    core_selected=259 discovery_selected=61 eligible=547 liquid=504 mode=all total=942 total_selected=320
+2026-11-05 09:01:19 [info     ] binance_scan_weight_budget     budget_cap=1300 rate_limit_ceiling=2400 stage0_weight=56 stage1_symbols=320 stage1_weight=1282 stage2_candidates=22 stage2_weight=44 total_estimated_weight=1382

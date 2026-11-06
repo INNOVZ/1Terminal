@@ -1,0 +1,318 @@
+{
+  "version": 1,
+  "artifact": {
+    "identity": "ec5b83a8-b892-473e-a0e6-69425fb35c5e",
+    "revision": "3f9b36f5e5f34c892e886b6aca86bfb8fc860d57",
+    "view": "24h and 48h immutable research reports"
+  },
+  "categories": [
+    {
+      "id": "source",
+      "label": "Source authority and confidence",
+      "applicable": true,
+      "assessment": "VM archive checksums and public Binance historical candles; no account data."
+    },
+    {
+      "id": "value",
+      "label": "SQL/value accuracy",
+      "applicable": true,
+      "assessment": "Both reports reconciled to independently recalculated archived inputs. No SQL involved."
+    },
+    {
+      "id": "chart",
+      "label": "Within-chart agreement",
+      "applicable": false,
+      "reason": "No charts in this review.",
+      "assessment": "No charts in this review."
+    },
+    {
+      "id": "details",
+      "label": "Complete source details",
+      "applicable": false,
+      "reason": "No interactive source-detail surfaces in scope.",
+      "assessment": "No interactive source-detail surfaces in the scoped artifact; provenance is retained in the audit note."
+    },
+    {
+      "id": "cross",
+      "label": "Cross-artifact consistency",
+      "applicable": true,
+      "assessment": "Report references match archived rank/outcome checksums and selected observations."
+    },
+    {
+      "id": "quality",
+      "label": "Data-quality controls",
+      "applicable": true,
+      "assessment": "Both horizons have incomplete forward outcomes; 48h also fails cadence. Missing values remain unknown."
+    },
+    {
+      "id": "conclusion",
+      "label": "Conclusion support",
+      "applicable": true,
+      "assessment": "Descriptive findings supported; predictive edge remains unverified with one cohort and incomplete outcomes."
+    },
+    {
+      "id": "clarity",
+      "label": "Analytical clarity",
+      "applicable": true,
+      "assessment": "Frozen prospective results are separated from retrospective supplemental prices."
+    },
+    {
+      "id": "interaction",
+      "label": "Visual and interaction consistency",
+      "applicable": false,
+      "reason": "No UI in the audited artifact.",
+      "assessment": "No dashboard or UI changed or audited."
+    },
+    {
+      "id": "usefulness",
+      "label": "Study usefulness and completeness",
+      "applicable": true,
+      "assessment": "Both horizons lack the intended complete cohort price comparison."
+    }
+  ],
+  "units": [
+    {
+      "id": "report-24",
+      "label": "24h report",
+      "kind": "component",
+      "revision": "f9e51a15e670f3b9ebe25b58a799bf72985753840a229a3319bc1b4513413c0f",
+      "categories": {
+        "source": {
+          "checks": [
+            {
+              "id": "source-24",
+              "revision": "f9e51a15e670f3b9ebe25b58a799bf72985753840a229a3319bc1b4513413c0f",
+              "state": "passed",
+              "evidence": [
+                "2026-11-02-observation-review.md#24h-results"
+              ]
+            }
+          ],
+          "findings": []
+        },
+        "value": {
+          "checks": [
+            {
+              "id": "value-24",
+              "revision": "f9e51a15e670f3b9ebe25b58a799bf72985753840a229a3319bc1b4513413c0f",
+              "state": "passed",
+              "evidence": [
+                "2026-11-02-observation-review.md#24h-results"
+              ]
+            }
+          ],
+          "findings": []
+        },
+        "cross": {
+          "checks": [
+            {
+              "id": "cross-24",
+              "revision": "f9e51a15e670f3b9ebe25b58a799bf72985753840a229a3319bc1b4513413c0f",
+              "state": "passed",
+              "evidence": [
+                "2026-11-02-observation-review.md#24h-results"
+              ]
+            }
+          ],
+          "findings": []
+        },
+        "quality": {
+          "checks": [
+            {
+              "id": "quality-24",
+              "revision": "f9e51a15e670f3b9ebe25b58a799bf72985753840a229a3319bc1b4513413c0f",
+              "state": "failed",
+              "evidence": [
+                "2026-11-02-observation-review.md#24h-results"
+              ]
+            }
+          ],
+          "findings": [
+            {
+              "id": "quality-incomplete-24",
+              "status": "open",
+              "checkIds": [
+                "quality-24"
+              ]
+            }
+          ]
+        },
+        "clarity": {
+          "checks": [
+            {
+              "id": "clarity-24",
+              "revision": "f9e51a15e670f3b9ebe25b58a799bf72985753840a229a3319bc1b4513413c0f",
+              "state": "passed",
+              "evidence": [
+                "2026-11-02-observation-review.md#24h-results"
+              ]
+            }
+          ],
+          "findings": []
+        },
+        "usefulness": {
+          "checks": [
+            {
+              "id": "usefulness-24",
+              "revision": "f9e51a15e670f3b9ebe25b58a799bf72985753840a229a3319bc1b4513413c0f",
+              "state": "failed",
+              "evidence": [
+                "2026-11-02-observation-review.md#24h-results"
+              ]
+            }
+          ],
+          "findings": [
+            {
+              "id": "usefulness-incomplete-24",
+              "status": "open",
+              "checkIds": [
+                "usefulness-24"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "report-48",
+      "label": "48h report",
+      "kind": "component",
+      "revision": "4a3f704d91b8f287e4fb8eac65136ed1777f948951b5fd16b8de1d0814841d00",
+      "categories": {
+        "source": {
+          "checks": [
+            {
+              "id": "source-48",
+              "revision": "4a3f704d91b8f287e4fb8eac65136ed1777f948951b5fd16b8de1d0814841d00",
+              "state": "passed",
+              "evidence": [
+                "2026-11-02-observation-review.md#48h-results"
+              ]
+            }
+          ],
+          "findings": []
+        },
+        "value": {
+          "checks": [
+            {
+              "id": "value-48",
+              "revision": "4a3f704d91b8f287e4fb8eac65136ed1777f948951b5fd16b8de1d0814841d00",
+              "state": "passed",
+              "evidence": [
+                "2026-11-02-observation-review.md#48h-results"
+              ]
+            }
+          ],
+          "findings": []
+        },
+        "cross": {
+          "checks": [
+            {
+              "id": "cross-48",
+              "revision": "4a3f704d91b8f287e4fb8eac65136ed1777f948951b5fd16b8de1d0814841d00",
+              "state": "passed",
+              "evidence": [
+                "2026-11-02-observation-review.md#48h-results"
+              ]
+            }
+          ],
+          "findings": []
+        },
+        "quality": {
+          "checks": [
+            {
+              "id": "quality-48",
+              "revision": "4a3f704d91b8f287e4fb8eac65136ed1777f948951b5fd16b8de1d0814841d00",
+              "state": "failed",
+              "evidence": [
+                "2026-11-02-observation-review.md#48h-results"
+              ]
+            }
+          ],
+          "findings": [
+            {
+              "id": "quality-incomplete-48",
+              "status": "open",
+              "checkIds": [
+                "quality-48"
+              ]
+            }
+          ]
+        },
+        "clarity": {
+          "checks": [
+            {
+              "id": "clarity-48",
+              "revision": "4a3f704d91b8f287e4fb8eac65136ed1777f948951b5fd16b8de1d0814841d00",
+              "state": "passed",
+              "evidence": [
+                "2026-11-02-observation-review.md#48h-results"
+              ]
+            }
+          ],
+          "findings": []
+        },
+        "usefulness": {
+          "checks": [
+            {
+              "id": "usefulness-48",
+              "revision": "4a3f704d91b8f287e4fb8eac65136ed1777f948951b5fd16b8de1d0814841d00",
+              "state": "failed",
+              "evidence": [
+                "2026-11-02-observation-review.md#48h-results"
+              ]
+            }
+          ],
+          "findings": [
+            {
+              "id": "usefulness-incomplete-48",
+              "status": "open",
+              "checkIds": [
+                "usefulness-48"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "descriptive-result",
+      "label": "Observed membership and price findings",
+      "kind": "claim",
+      "revision": "3f9b36f5e5f34c892e886b6aca86bfb8fc860d57",
+      "categories": {
+        "conclusion": {
+          "checks": [
+            {
+              "id": "observed-data-support",
+              "revision": "3f9b36f5e5f34c892e886b6aca86bfb8fc860d57",
+              "state": "passed",
+              "evidence": [
+                "2026-11-02-observation-review.md#candidate-results"
+              ]
+            }
+          ],
+          "findings": []
+        }
+      }
+    },
+    {
+      "id": "strategy-edge",
+      "label": "Repeatable predictive edge",
+      "kind": "question",
+      "revision": "3f9b36f5e5f34c892e886b6aca86bfb8fc860d57",
+      "categories": {
+        "conclusion": {
+          "checks": [
+            {
+              "id": "multi-cohort-edge",
+              "state": "unverified",
+              "evidence": []
+            }
+          ],
+          "findings": []
+        }
+      }
+    }
+  ]
+}

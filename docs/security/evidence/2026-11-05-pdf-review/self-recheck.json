@@ -1,0 +1,14 @@
+{
+  "morning": {
+    "reproduced_byte_identically": true,
+    "input_hashes": 26,
+    "sha256": "abef42c7b8af82dfac872eef146b16da7787b730339648461126d23230ccc655",
+    "performance_claims_permitted": false
+  },
+  "afternoon": {
+    "reproduced_byte_identically": true,
+    "input_hashes": 28,
+    "sha256": "3b548d5f23614e6fb7e6e14dcbf096212f9967ba4f1ebe6e0694bf9d5ed44afc",
+    "performance_claims_permitted": false
+  }
+}

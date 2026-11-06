@@ -1,0 +1,102 @@
+{
+  "window_a": [
+    {
+      "arm": "1. Current Pre-Breakout Coiled Core (Stage 1 Un-enriched Proxy)",
+      "mfe": "6.045954934714955707928011483",
+      "mae": "-3.048672413041145692904501131",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "2.420542193011583703612332821"
+    },
+    {
+      "arm": "2. Repaired Pre-Breakout Coiled Core (Track 2 Challenger)",
+      "mfe": "6.867922918540936255653217617",
+      "mae": "-3.196380871865127712968921191",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "3.044822103005193468117579385"
+    },
+    {
+      "arm": "3. Watch W1: Stealth Flow & OI Divergence",
+      "mfe": "10.05486320984724957358573278",
+      "mae": "-4.81538068950197730396822692",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "0.5477334319945909988843319567"
+    },
+    {
+      "arm": "4. Watch W2: Deep-Value / Bottom Reclaim",
+      "mfe": "4.854429202765380239782970133",
+      "mae": "-6.477369618700117217433840273",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "-4.346895420153616874928350335"
+    },
+    {
+      "arm": "5. Watch W3: Post-Impulse High-Tight Flag",
+      "mfe": "8.30096789949144924624600550",
+      "mae": "-8.788806376914242284218905226",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "-3.581269411093247306553112415"
+    },
+    {
+      "arm": "6. Combined Dual-Track System (6 Coiled Core + 6 Watch)",
+      "mfe": "7.96698530919479396556921020",
+      "mae": "-5.297756811920341453078389772",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "1.102058171870692604189080694"
+    }
+  ],
+  "window_b": [
+    {
+      "arm": "1. Current Pre-Breakout Coiled Core (Stage 1 Un-enriched Proxy)",
+      "mfe": "9.03101658747328214441032805",
+      "mae": "-1.199743423280359618438237385",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "2.430459252735115309446444623"
+    },
+    {
+      "arm": "2. Repaired Pre-Breakout Coiled Core (Track 2 Challenger)",
+      "mfe": "9.63439739359386214032276515",
+      "mae": "-2.114504949976535656836698344",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "1.976832748563576799677737588"
+    },
+    {
+      "arm": "3. Watch W1: Stealth Flow & OI Divergence",
+      "mfe": "7.145544356561022247143513822",
+      "mae": "-4.448815990923914071170804512",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "-1.010514253444023600779102896"
+    },
+    {
+      "arm": "4. Watch W2: Deep-Value / Bottom Reclaim",
+      "mfe": "10.52779563688813992815480199",
+      "mae": "-2.16130202053986106165586642",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "1.181465453560146771748559597"
+    },
+    {
+      "arm": "5. Watch W3: Post-Impulse High-Tight Flag",
+      "mfe": "9.074131110341673406540179678",
+      "mae": "-7.756898906170422805190221788",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "-3.54139986485765572699333503"
+    },
+    {
+      "arm": "6. Combined Dual-Track System (6 Coiled Core + 6 Watch)",
+      "mfe": "13.99986784895446107777188857",
+      "mae": "-3.398224867348556246705908352",
+      "positive_mae_members": 0,
+      "negative_mfe_members": 0,
+      "mean_return_without_largest_contributor": "4.117670795565058604784757773"
+    }
+  ]
+}

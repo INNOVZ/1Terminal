@@ -1,0 +1,355 @@
+{
+  "window_a": {
+    "window": "Window A: Nov 3 23:59Z -> Nov 4 23:59Z (24h Forward)",
+    "eligible_universe_count": 321,
+    "universe_baseline": {
+      "mean_24h_ret_pct": 2.01,
+      "mean_24h_mfe_pct": 6.4,
+      "mean_24h_mae_pct": -4.83,
+      "mfe_to_mae_ratio": 1.33
+    },
+    "strategies_at_12_slot_budget": [
+      {
+        "name": "1. Current Pre-Breakout Coiled Core (Stage 1 Un-enriched Proxy)",
+        "total_qualified": 14,
+        "budget_selected": 12,
+        "selected_symbols": [
+          "PORTALUSDT",
+          "USDCUSDT",
+          "CCUSDT",
+          "FLUIDUSDT",
+          "PREDICTUSDT",
+          "XRPUSDT",
+          "KMNOUSDT",
+          "KAVAUSDT",
+          "AEROUSDT",
+          "XMRUSDT",
+          "CAKEUSDT",
+          "AUSDT"
+        ],
+        "top10_hits": 1,
+        "top10_hit_symbols": [
+          "FLUIDUSDT"
+        ],
+        "mean_24h_ret_pct": 4.01,
+        "mean_24h_mfe_pct": 6.05,
+        "mean_24h_mae_pct": -3.05,
+        "mfe_to_mae_ratio": 1.98,
+        "pct_reaching_5pct_mfe": 58.3,
+        "pct_reaching_10pct_mfe": 16.7,
+        "pct_positive_24h_close": 83.3
+      },
+      {
+        "name": "2. Repaired Pre-Breakout Coiled Core (Track 2 Challenger)",
+        "total_qualified": 13,
+        "budget_selected": 12,
+        "selected_symbols": [
+          "PORTALUSDT",
+          "USDCUSDT",
+          "SKRUSDT",
+          "CCUSDT",
+          "POWERUSDT",
+          "FLUIDUSDT",
+          "RAVEUSDT",
+          "KMNOUSDT",
+          "PREDICTUSDT",
+          "CAKEUSDT",
+          "XMRUSDT",
+          "XRPUSDT"
+        ],
+        "top10_hits": 1,
+        "top10_hit_symbols": [
+          "FLUIDUSDT"
+        ],
+        "mean_24h_ret_pct": 4.58,
+        "mean_24h_mfe_pct": 6.87,
+        "mean_24h_mae_pct": -3.2,
+        "mfe_to_mae_ratio": 2.15,
+        "pct_reaching_5pct_mfe": 66.7,
+        "pct_reaching_10pct_mfe": 16.7,
+        "pct_positive_24h_close": 83.3
+      },
+      {
+        "name": "3. Watch W1: Stealth Flow & OI Divergence",
+        "total_qualified": 4,
+        "budget_selected": 4,
+        "selected_symbols": [
+          "USDCUSDT",
+          "FLUIDUSDT",
+          "AIOUSDT",
+          "2ZUSDT"
+        ],
+        "top10_hits": 1,
+        "top10_hit_symbols": [
+          "FLUIDUSDT"
+        ],
+        "mean_24h_ret_pct": 5.79,
+        "mean_24h_mfe_pct": 10.05,
+        "mean_24h_mae_pct": -4.82,
+        "mfe_to_mae_ratio": 2.09,
+        "pct_reaching_5pct_mfe": 75.0,
+        "pct_reaching_10pct_mfe": 50.0,
+        "pct_positive_24h_close": 50.0
+      },
+      {
+        "name": "4. Watch W2: Deep-Value / Bottom Reclaim",
+        "total_qualified": 3,
+        "budget_selected": 3,
+        "selected_symbols": [
+          "2ZUSDT",
+          "AVNTUSDT",
+          "PLAYUSDT"
+        ],
+        "top10_hits": 0,
+        "top10_hit_symbols": [],
+        "mean_24h_ret_pct": -1.39,
+        "mean_24h_mfe_pct": 4.85,
+        "mean_24h_mae_pct": -6.48,
+        "mfe_to_mae_ratio": 0.75,
+        "pct_reaching_5pct_mfe": 66.7,
+        "pct_reaching_10pct_mfe": 0.0,
+        "pct_positive_24h_close": 33.3
+      },
+      {
+        "name": "5. Watch W3: Post-Impulse High-Tight Flag",
+        "total_qualified": 5,
+        "budget_selected": 5,
+        "selected_symbols": [
+          "AIOUSDT",
+          "ICNTUSDT",
+          "BMTUSDT",
+          "HOTUSDT",
+          "RUNEUSDT"
+        ],
+        "top10_hits": 0,
+        "top10_hit_symbols": [],
+        "mean_24h_ret_pct": -1.05,
+        "mean_24h_mfe_pct": 8.3,
+        "mean_24h_mae_pct": -8.79,
+        "mfe_to_mae_ratio": 0.94,
+        "pct_reaching_5pct_mfe": 40.0,
+        "pct_reaching_10pct_mfe": 40.0,
+        "pct_positive_24h_close": 60.0
+      },
+      {
+        "name": "6. Combined Dual-Track System (6 Coiled Core + 6 Watch)",
+        "total_qualified": 12,
+        "budget_selected": 12,
+        "selected_symbols": [
+          "PORTALUSDT",
+          "USDCUSDT",
+          "SKRUSDT",
+          "CCUSDT",
+          "POWERUSDT",
+          "FLUIDUSDT",
+          "AIOUSDT",
+          "2ZUSDT",
+          "AVNTUSDT",
+          "PLAYUSDT",
+          "ICNTUSDT",
+          "BMTUSDT"
+        ],
+        "top10_hits": 1,
+        "top10_hit_symbols": [
+          "FLUIDUSDT"
+        ],
+        "mean_24h_ret_pct": 2.8,
+        "mean_24h_mfe_pct": 7.97,
+        "mean_24h_mae_pct": -5.3,
+        "mfe_to_mae_ratio": 1.5,
+        "pct_reaching_5pct_mfe": 66.7,
+        "pct_reaching_10pct_mfe": 25.0,
+        "pct_positive_24h_close": 58.3
+      }
+    ]
+  },
+  "window_b": {
+    "window": "Window B: Nov 4 08:59Z -> Nov 5 09:00Z (24h Forward)",
+    "eligible_universe_count": 351,
+    "universe_baseline": {
+      "mean_24h_ret_pct": 1.63,
+      "mean_24h_mfe_pct": 5.83,
+      "mean_24h_mae_pct": -3.04,
+      "mfe_to_mae_ratio": 1.92
+    },
+    "strategies_at_12_slot_budget": [
+      {
+        "name": "1. Current Pre-Breakout Coiled Core (Stage 1 Un-enriched Proxy)",
+        "total_qualified": 87,
+        "budget_selected": 12,
+        "selected_symbols": [
+          "ELSAUSDT",
+          "IDUSDT",
+          "ATHUSDT",
+          "AKTUSDT",
+          "USDCUSDT",
+          "JSTUSDT",
+          "ASTERUSDT",
+          "UNIUSDT",
+          "FORMUSDT",
+          "ETHUSDT",
+          "BTCUSDT",
+          "BNBUSDT"
+        ],
+        "top10_hits": 1,
+        "top10_hit_symbols": [
+          "ELSAUSDT"
+        ],
+        "mean_24h_ret_pct": 7.65,
+        "mean_24h_mfe_pct": 9.03,
+        "mean_24h_mae_pct": -1.2,
+        "mfe_to_mae_ratio": 7.53,
+        "pct_reaching_5pct_mfe": 25.0,
+        "pct_reaching_10pct_mfe": 8.3,
+        "pct_positive_24h_close": 91.7
+      },
+      {
+        "name": "2. Repaired Pre-Breakout Coiled Core (Track 2 Challenger)",
+        "total_qualified": 115,
+        "budget_selected": 12,
+        "selected_symbols": [
+          "USELESSUSDT",
+          "ELSAUSDT",
+          "IDUSDT",
+          "ATHUSDT",
+          "AKTUSDT",
+          "JSTUSDT",
+          "FORMUSDT",
+          "UNIUSDT",
+          "WLDUSDT",
+          "LTCUSDT",
+          "ASTERUSDT",
+          "\u725b\u6765USDT"
+        ],
+        "top10_hits": 1,
+        "top10_hit_symbols": [
+          "ELSAUSDT"
+        ],
+        "mean_24h_ret_pct": 7.23,
+        "mean_24h_mfe_pct": 9.63,
+        "mean_24h_mae_pct": -2.11,
+        "mfe_to_mae_ratio": 4.56,
+        "pct_reaching_5pct_mfe": 33.3,
+        "pct_reaching_10pct_mfe": 8.3,
+        "pct_positive_24h_close": 83.3
+      },
+      {
+        "name": "3. Watch W1: Stealth Flow & OI Divergence",
+        "total_qualified": 9,
+        "budget_selected": 9,
+        "selected_symbols": [
+          "FLUIDUSDT",
+          "CGPTUSDT",
+          "LSKUSDT",
+          "IDUSDT",
+          "AKTUSDT",
+          "WLDUSDT",
+          "BMTUSDT",
+          "MOVRUSDT",
+          "USDCUSDT"
+        ],
+        "top10_hits": 1,
+        "top10_hit_symbols": [
+          "FLUIDUSDT"
+        ],
+        "mean_24h_ret_pct": 1.44,
+        "mean_24h_mfe_pct": 7.15,
+        "mean_24h_mae_pct": -4.45,
+        "mfe_to_mae_ratio": 1.61,
+        "pct_reaching_5pct_mfe": 44.4,
+        "pct_reaching_10pct_mfe": 22.2,
+        "pct_positive_24h_close": 55.6
+      },
+      {
+        "name": "4. Watch W2: Deep-Value / Bottom Reclaim",
+        "total_qualified": 29,
+        "budget_selected": 12,
+        "selected_symbols": [
+          "LSKUSDT",
+          "MUBARAKUSDT",
+          "SKYAIUSDT",
+          "JCTUSDT",
+          "1000LUNCUSDT",
+          "MARSCOINUSDT",
+          "BCHUSDT",
+          "NEARUSDT",
+          "LINKUSDT",
+          "TIAUSDT",
+          "ALTUSDT",
+          "KATUSDT"
+        ],
+        "top10_hits": 1,
+        "top10_hit_symbols": [
+          "JCTUSDT"
+        ],
+        "mean_24h_ret_pct": 4.65,
+        "mean_24h_mfe_pct": 10.53,
+        "mean_24h_mae_pct": -2.16,
+        "mfe_to_mae_ratio": 4.87,
+        "pct_reaching_5pct_mfe": 58.3,
+        "pct_reaching_10pct_mfe": 16.7,
+        "pct_positive_24h_close": 75.0
+      },
+      {
+        "name": "5. Watch W3: Post-Impulse High-Tight Flag",
+        "total_qualified": 9,
+        "budget_selected": 9,
+        "selected_symbols": [
+          "FLUIDUSDT",
+          "BMTUSDT",
+          "AIOUSDT",
+          "\u725b\u6765USDT",
+          "PONSUSDT",
+          "CTUSDT",
+          "IDOLUSDT",
+          "HAEDALUSDT",
+          "POWRUSDT"
+        ],
+        "top10_hits": 2,
+        "top10_hit_symbols": [
+          "FLUIDUSDT",
+          "AIOUSDT"
+        ],
+        "mean_24h_ret_pct": -0.81,
+        "mean_24h_mfe_pct": 9.07,
+        "mean_24h_mae_pct": -7.76,
+        "mfe_to_mae_ratio": 1.17,
+        "pct_reaching_5pct_mfe": 66.7,
+        "pct_reaching_10pct_mfe": 22.2,
+        "pct_positive_24h_close": 44.4
+      },
+      {
+        "name": "6. Combined Dual-Track System (6 Coiled Core + 6 Watch)",
+        "total_qualified": 12,
+        "budget_selected": 12,
+        "selected_symbols": [
+          "USELESSUSDT",
+          "ELSAUSDT",
+          "IDUSDT",
+          "ATHUSDT",
+          "AKTUSDT",
+          "JSTUSDT",
+          "FLUIDUSDT",
+          "CGPTUSDT",
+          "LSKUSDT",
+          "MUBARAKUSDT",
+          "BMTUSDT",
+          "AIOUSDT"
+        ],
+        "top10_hits": 3,
+        "top10_hit_symbols": [
+          "ELSAUSDT",
+          "FLUIDUSDT",
+          "AIOUSDT"
+        ],
+        "mean_24h_ret_pct": 9.19,
+        "mean_24h_mfe_pct": 14.0,
+        "mean_24h_mae_pct": -3.4,
+        "mfe_to_mae_ratio": 4.12,
+        "pct_reaching_5pct_mfe": 66.7,
+        "pct_reaching_10pct_mfe": 33.3,
+        "pct_positive_24h_close": 91.7
+      }
+    ]
+  }
+}

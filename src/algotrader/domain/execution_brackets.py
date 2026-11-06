@@ -188,12 +188,8 @@ def build_long_bracket(
             if t3 <= t2:
                 t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
 
-        suggested_entry = min(close, retest_entry)
-        invalidation_stop = retest_stop
-        if invalidation_stop >= suggested_entry:
-            invalidation_stop = floor_to_increment(suggested_entry - min_retest_risk, tick_size)
-        if invalidation_stop >= suggested_entry:
-            invalidation_stop = floor_to_increment(suggested_entry - tick_size, tick_size)
+        suggested_entry = effective_entry
+        invalidation_stop = effective_stop
     else:
         effective_entry = retest_entry
         effective_stop = retest_stop
@@ -369,8 +365,8 @@ def build_short_bracket(
     if invalidation_stop <= suggested_entry:
         invalidation_stop = normalize_price(suggested_entry + tick_size, tick_size)
 
-    risk_unit = max(invalidation_stop - effective_entry, min_short_risk)
-    risk_unit = max(risk_unit, EPSILON)
+    effective_entry = suggested_entry
+    risk_unit = max(invalidation_stop - effective_entry, EPSILON)
 
     r_t1 = (abs(t1 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
     r_t2 = (abs(t2 - effective_entry) / risk_unit).quantize(Decimal("0.01"))

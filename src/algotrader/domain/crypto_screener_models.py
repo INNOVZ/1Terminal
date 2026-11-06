@@ -159,6 +159,11 @@ class CryptoOpportunity:
     breakout_readiness_status: str = "RETEST_ONLY_WAIT_FOR_DIP"
     candles: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     is_discovery_tier: bool = False
+    taker_ratio_1h: Decimal | None = None
+    taker_ratio_4h: Decimal | None = None
+    taker_ratio_24h: Decimal | None = None
+    taker_ratio_window_hours: int | None = None
+    risk_reward_target_index: int = 2
 
     def as_dict(self) -> dict[str, object]:
         tick = self.instrument.price_tick
@@ -195,6 +200,7 @@ class CryptoOpportunity:
             "suggested_stop": _fmt(self.suggested_stop),
             "suggested_targets": [_fmt(t) for t in self.suggested_targets],
             "risk_reward_ratio": str(self.risk_reward_ratio),
+            "risk_reward_target_index": self.risk_reward_target_index,
             "estimated_win_rate_pct": str(self.estimated_win_rate_pct),
             "expected_value_r": str(self.expected_value_r),
             "conviction": str(self.conviction) if self.conviction is not None else str(self.score),
@@ -206,6 +212,10 @@ class CryptoOpportunity:
             "oi_change_1h_pct": f"{float((self.oi_change_1h or Decimal('0')) * 100):+.2f}%" if self.oi_change_1h is not None else "N/A",
             "oi_change_7d_pct": f"{float((self.oi_change_7d or Decimal('0')) * 100):+.2f}%" if self.oi_change_7d is not None else "N/A",
             "taker_buy_sell_ratio": f"{float(self.taker_ratio):.4f}" if self.taker_ratio is not None else "N/A",
+            "taker_buy_sell_ratio_window_hours": self.taker_ratio_window_hours,
+            "taker_buy_sell_ratio_1h": f"{float(self.taker_ratio_1h):.4f}" if self.taker_ratio_1h is not None else "N/A",
+            "taker_buy_sell_ratio_4h": f"{float(self.taker_ratio_4h):.4f}" if self.taker_ratio_4h is not None else "N/A",
+            "taker_buy_sell_ratio_24h": f"{float(self.taker_ratio_24h):.4f}" if self.taker_ratio_24h is not None else "N/A",
             "cvd_24h": str(self.cvd_24h) if self.cvd_24h is not None else "N/A",
             "cvd_z_score": str(self.cvd_z_score) if self.cvd_z_score is not None else "N/A",
             "orderflow_absorption": self.orderflow_absorption,
@@ -319,4 +329,3 @@ def calculate_opportunity_win_rate_and_ev(
     ev_r = ev.quantize(Decimal("0.01"))
 
     return win_rate, ev_r
-

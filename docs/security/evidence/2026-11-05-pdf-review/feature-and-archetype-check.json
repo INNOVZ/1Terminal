@@ -1,0 +1,22 @@
+{
+  "vcr_full_336h": [
+    "72",
+    "48",
+    "1.5"
+  ],
+  "vcr_only_240h": [
+    "72",
+    "57.6",
+    "1.25"
+  ],
+  "pdf_7h_14h_claim": false,
+  "actual_long_window_fallback_240h_days": 10,
+  "classifier_counterexample": {
+    "close": "90",
+    "ema50": "100",
+    "val": "95",
+    "bandwidth": "0.5",
+    "classified_as": "MOMENTUM_EMERGING_LONG",
+    "published_opportunity_proven": false
+  }
+}

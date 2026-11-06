@@ -35,14 +35,15 @@ async def test_cleanup_closes_every_client_even_after_error():
     second.close.assert_awaited_once()
 
 
-async def test_screen_uses_only_public_market_data(monkeypatch):
+async def test_screen_uses_only_public_market_data(monkeypatch, tmp_path):
     screen = AsyncMock(return_value=[])
     monkeypatch.setattr("algotrader.application.crypto_screener.CryptoOpportunityScreener.screen", screen)
-    runtime = await build_runtime(Settings(_env_file=None))
+    runtime = await build_runtime(Settings(_env_file=None, research_archive_dir=tmp_path))
     try:
         assert await runtime.crypto_screen() == []
-        assert screen.call_args.args[0] is runtime.futures_market
-        assert screen.call_args.kwargs["derivatives_port"] is runtime.futures_market
+        assert screen.call_args.args[0].market is runtime.futures_market
+        assert screen.call_args.kwargs["derivatives_port"].derivatives is runtime.futures_market
+        assert screen.call_args.kwargs["enforce_quality"] is True
     finally:
         await runtime.close()
 

@@ -1,0 +1,37 @@
+{
+  "no_derivatives": {
+    "score": 33.0,
+    "status": "HIGH_REJECTION_RISK",
+    "flags": {
+      "pillar1_cvd_absorption": true,
+      "pillar2_oi_expansion": false,
+      "pillar3_funding_squeeze": false,
+      "pillar4_ascending_geometry": true,
+      "pillar5_lvn_vacuum": false
+    }
+  },
+  "funding_only": {
+    "score": 48.0,
+    "status": "RETEST_ONLY_WAIT_FOR_DIP",
+    "flags": {
+      "pillar1_cvd_absorption": true,
+      "pillar2_oi_expansion": false,
+      "pillar3_funding_squeeze": true,
+      "pillar4_ascending_geometry": true,
+      "pillar5_lvn_vacuum": false
+    }
+  },
+  "oi_and_funding": {
+    "score": 73.0,
+    "status": "BREAKOUT_CONFIRMED",
+    "flags": {
+      "pillar1_cvd_absorption": true,
+      "pillar2_oi_expansion": true,
+      "pillar3_funding_squeeze": true,
+      "pillar4_ascending_geometry": true,
+      "pillar5_lvn_vacuum": false
+    }
+  },
+  "proportional_35pct_of_75": 26.25,
+  "pdf_floor_fraction": 0.3333333333333333
+}

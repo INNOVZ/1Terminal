@@ -1,0 +1,438 @@
+{
+  "verified_symbol_times": 72,
+  "funding_after_cutoff_count": 68,
+  "observations": [
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 44,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 44,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 44,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 44,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 44,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 44,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 40,
+      "funding_time_after_candle_cutoff_ms": -14399999,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 40,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 40,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 40,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 40,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 40,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 36,
+      "funding_time_after_candle_cutoff_ms": 6,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 36,
+      "funding_time_after_candle_cutoff_ms": 6,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 36,
+      "funding_time_after_candle_cutoff_ms": 6,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 36,
+      "funding_time_after_candle_cutoff_ms": 6,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 36,
+      "funding_time_after_candle_cutoff_ms": 6,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 36,
+      "funding_time_after_candle_cutoff_ms": 6,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 32,
+      "funding_time_after_candle_cutoff_ms": -14399994,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 32,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 32,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 32,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 32,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 32,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 28,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 28,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 28,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 28,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 28,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 28,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 24,
+      "funding_time_after_candle_cutoff_ms": -14399998,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 24,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 24,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 24,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 24,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 24,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 20,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 20,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 20,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 20,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 20,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 20,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 16,
+      "funding_time_after_candle_cutoff_ms": -14399999,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 16,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 16,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 16,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 16,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 16,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 12,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 12,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 12,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 12,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 12,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 12,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 8,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 8,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 8,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 8,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 8,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 8,
+      "funding_time_after_candle_cutoff_ms": 3,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 4,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 4,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 4,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 4,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 4,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 4,
+      "funding_time_after_candle_cutoff_ms": 2,
+      "degraded": false
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 0,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 0,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 0,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 0,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 0,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 0,
+      "funding_time_after_candle_cutoff_ms": 1,
+      "degraded": false
+    }
+  ]
+}

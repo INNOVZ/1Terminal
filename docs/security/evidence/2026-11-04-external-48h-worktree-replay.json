@@ -1,0 +1,1078 @@
+{
+  "anchor_end_utc": "2026-11-03T11:59:59.999000+00:00",
+  "task_279_reproduction": {
+    "HOTUSDT": {
+      "base_hits": 0,
+      "patched_hits": 1,
+      "total_horizons": 12,
+      "steps": [
+        {
+          "horizon_hours_ago": 44,
+          "candle_closed_at_utc": "2026-11-01T15:59:59.999000+00:00",
+          "close": "0.0003602",
+          "fwd_ret_pct": 48.89,
+          "base_passed": false,
+          "base_archetype": "OI_ACCUMULATION_LONG",
+          "base_failed_gates": [
+            "L1",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "OI_ACCUMULATION_LONG",
+          "patched_failed_gates": [
+            "L1",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 40,
+          "candle_closed_at_utc": "2026-11-01T19:59:59.999000+00:00",
+          "close": "0.0003880",
+          "fwd_ret_pct": 38.22,
+          "base_passed": false,
+          "base_archetype": "BREAKOUT_LONG",
+          "base_failed_gates": [
+            "L1",
+            "L2"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "BREAKOUT_LONG",
+          "patched_failed_gates": [
+            "L1",
+            "L2"
+          ]
+        },
+        {
+          "horizon_hours_ago": 36,
+          "candle_closed_at_utc": "2026-11-01T23:59:59.999000+00:00",
+          "close": "0.0003692",
+          "fwd_ret_pct": 45.26,
+          "base_passed": false,
+          "base_archetype": "OI_ACCUMULATION_LONG",
+          "base_failed_gates": [
+            "L1",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "OI_ACCUMULATION_LONG",
+          "patched_failed_gates": [
+            "L1"
+          ]
+        },
+        {
+          "horizon_hours_ago": 32,
+          "candle_closed_at_utc": "2026-11-02T03:59:59.999000+00:00",
+          "close": "0.0003921",
+          "fwd_ret_pct": 36.78,
+          "base_passed": false,
+          "base_archetype": "BREAKOUT_LONG",
+          "base_failed_gates": [
+            "L1"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "BREAKOUT_LONG",
+          "patched_failed_gates": [
+            "L1"
+          ]
+        },
+        {
+          "horizon_hours_ago": 28,
+          "candle_closed_at_utc": "2026-11-02T07:59:59.999000+00:00",
+          "close": "0.0003822",
+          "fwd_ret_pct": 40.32,
+          "base_passed": false,
+          "base_archetype": "OI_ACCUMULATION_LONG",
+          "base_failed_gates": [
+            "L6"
+          ],
+          "patched_passed": true,
+          "patched_archetype": "OI_ACCUMULATION_LONG",
+          "patched_failed_gates": []
+        },
+        {
+          "horizon_hours_ago": 24,
+          "candle_closed_at_utc": "2026-11-02T11:59:59.999000+00:00",
+          "close": "0.0003790",
+          "fwd_ret_pct": 41.5,
+          "base_passed": false,
+          "base_archetype": "OI_ACCUMULATION_LONG",
+          "base_failed_gates": [
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "OI_ACCUMULATION_LONG",
+          "patched_failed_gates": [
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 20,
+          "candle_closed_at_utc": "2026-11-02T15:59:59.999000+00:00",
+          "close": "0.0004289",
+          "fwd_ret_pct": 25.04,
+          "base_passed": false,
+          "base_archetype": "BREAKOUT_LONG",
+          "base_failed_gates": [
+            "L1",
+            "L2",
+            "L5"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "BREAKOUT_LONG",
+          "patched_failed_gates": [
+            "L1",
+            "L2",
+            "L5"
+          ]
+        },
+        {
+          "horizon_hours_ago": 16,
+          "candle_closed_at_utc": "2026-11-02T19:59:59.999000+00:00",
+          "close": "0.0004392",
+          "fwd_ret_pct": 22.11,
+          "base_passed": false,
+          "base_archetype": "BREAKOUT_LONG",
+          "base_failed_gates": [
+            "L1",
+            "L2",
+            "L5"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "BREAKOUT_LONG",
+          "patched_failed_gates": [
+            "L1",
+            "L2",
+            "L5"
+          ]
+        },
+        {
+          "horizon_hours_ago": 12,
+          "candle_closed_at_utc": "2026-11-02T23:59:59.999000+00:00",
+          "close": "0.0004355",
+          "fwd_ret_pct": 23.15,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L2",
+            "L5",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L2",
+            "L5",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 8,
+          "candle_closed_at_utc": "2026-11-03T03:59:59.999000+00:00",
+          "close": "0.0004550",
+          "fwd_ret_pct": 17.87,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L2",
+            "L5",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L2",
+            "L5",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 4,
+          "candle_closed_at_utc": "2026-11-03T07:59:59.999000+00:00",
+          "close": "0.0004270",
+          "fwd_ret_pct": 25.6,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L2",
+            "L5",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L2",
+            "L5",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 0,
+          "candle_closed_at_utc": "2026-11-03T11:59:59.999000+00:00",
+          "close": "0.0005381",
+          "fwd_ret_pct": -0.33,
+          "base_passed": false,
+          "base_archetype": "BREAKOUT_LONG",
+          "base_failed_gates": [
+            "L1",
+            "L2",
+            "L5"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "BREAKOUT_LONG",
+          "patched_failed_gates": [
+            "L1",
+            "L2",
+            "L5"
+          ]
+        }
+      ]
+    },
+    "ICNTUSDT": {
+      "base_hits": 1,
+      "patched_hits": 2,
+      "total_horizons": 12,
+      "steps": [
+        {
+          "horizon_hours_ago": 44,
+          "candle_closed_at_utc": "2026-11-01T15:59:59.999000+00:00",
+          "close": "0.1748000",
+          "fwd_ret_pct": 30.26,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 40,
+          "candle_closed_at_utc": "2026-11-01T19:59:59.999000+00:00",
+          "close": "0.1747000",
+          "fwd_ret_pct": 30.34,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 36,
+          "candle_closed_at_utc": "2026-11-01T23:59:59.999000+00:00",
+          "close": "0.1750000",
+          "fwd_ret_pct": 30.11,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 32,
+          "candle_closed_at_utc": "2026-11-02T03:59:59.999000+00:00",
+          "close": "0.1711000",
+          "fwd_ret_pct": 33.08,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 28,
+          "candle_closed_at_utc": "2026-11-02T07:59:59.999000+00:00",
+          "close": "0.1669000",
+          "fwd_ret_pct": 36.43,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L2",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L2",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 24,
+          "candle_closed_at_utc": "2026-11-02T11:59:59.999000+00:00",
+          "close": "0.1660000",
+          "fwd_ret_pct": 37.17,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L2",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L2",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 20,
+          "candle_closed_at_utc": "2026-11-02T15:59:59.999000+00:00",
+          "close": "0.1690000",
+          "fwd_ret_pct": 34.73,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 16,
+          "candle_closed_at_utc": "2026-11-02T19:59:59.999000+00:00",
+          "close": "0.1837000",
+          "fwd_ret_pct": 23.95,
+          "base_passed": false,
+          "base_archetype": "RANGE_BOTTOM_ACCUMULATION_LONG",
+          "base_failed_gates": [
+            "L3"
+          ],
+          "patched_passed": true,
+          "patched_archetype": "RANGE_BOTTOM_ACCUMULATION_LONG",
+          "patched_failed_gates": []
+        },
+        {
+          "horizon_hours_ago": 12,
+          "candle_closed_at_utc": "2026-11-02T23:59:59.999000+00:00",
+          "close": "0.1918000",
+          "fwd_ret_pct": 18.72,
+          "base_passed": false,
+          "base_archetype": "COIL_SPRING_LONG",
+          "base_failed_gates": [
+            "L2",
+            "L3"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "COIL_SPRING_LONG",
+          "patched_failed_gates": [
+            "L2"
+          ]
+        },
+        {
+          "horizon_hours_ago": 8,
+          "candle_closed_at_utc": "2026-11-03T03:59:59.999000+00:00",
+          "close": "0.1923000",
+          "fwd_ret_pct": 18.41,
+          "base_passed": true,
+          "base_archetype": "SHORT_SQUEEZE_ABSORPTION_LONG",
+          "base_failed_gates": [],
+          "patched_passed": true,
+          "patched_archetype": "SHORT_SQUEEZE_ABSORPTION_LONG",
+          "patched_failed_gates": []
+        },
+        {
+          "horizon_hours_ago": 4,
+          "candle_closed_at_utc": "2026-11-03T07:59:59.999000+00:00",
+          "close": "0.1910000",
+          "fwd_ret_pct": 19.21,
+          "base_passed": false,
+          "base_archetype": "COIL_SPRING_LONG",
+          "base_failed_gates": [
+            "L2",
+            "L3"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "COIL_SPRING_LONG",
+          "patched_failed_gates": [
+            "L2"
+          ]
+        },
+        {
+          "horizon_hours_ago": 0,
+          "candle_closed_at_utc": "2026-11-03T11:59:59.999000+00:00",
+          "close": "0.2274000",
+          "fwd_ret_pct": 0.13,
+          "base_passed": false,
+          "base_archetype": "SHORT_SQUEEZE_ABSORPTION_LONG",
+          "base_failed_gates": [
+            "L2"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "SHORT_SQUEEZE_ABSORPTION_LONG",
+          "patched_failed_gates": [
+            "L2"
+          ]
+        }
+      ]
+    },
+    "BMTUSDT": {
+      "base_hits": 0,
+      "patched_hits": 0,
+      "total_horizons": 12,
+      "steps": [
+        {
+          "horizon_hours_ago": 44,
+          "candle_closed_at_utc": "2026-11-01T15:59:59.999000+00:00",
+          "close": "0.0227000",
+          "fwd_ret_pct": 0.68,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 40,
+          "candle_closed_at_utc": "2026-11-01T19:59:59.999000+00:00",
+          "close": "0.0221000",
+          "fwd_ret_pct": 3.42,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 36,
+          "candle_closed_at_utc": "2026-11-01T23:59:59.999000+00:00",
+          "close": "0.0219400",
+          "fwd_ret_pct": 4.17,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 32,
+          "candle_closed_at_utc": "2026-11-02T03:59:59.999000+00:00",
+          "close": "0.0216000",
+          "fwd_ret_pct": 5.81,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 28,
+          "candle_closed_at_utc": "2026-11-02T07:59:59.999000+00:00",
+          "close": "0.0211600",
+          "fwd_ret_pct": 8.01,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 24,
+          "candle_closed_at_utc": "2026-11-02T11:59:59.999000+00:00",
+          "close": "0.0209400",
+          "fwd_ret_pct": 9.15,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 20,
+          "candle_closed_at_utc": "2026-11-02T15:59:59.999000+00:00",
+          "close": "0.0209300",
+          "fwd_ret_pct": 9.2,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 16,
+          "candle_closed_at_utc": "2026-11-02T19:59:59.999000+00:00",
+          "close": "0.0208200",
+          "fwd_ret_pct": 9.77,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 12,
+          "candle_closed_at_utc": "2026-11-02T23:59:59.999000+00:00",
+          "close": "0.0209800",
+          "fwd_ret_pct": 8.94,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 8,
+          "candle_closed_at_utc": "2026-11-03T03:59:59.999000+00:00",
+          "close": "0.0222900",
+          "fwd_ret_pct": 2.53,
+          "base_passed": false,
+          "base_archetype": "MOMENTUM_EMERGING_LONG",
+          "base_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "MOMENTUM_EMERGING_LONG",
+          "patched_failed_gates": [
+            "L1",
+            "L3",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 4,
+          "candle_closed_at_utc": "2026-11-03T07:59:59.999000+00:00",
+          "close": "0.0236000",
+          "fwd_ret_pct": -3.16,
+          "base_passed": false,
+          "base_archetype": "SHORT_SQUEEZE_ABSORPTION_LONG",
+          "base_failed_gates": [
+            "L3"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "SHORT_SQUEEZE_ABSORPTION_LONG",
+          "patched_failed_gates": [
+            "L3"
+          ]
+        },
+        {
+          "horizon_hours_ago": 0,
+          "candle_closed_at_utc": "2026-11-03T11:59:59.999000+00:00",
+          "close": "0.0229600",
+          "fwd_ret_pct": -0.46,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L3"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "SHORT_SQUEEZE_ABSORPTION_LONG",
+          "patched_failed_gates": [
+            "L3"
+          ]
+        }
+      ]
+    },
+    "MEGAUSDT": {
+      "base_hits": 3,
+      "patched_hits": 3,
+      "total_horizons": 12,
+      "steps": [
+        {
+          "horizon_hours_ago": 44,
+          "candle_closed_at_utc": "2026-11-01T15:59:59.999000+00:00",
+          "close": "0.0441400",
+          "fwd_ret_pct": -0.49,
+          "base_passed": false,
+          "base_archetype": "OI_ACCUMULATION_LONG",
+          "base_failed_gates": [
+            "L1"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "OI_ACCUMULATION_LONG",
+          "patched_failed_gates": [
+            "L1"
+          ]
+        },
+        {
+          "horizon_hours_ago": 40,
+          "candle_closed_at_utc": "2026-11-01T19:59:59.999000+00:00",
+          "close": "0.0431200",
+          "fwd_ret_pct": 1.87,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 36,
+          "candle_closed_at_utc": "2026-11-01T23:59:59.999000+00:00",
+          "close": "0.0439600",
+          "fwd_ret_pct": -0.08,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 32,
+          "candle_closed_at_utc": "2026-11-02T03:59:59.999000+00:00",
+          "close": "0.0436900",
+          "fwd_ret_pct": 0.54,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 28,
+          "candle_closed_at_utc": "2026-11-02T07:59:59.999000+00:00",
+          "close": "0.0424800",
+          "fwd_ret_pct": 3.4,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1"
+          ]
+        },
+        {
+          "horizon_hours_ago": 24,
+          "candle_closed_at_utc": "2026-11-02T11:59:59.999000+00:00",
+          "close": "0.0442300",
+          "fwd_ret_pct": -0.69,
+          "base_passed": false,
+          "base_archetype": "OI_ACCUMULATION_LONG",
+          "base_failed_gates": [
+            "L1"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "OI_ACCUMULATION_LONG",
+          "patched_failed_gates": [
+            "L1"
+          ]
+        },
+        {
+          "horizon_hours_ago": 20,
+          "candle_closed_at_utc": "2026-11-02T15:59:59.999000+00:00",
+          "close": "0.0455000",
+          "fwd_ret_pct": -3.46,
+          "base_passed": true,
+          "base_archetype": "OI_ACCUMULATION_LONG",
+          "base_failed_gates": [],
+          "patched_passed": true,
+          "patched_archetype": "OI_ACCUMULATION_LONG",
+          "patched_failed_gates": []
+        },
+        {
+          "horizon_hours_ago": 16,
+          "candle_closed_at_utc": "2026-11-02T19:59:59.999000+00:00",
+          "close": "0.0439400",
+          "fwd_ret_pct": -0.03,
+          "base_passed": false,
+          "base_archetype": null,
+          "base_failed_gates": [
+            "L1",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": null,
+          "patched_failed_gates": [
+            "L1",
+            "L6"
+          ]
+        },
+        {
+          "horizon_hours_ago": 12,
+          "candle_closed_at_utc": "2026-11-02T23:59:59.999000+00:00",
+          "close": "0.0452400",
+          "fwd_ret_pct": -2.91,
+          "base_passed": true,
+          "base_archetype": "RANGE_BOTTOM_ACCUMULATION_LONG",
+          "base_failed_gates": [],
+          "patched_passed": true,
+          "patched_archetype": "RANGE_BOTTOM_ACCUMULATION_LONG",
+          "patched_failed_gates": []
+        },
+        {
+          "horizon_hours_ago": 8,
+          "candle_closed_at_utc": "2026-11-03T03:59:59.999000+00:00",
+          "close": "0.0444400",
+          "fwd_ret_pct": -1.16,
+          "base_passed": false,
+          "base_archetype": "RANGE_BOTTOM_ACCUMULATION_LONG",
+          "base_failed_gates": [
+            "L1"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "RANGE_BOTTOM_ACCUMULATION_LONG",
+          "patched_failed_gates": [
+            "L1"
+          ]
+        },
+        {
+          "horizon_hours_ago": 4,
+          "candle_closed_at_utc": "2026-11-03T07:59:59.999000+00:00",
+          "close": "0.0462700",
+          "fwd_ret_pct": -5.07,
+          "base_passed": true,
+          "base_archetype": "RANGE_BOTTOM_ACCUMULATION_LONG",
+          "base_failed_gates": [],
+          "patched_passed": true,
+          "patched_archetype": "RANGE_BOTTOM_ACCUMULATION_LONG",
+          "patched_failed_gates": []
+        },
+        {
+          "horizon_hours_ago": 0,
+          "candle_closed_at_utc": "2026-11-03T11:59:59.999000+00:00",
+          "close": "0.0439200",
+          "fwd_ret_pct": 0.01,
+          "base_passed": false,
+          "base_archetype": "OI_ACCUMULATION_LONG",
+          "base_failed_gates": [
+            "L1",
+            "L6"
+          ],
+          "patched_passed": false,
+          "patched_archetype": "OI_ACCUMULATION_LONG",
+          "patched_failed_gates": [
+            "L1",
+            "L6"
+          ]
+        }
+      ]
+    }
+  },
+  "task_286_reproduction": {
+    "HOTUSDT": {
+      "continuous_hits": 5,
+      "total_horizons": 10,
+      "hits": [
+        [
+          "T-36h",
+          "0.0003692",
+          "+44.4%",
+          60.8,
+          "OI_ACCUMULATION_LONG"
+        ],
+        [
+          "T-32h",
+          "0.0003921",
+          "+36.0%",
+          72.8,
+          "OI_ACCUMULATION_LONG"
+        ],
+        [
+          "T-28h",
+          "0.0003822",
+          "+39.5%",
+          65.9,
+          "OI_ACCUMULATION_LONG"
+        ],
+        [
+          "T-24h",
+          "0.0003790",
+          "+40.7%",
+          67.3,
+          "OI_ACCUMULATION_LONG"
+        ],
+        [
+          "T-16h",
+          "0.0004392",
+          "+21.4%",
+          64.6,
+          "OI_ACCUMULATION_LONG"
+        ]
+      ]
+    },
+    "ICNTUSDT": {
+      "continuous_hits": 3,
+      "total_horizons": 10,
+      "hits": [
+        [
+          "T-16h",
+          "0.1837000",
+          "+23.8%",
+          52.4,
+          "RANGE_BOTTOM_ACCUMULATION_LONG"
+        ],
+        [
+          "T-8h",
+          "0.1923000",
+          "+18.3%",
+          56.3,
+          "RANGE_BOTTOM_ACCUMULATION_LONG"
+        ],
+        [
+          "T-4h",
+          "0.1910000",
+          "+19.1%",
+          56.3,
+          "RANGE_BOTTOM_ACCUMULATION_LONG"
+        ]
+      ]
+    },
+    "BMTUSDT": {
+      "continuous_hits": 3,
+      "total_horizons": 10,
+      "hits": [
+        [
+          "T-8h",
+          "0.0222900",
+          "+3.1%",
+          58.1,
+          "SHORT_SQUEEZE_ABSORPTION_LONG"
+        ],
+        [
+          "T-4h",
+          "0.0236000",
+          "-2.6%",
+          68.6,
+          "SHORT_SQUEEZE_ABSORPTION_LONG"
+        ],
+        [
+          "T-0h",
+          "0.0229600",
+          "+0.1%",
+          75.0,
+          "SHORT_SQUEEZE_ABSORPTION_LONG"
+        ]
+      ]
+    },
+    "MEGAUSDT": {
+      "continuous_hits": 6,
+      "total_horizons": 10,
+      "hits": [
+        [
+          "T-24h",
+          "0.0442300",
+          "-0.6%",
+          64.4,
+          "OI_ACCUMULATION_LONG"
+        ],
+        [
+          "T-20h",
+          "0.0455000",
+          "-3.4%",
+          84.5,
+          "OI_ACCUMULATION_LONG"
+        ],
+        [
+          "T-16h",
+          "0.0439400",
+          "+0.1%",
+          58.2,
+          "OI_ACCUMULATION_LONG"
+        ],
+        [
+          "T-12h",
+          "0.0452400",
+          "-2.8%",
+          80.5,
+          "OI_ACCUMULATION_LONG"
+        ],
+        [
+          "T-8h",
+          "0.0444400",
+          "-1.1%",
+          70.5,
+          "OI_ACCUMULATION_LONG"
+        ],
+        [
+          "T-4h",
+          "0.0462700",
+          "-5.0%",
+          77.4,
+          "OI_ACCUMULATION_LONG"
+        ]
+      ]
+    },
+    "TRUSTUSDT": {
+      "continuous_hits": 3,
+      "total_horizons": 10,
+      "hits": [
+        [
+          "T-32h",
+          "0.0524900",
+          "+2.7%",
+          52.4,
+          "RANGE_BOTTOM_ACCUMULATION_LONG"
+        ],
+        [
+          "T-12h",
+          "0.0534200",
+          "+0.9%",
+          62.2,
+          "RANGE_BOTTOM_ACCUMULATION_LONG"
+        ],
+        [
+          "T-8h",
+          "0.0530100",
+          "+1.7%",
+          53.0,
+          "RANGE_BOTTOM_ACCUMULATION_LONG"
+        ]
+      ]
+    },
+    "BEATUSDT": {
+      "continuous_hits": 0,
+      "total_horizons": 10,
+      "hits": []
+    }
+  }
+}

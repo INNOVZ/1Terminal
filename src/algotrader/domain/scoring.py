@@ -105,7 +105,7 @@ def calculate_continuous_long_factor_scores(
     cvd_zscore: Decimal,
     oi_change_7d: Decimal | None,
     oi_change_4h: Decimal | None,
-    taker_buy_ratio_4h: Decimal,
+    taker_buy_ratio_4h: Decimal | None,
     funding_rate: Decimal | None,
     ema20_4h: Decimal,
     macd_hist_4h: Decimal,
@@ -223,7 +223,9 @@ def calculate_continuous_long_factor_scores(
         oi_4h_pts = Decimal("0.0")
 
     # Taker buy flow confirmation (1.00 scale: buy_vol / sell_vol)
-    if taker_buy_ratio_4h >= Decimal("1.18"):
+    if taker_buy_ratio_4h is None:
+        taker_pts = Decimal("0.0")
+    elif taker_buy_ratio_4h >= Decimal("1.18"):
         taker_pts = Decimal("10.0")
     elif taker_buy_ratio_4h >= Decimal("1.05"):
         taker_pts = Decimal("5.0")
@@ -267,7 +269,10 @@ def calculate_continuous_long_factor_scores(
         oi_7d_comp = min(Decimal("16.0"), max(Decimal("-16.0"), (oi_change_7d or Decimal("0")) * Decimal("160.0"))) if oi_change_7d is not None else Decimal("0.0")
         oi_1h_comp = min(Decimal("8.0"), max(Decimal("-8.0"), (oi_change_1h or Decimal("0")) * Decimal("400.0"))) if oi_change_1h is not None else Decimal("0.0")
         oi_blended_delta = oi_4h_comp + oi_7d_comp + oi_1h_comp
-        taker_delta = min(Decimal("20.0"), max(Decimal("-20.0"), (taker_buy_ratio_4h - Decimal("1.00")) * Decimal("50.0")))
+        taker_delta = (
+            min(Decimal("20.0"), max(Decimal("-20.0"), (taker_buy_ratio_4h - Decimal("1.00")) * Decimal("50.0")))
+            if taker_buy_ratio_4h is not None else Decimal("0.0")
+        )
         derivatives_score = clip(
             base_deriv + oi_blended_delta + taker_delta + funding_pts + cvd_pts,
             Decimal("0.0"),
@@ -430,7 +435,7 @@ def calculate_continuous_short_factor_scores(
     cvd_zscore: Decimal,
     oi_change_7d: Decimal | None,
     oi_change_4h: Decimal | None,
-    taker_buy_ratio_4h: Decimal,
+    taker_buy_ratio_4h: Decimal | None,
     funding_rate: Decimal | None,
     ema20_4h: Decimal,
     macd_hist_4h: Decimal,
@@ -501,11 +506,11 @@ def calculate_continuous_short_factor_scores(
     # 3. Smart Money Distribution & Trapped Longs (0 to 100)
     base_dist = Decimal("40.0")
     # Taker sell flow (taker buy ratio < 1.00 means sellers dominate)
-    if taker_buy_ratio_4h <= Decimal("0.85"):
+    if taker_buy_ratio_4h is not None and taker_buy_ratio_4h <= Decimal("0.85"):
         base_dist += Decimal("18.0")
-    elif taker_buy_ratio_4h <= Decimal("0.95"):
+    elif taker_buy_ratio_4h is not None and taker_buy_ratio_4h <= Decimal("0.95"):
         base_dist += Decimal("10.0")
-    elif taker_buy_ratio_4h >= Decimal("1.15"):
+    elif taker_buy_ratio_4h is not None and taker_buy_ratio_4h >= Decimal("1.15"):
         base_dist -= Decimal("15.0")
 
     # CVD Selling Pressure

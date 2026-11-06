@@ -7,6 +7,7 @@
 .env.*
 !.env.example
 *.env.local
+research-control.env
 
 # Virtual Environments
 .venv/
@@ -33,6 +34,7 @@ coverage/
 *.db
 *.sqlite3
 atlas_state.sqlite3
+data/research/
 data/testnet_trades.json
 data/testnet_watchlist.json
 
@@ -56,6 +58,15 @@ scratch/*
 logs/*.log
 dashboard.html
 .playwright-cli/
+temp_inspect/
+*.pdf
+Lease_Agreement*
+Download_Lease_Agreement*
+generate_lease*
+make_pure_vector_svg*
+generate_svg*
+generate_template*
+generate_download_page*
 
 # Operating System & IDE
 .DS_Store

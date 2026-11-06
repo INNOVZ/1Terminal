@@ -19,6 +19,7 @@ from algotrader.domain.crypto_screener_models import (
     ScreenerMode,
     calculate_opportunity_win_rate_and_ev,
 )
+from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
 from algotrader.domain.watchlist_models import WatchlistItem, WatchlistPriority, WyckoffStage
 from algotrader.infrastructure.persistence import atomic_write_json
 from algotrader.infrastructure.runtime import Runtime, build_runtime
@@ -132,48 +133,21 @@ async def _do_crypto_screen(
         screener_mode = ScreenerMode(mode.lower())
 
         futures = runtime.futures_market
-        opportunities = await runtime.crypto_screen(
+        run = await runtime.run_crypto_scan(
             settings=settings,
             min_score=Decimal(str(min_score)),
             max_symbols=max_symbols,
             mode=screener_mode,
             top_n=None,
         )
+        opportunities = run.opportunities
 
         inst_map = {opp.instrument.id.symbol: opp.instrument for opp in opportunities}
         opps_list: list[dict[str, Any]] = []
 
         if opportunities:
-            # Prioritize institutional setups by composite conviction: win rate and score
-            def _conviction(x: Any) -> float:
-                if getattr(x, "conviction", None) is not None:
-                    return float(x.conviction)
-                return float(x.estimated_win_rate_pct) * 0.4 + float(x.score) * 0.6
-
-            def _is_qualified(x: Any) -> bool:
-                # 1. Hard veto on Below Threshold setups
-                gr = getattr(x, "grade", None)
-                gr_val = str(getattr(gr, "value", gr) or "")
-                if "Below" in gr_val or gr_val == "BELOW_THRESHOLD":
-                    return False
-                # 2. Strict score and conviction floor (minimum Grade B standard)
-                c_val = float(getattr(x, "conviction", x.score or 0))
-                sc = float(x.score or 0)
-                if c_val < 65.0 or sc < 68.0:
-                    return False
-                # 3. Minimum 3 of 5 checklist consensus
-                chk = getattr(x, "checklist_verification", None)
-                passed = chk.passed_count if chk is not None else 5
-                if passed < 3:
-                    return False
-                # 4. Asymmetric R:R >= 2.0 and positive EV
-                rr = float(getattr(x, "risk_reward_ratio", 0))
-                ev = float(getattr(x, "expected_value_r", 0))
-                return rr >= 2.0 and ev >= 0.20
-
-            qualified_opps = [opp for opp in opportunities if _is_qualified(opp)]
-            ranked_opps = sorted(qualified_opps, key=_conviction, reverse=True)
-            top_picks = ranked_opps[:16]
+            # Runtime applies the shared publication policy and desk ranking.
+            top_picks = opportunities[:16]
 
             # Pre-fetch 1H candles for top opportunities concurrently (paced with semaphore)
             candle_sem = asyncio.Semaphore(10)
@@ -230,15 +204,16 @@ async def _do_crypto_screen(
         # When freshly screened setups qualify, strictly prioritize them
         final_opps = deduped_opps
 
-        final_opps.sort(key=lambda o: float(o.get("conviction") or o.get("score") or 0.0), reverse=True)
-
         result = {
             "timestamp": now.isoformat(),
-            "total_scanned": runtime.last_scan_counts.get("evaluated", 0),
-            "scan_counts": runtime.last_scan_counts,
+            "total_scanned": run.counts.get("evaluated", 0),
+            "scan_counts": run.counts,
+            "scan_id": run.receipt.scan_id,
+            "scan_archive": run.receipt.as_dict(),
             "mode": "screener",
             "order_execution_enabled": False,
             "validation_status": "uncalibrated_research",
+            "screening_policy_version": SCREENING_POLICY_VERSION,
             "qualifying_count": len(final_opps),
             "macro_narrative": macro_narrative,
             "opportunities": final_opps,
@@ -792,4 +767,3 @@ async def get_macro_overextension(refresh: bool = False) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------
-

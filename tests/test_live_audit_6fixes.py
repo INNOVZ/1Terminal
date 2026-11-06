@@ -1,34 +1,26 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-import pytest
 
-from algotrader.domain.crypto_screener_models import (
-    CryptoOpportunity,
-    CryptoScreenerScoreBreakdown,
-    Direction,
-    SetupLabel,
-)
-from algotrader.domain.models import Candle, Instrument, MarketKind, Venue
-from algotrader.domain.indicators import taker_buy_ratio_from_candles
 from algotrader.domain.archetypes import (
     LongArchetypeFeatures,
-    ShortArchetypeFeatures,
     classify_long_archetype,
-    classify_short_archetype,
+)
+from algotrader.domain.crypto_screener_models import (
+    SetupLabel,
+)
+from algotrader.domain.execution_brackets import build_long_bracket
+from algotrader.domain.indicators import taker_buy_ratio_from_candles
+from algotrader.domain.models import Candle
+from algotrader.domain.scoring import (
+    calculate_continuous_long_factor_scores,
+    calculate_continuous_short_factor_scores,
 )
 from algotrader.domain.screening_gates import (
     LongGateInputs,
     evaluate_long_gates,
 )
-from algotrader.domain.execution_brackets import build_long_bracket
-from algotrader.domain.scoring import (
-    calculate_continuous_long_factor_scores,
-    calculate_continuous_short_factor_scores,
-)
-
-UTC = timezone.utc
 
 
 def test_fix1_taker_ratio_formula_scale_and_precision() -> None:
@@ -53,8 +45,8 @@ def test_fix1_taker_ratio_formula_scale_and_precision() -> None:
     assert ratio == Decimal("1.0833")
     assert str(ratio) == "1.0833"
 
-    # Fallback when volumes are zero or empty
-    assert taker_buy_ratio_from_candles([]) == Decimal("1.0000")
+    # An unavailable tape window must not manufacture neutral confirmation.
+    assert taker_buy_ratio_from_candles([]) is None
 
 
 def test_fix2_missing_7d_oi_caps_derivatives_score_at_40() -> None:

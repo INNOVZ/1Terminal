@@ -1,0 +1,69 @@
+=== REPRODUCING TASK-279 (Horizons: 44, 40, 36, 32, 28, 24, 20, 16, 12, 8, 4, 0) ===
+
+==================== HOTUSDT (Now=0.0005363, 24hChg=41.863%) ====================
+  T-44h (11-01 15:59) | Price=0.0003602 (FwdToNow=+48.89%) | Base: FAIL ['L1', 'L6'] arch=OI_ACCUMULATION_LONG | Patched: FAIL ['L1', 'L6'] arch=OI_ACCUMULATION_LONG
+  T-40h (11-01 19:59) | Price=0.0003880 (FwdToNow=+38.22%) | Base: FAIL ['L1', 'L2'] arch=BREAKOUT_LONG | Patched: FAIL ['L1', 'L2'] arch=BREAKOUT_LONG
+  T-36h (11-01 23:59) | Price=0.0003692 (FwdToNow=+45.26%) | Base: FAIL ['L1', 'L6'] arch=OI_ACCUMULATION_LONG | Patched: FAIL ['L1'] arch=OI_ACCUMULATION_LONG
+  T-32h (11-02 03:59) | Price=0.0003921 (FwdToNow=+36.78%) | Base: FAIL ['L1'] arch=BREAKOUT_LONG | Patched: FAIL ['L1'] arch=BREAKOUT_LONG
+  T-28h (11-02 07:59) | Price=0.0003822 (FwdToNow=+40.32%) | Base: FAIL ['L6'] arch=OI_ACCUMULATION_LONG | Patched: PASS (OI_ACCUMULATION_LONG)
+  T-24h (11-02 11:59) | Price=0.0003790 (FwdToNow=+41.50%) | Base: FAIL ['L6'] arch=OI_ACCUMULATION_LONG | Patched: FAIL ['L6'] arch=OI_ACCUMULATION_LONG
+  T-20h (11-02 15:59) | Price=0.0004289 (FwdToNow=+25.04%) | Base: FAIL ['L1', 'L2', 'L5'] arch=BREAKOUT_LONG | Patched: FAIL ['L1', 'L2', 'L5'] arch=BREAKOUT_LONG
+  T-16h (11-02 19:59) | Price=0.0004392 (FwdToNow=+22.11%) | Base: FAIL ['L1', 'L2', 'L5'] arch=BREAKOUT_LONG | Patched: FAIL ['L1', 'L2', 'L5'] arch=BREAKOUT_LONG
+  T-12h (11-02 23:59) | Price=0.0004355 (FwdToNow=+23.15%) | Base: FAIL ['L1', 'L2', 'L5', 'L6'] arch=None | Patched: FAIL ['L1', 'L2', 'L5', 'L6'] arch=None
+  T- 8h (11-03 03:59) | Price=0.0004550 (FwdToNow=+17.87%) | Base: FAIL ['L1', 'L2', 'L5', 'L6'] arch=None | Patched: FAIL ['L1', 'L2', 'L5', 'L6'] arch=None
+  T- 4h (11-03 07:59) | Price=0.0004270 (FwdToNow=+25.60%) | Base: FAIL ['L1', 'L2', 'L5', 'L6'] arch=None | Patched: FAIL ['L1', 'L2', 'L5', 'L6'] arch=None
+  T- 0h (11-03 11:59) | Price=0.0005381 (FwdToNow= -0.33%) | Base: FAIL ['L1', 'L2', 'L5'] arch=BREAKOUT_LONG | Patched: FAIL ['L1', 'L2', 'L5'] arch=BREAKOUT_LONG
+  >>> SUMMARY HOTUSDT: Base Hits=0/12 | Patched Hits=1/12
+
+==================== ICNTUSDT (Now=0.2277000, 24hChg=36.747%) ====================
+  T-44h (11-01 15:59) | Price=0.1748000 (FwdToNow=+30.26%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-40h (11-01 19:59) | Price=0.1747000 (FwdToNow=+30.34%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-36h (11-01 23:59) | Price=0.1750000 (FwdToNow=+30.11%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-32h (11-02 03:59) | Price=0.1711000 (FwdToNow=+33.08%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-28h (11-02 07:59) | Price=0.1669000 (FwdToNow=+36.43%) | Base: FAIL ['L1', 'L2', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L2', 'L3', 'L6'] arch=None
+  T-24h (11-02 11:59) | Price=0.1660000 (FwdToNow=+37.17%) | Base: FAIL ['L1', 'L2', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L2', 'L3', 'L6'] arch=None
+  T-20h (11-02 15:59) | Price=0.1690000 (FwdToNow=+34.73%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-16h (11-02 19:59) | Price=0.1837000 (FwdToNow=+23.95%) | Base: FAIL ['L3'] arch=RANGE_BOTTOM_ACCUMULATION_LONG | Patched: PASS (RANGE_BOTTOM_ACCUMULATION_LONG)
+  T-12h (11-02 23:59) | Price=0.1918000 (FwdToNow=+18.72%) | Base: FAIL ['L2', 'L3'] arch=COIL_SPRING_LONG | Patched: FAIL ['L2'] arch=COIL_SPRING_LONG
+  T- 8h (11-03 03:59) | Price=0.1923000 (FwdToNow=+18.41%) | Base: PASS (SHORT_SQUEEZE_ABSORPTION_LONG) | Patched: PASS (SHORT_SQUEEZE_ABSORPTION_LONG)
+  T- 4h (11-03 07:59) | Price=0.1910000 (FwdToNow=+19.21%) | Base: FAIL ['L2', 'L3'] arch=COIL_SPRING_LONG | Patched: FAIL ['L2'] arch=COIL_SPRING_LONG
+  T- 0h (11-03 11:59) | Price=0.2274000 (FwdToNow= +0.13%) | Base: FAIL ['L2'] arch=SHORT_SQUEEZE_ABSORPTION_LONG | Patched: FAIL ['L2'] arch=SHORT_SQUEEZE_ABSORPTION_LONG
+  >>> SUMMARY ICNTUSDT: Base Hits=1/12 | Patched Hits=2/12
+
+==================== BMTUSDT (Now=0.0228550, 24hChg=8.961%) ====================
+  T-44h (11-01 15:59) | Price=0.0227000 (FwdToNow= +0.68%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-40h (11-01 19:59) | Price=0.0221000 (FwdToNow= +3.42%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-36h (11-01 23:59) | Price=0.0219400 (FwdToNow= +4.17%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-32h (11-02 03:59) | Price=0.0216000 (FwdToNow= +5.81%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-28h (11-02 07:59) | Price=0.0211600 (FwdToNow= +8.01%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-24h (11-02 11:59) | Price=0.0209400 (FwdToNow= +9.15%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-20h (11-02 15:59) | Price=0.0209300 (FwdToNow= +9.20%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-16h (11-02 19:59) | Price=0.0208200 (FwdToNow= +9.77%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T-12h (11-02 23:59) | Price=0.0209800 (FwdToNow= +8.94%) | Base: FAIL ['L1', 'L3', 'L6'] arch=None | Patched: FAIL ['L1', 'L3', 'L6'] arch=None
+  T- 8h (11-03 03:59) | Price=0.0222900 (FwdToNow= +2.53%) | Base: FAIL ['L1', 'L3', 'L6'] arch=MOMENTUM_EMERGING_LONG | Patched: FAIL ['L1', 'L3', 'L6'] arch=MOMENTUM_EMERGING_LONG
+  T- 4h (11-03 07:59) | Price=0.0236000 (FwdToNow= -3.16%) | Base: FAIL ['L3'] arch=SHORT_SQUEEZE_ABSORPTION_LONG | Patched: FAIL ['L3'] arch=SHORT_SQUEEZE_ABSORPTION_LONG
+  T- 0h (11-03 11:59) | Price=0.0229600 (FwdToNow= -0.46%) | Base: FAIL ['L1', 'L3'] arch=None | Patched: FAIL ['L3'] arch=SHORT_SQUEEZE_ABSORPTION_LONG
+  >>> SUMMARY BMTUSDT: Base Hits=0/12 | Patched Hits=0/12
+
+==================== MEGAUSDT (Now=0.0439250, 24hChg=-0.947%) ====================
+  T-44h (11-01 15:59) | Price=0.0441400 (FwdToNow= -0.49%) | Base: FAIL ['L1'] arch=OI_ACCUMULATION_LONG | Patched: FAIL ['L1'] arch=OI_ACCUMULATION_LONG
+  T-40h (11-01 19:59) | Price=0.0431200 (FwdToNow= +1.87%) | Base: FAIL ['L1', 'L6'] arch=None | Patched: FAIL ['L1', 'L6'] arch=None
+  T-36h (11-01 23:59) | Price=0.0439600 (FwdToNow= -0.08%) | Base: FAIL ['L1', 'L6'] arch=None | Patched: FAIL ['L1', 'L6'] arch=None
+  T-32h (11-02 03:59) | Price=0.0436900 (FwdToNow= +0.54%) | Base: FAIL ['L1', 'L6'] arch=None | Patched: FAIL ['L1', 'L6'] arch=None
+  T-28h (11-02 07:59) | Price=0.0424800 (FwdToNow= +3.40%) | Base: FAIL ['L1'] arch=None | Patched: FAIL ['L1'] arch=None
+  T-24h (11-02 11:59) | Price=0.0442300 (FwdToNow= -0.69%) | Base: FAIL ['L1'] arch=OI_ACCUMULATION_LONG | Patched: FAIL ['L1'] arch=OI_ACCUMULATION_LONG
+  T-20h (11-02 15:59) | Price=0.0455000 (FwdToNow= -3.46%) | Base: PASS (OI_ACCUMULATION_LONG) | Patched: PASS (OI_ACCUMULATION_LONG)
+  T-16h (11-02 19:59) | Price=0.0439400 (FwdToNow= -0.03%) | Base: FAIL ['L1', 'L6'] arch=None | Patched: FAIL ['L1', 'L6'] arch=None
+  T-12h (11-02 23:59) | Price=0.0452400 (FwdToNow= -2.91%) | Base: PASS (RANGE_BOTTOM_ACCUMULATION_LONG) | Patched: PASS (RANGE_BOTTOM_ACCUMULATION_LONG)
+  T- 8h (11-03 03:59) | Price=0.0444400 (FwdToNow= -1.16%) | Base: FAIL ['L1'] arch=RANGE_BOTTOM_ACCUMULATION_LONG | Patched: FAIL ['L1'] arch=RANGE_BOTTOM_ACCUMULATION_LONG
+  T- 4h (11-03 07:59) | Price=0.0462700 (FwdToNow= -5.07%) | Base: PASS (RANGE_BOTTOM_ACCUMULATION_LONG) | Patched: PASS (RANGE_BOTTOM_ACCUMULATION_LONG)
+  T- 0h (11-03 11:59) | Price=0.0439200 (FwdToNow= +0.01%) | Base: FAIL ['L1', 'L6'] arch=OI_ACCUMULATION_LONG | Patched: FAIL ['L1', 'L6'] arch=OI_ACCUMULATION_LONG
+  >>> SUMMARY MEGAUSDT: Base Hits=3/12 | Patched Hits=3/12
+
+=== REPRODUCING TASK-286 (Horizons: 36, 32, 28, 24, 20, 16, 12, 8, 4, 0) ===
+HOTUSDT    | Continuous-Factor Hits=5/10 -> [('T-36h', '0.0003692', '+44.4%', 60.8, 'OI_ACCUMULATION_LONG'), ('T-32h', '0.0003921', '+36.0%', 72.8, 'OI_ACCUMULATION_LONG'), ('T-28h', '0.0003822', '+39.5%', 65.9, 'OI_ACCUMULATION_LONG'), ('T-24h', '0.0003790', '+40.7%', 67.3, 'OI_ACCUMULATION_LONG'), ('T-16h', '0.0004392', '+21.4%', 64.6, 'OI_ACCUMULATION_LONG')]
+ICNTUSDT   | Continuous-Factor Hits=3/10 -> [('T-16h', '0.1837000', '+23.8%', 52.4, 'RANGE_BOTTOM_ACCUMULATION_LONG'), ('T-8h', '0.1923000', '+18.3%', 56.3, 'RANGE_BOTTOM_ACCUMULATION_LONG'), ('T-4h', '0.1910000', '+19.1%', 56.3, 'RANGE_BOTTOM_ACCUMULATION_LONG')]
+BMTUSDT    | Continuous-Factor Hits=3/10 -> [('T-8h', '0.0222900', '+3.1%', 58.1, 'SHORT_SQUEEZE_ABSORPTION_LONG'), ('T-4h', '0.0236000', '-2.6%', 68.6, 'SHORT_SQUEEZE_ABSORPTION_LONG'), ('T-0h', '0.0229600', '+0.1%', 75.0, 'SHORT_SQUEEZE_ABSORPTION_LONG')]
+MEGAUSDT   | Continuous-Factor Hits=6/10 -> [('T-24h', '0.0442300', '-0.6%', 64.4, 'OI_ACCUMULATION_LONG'), ('T-20h', '0.0455000', '-3.4%', 84.5, 'OI_ACCUMULATION_LONG'), ('T-16h', '0.0439400', '+0.1%', 58.2, 'OI_ACCUMULATION_LONG'), ('T-12h', '0.0452400', '-2.8%', 80.5, 'OI_ACCUMULATION_LONG'), ('T-8h', '0.0444400', '-1.1%', 70.5, 'OI_ACCUMULATION_LONG'), ('T-4h', '0.0462700', '-5.0%', 77.4, 'OI_ACCUMULATION_LONG')]
+TRUSTUSDT  | Continuous-Factor Hits=3/10 -> [('T-32h', '0.0524900', '+2.7%', 52.4, 'RANGE_BOTTOM_ACCUMULATION_LONG'), ('T-12h', '0.0534200', '+0.9%', 62.2, 'RANGE_BOTTOM_ACCUMULATION_LONG'), ('T-8h', '0.0530100', '+1.7%', 53.0, 'RANGE_BOTTOM_ACCUMULATION_LONG')]
+BEATUSDT   | Continuous-Factor Hits=0/10 -> []

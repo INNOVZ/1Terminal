@@ -10,7 +10,6 @@ import pytest
 
 from algotrader.adapters.external.models import (
     FearGreedReading,
-    GlobalMarketMetrics,
     MacroSentimentContext,
     StablecoinSupplyMetric,
 )
@@ -248,6 +247,122 @@ def test_squeeze_long_setup_identification(settings: Settings) -> None:
     assert any("OI expanding with price" in reason for reason in opp.rationale)
 
 
+def test_breakout_scoring_does_not_confirm_missing_taker_flow(settings: Settings) -> None:
+    screener = CryptoOpportunityScreener(settings)
+    inst = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="SOLUSDT")
+    quote = Quote(
+        instrument_id=inst.id,
+        bid=Decimal("99.95"),
+        ask=Decimal("100.05"),
+        last=Decimal("100"),
+        quote_volume_24h=Decimal("50000000"),
+    )
+    deriv = DerivativesSnapshot(
+        funding_rate=Decimal("-0.0003"),
+        basis_rate=Decimal("-0.0001"),
+        open_interest=Decimal("80000000"),
+        open_interest_change_1h=Decimal("0.04"),
+        taker_buy_sell_ratio=None,
+        bid_depth_notional=Decimal("2000000"),
+        ask_depth_notional=Decimal("1000000"),
+    )
+    macro = MacroSentimentContext(
+        fear_greed=FearGreedReading(value=50, classification="Neutral", observed_at=datetime.now(UTC)),
+    )
+
+    opp = screener._score_setup(
+        direction=Direction.LONG,
+        inst=inst,
+        quote=quote,
+        snap_1h=_make_snapshot(close=Decimal("100"), ema20=Decimal("98")),
+        ema20_4h=Decimal("99"),
+        ema50_4h=Decimal("95"),
+        rsi_4h=Decimal("58"),
+        regime=CryptoMarketRegime.EMERGING_TREND_UP,
+        support=Decimal("96"),
+        resistance=Decimal("110"),
+        struct_trend="higher_high",
+        beta=Decimal("1.1"),
+        residual_24h=Decimal("0.025"),
+        residual_6h=Decimal("0.01"),
+        residual_7d=Decimal("0.05"),
+        derivatives=deriv,
+        macro_context=macro,
+        closed_1h=trending_candles(count=260),
+    )
+
+    assert opp is not None
+    assert opp.taker_ratio is None
+    assert opp.as_dict()["taker_buy_sell_ratio_window_hours"] == 1
+    assert opp.as_dict()["taker_buy_sell_ratio_1h"] == "N/A"
+    assert not any("Taker buy aggression" in reason for reason in opp.rationale)
+
+
+@pytest.mark.parametrize(
+    ("support", "tick_size", "expected_entry", "expected_stop", "expected_target", "expected_rr"),
+    [
+        (Decimal("96"), Decimal("0.01"), Decimal("100"), Decimal("97"), Decimal("106"), Decimal("2.0")),
+        (Decimal("97"), Decimal("0.01"), None, None, None, None),
+        (Decimal("96"), Decimal("0.06"), Decimal("100.02"), Decimal("97.02"), Decimal("106.02"), Decimal("2.0")),
+        (Decimal("96"), Decimal("4"), None, None, None, None),
+    ],
+)
+def test_breakout_reports_reward_to_risk_from_its_actual_bracket(
+    settings: Settings,
+    support: Decimal,
+    tick_size: Decimal,
+    expected_entry: Decimal | None,
+    expected_stop: Decimal | None,
+    expected_target: Decimal | None,
+    expected_rr: Decimal | None,
+) -> None:
+    screener = CryptoOpportunityScreener(settings)
+    inst = replace(
+        make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="SOLUSDT"),
+        price_tick=tick_size,
+    )
+    quote = Quote(
+        instrument_id=inst.id,
+        bid=Decimal("99.95"),
+        ask=Decimal("100.05"),
+        last=Decimal("100"),
+        quote_volume_24h=Decimal("50000000"),
+    )
+    macro = MacroSentimentContext(
+        fear_greed=FearGreedReading(value=50, classification="Neutral", observed_at=datetime.now(UTC)),
+    )
+
+    opp = screener._score_setup(
+        direction=Direction.LONG,
+        inst=inst,
+        quote=quote,
+        snap_1h=_make_snapshot(close=Decimal("100"), ema20=Decimal("98")),
+        ema20_4h=Decimal("99"),
+        ema50_4h=Decimal("95"),
+        rsi_4h=Decimal("58"),
+        regime=CryptoMarketRegime.EMERGING_TREND_UP,
+        support=support,
+        resistance=Decimal("110"),
+        struct_trend="higher_high",
+        beta=Decimal("1.1"),
+        residual_24h=Decimal("0.025"),
+        residual_6h=Decimal("0.01"),
+        residual_7d=Decimal("0.05"),
+        derivatives=None,
+        macro_context=macro,
+        closed_1h=trending_candles(count=260),
+    )
+
+    if expected_rr is None:
+        assert opp is None
+        return
+    assert opp is not None
+    assert opp.suggested_entry == expected_entry
+    assert opp.suggested_stop == expected_stop
+    assert opp.suggested_targets[1] == expected_target
+    assert opp.risk_reward_ratio == expected_rr
+
+
 def test_residual_alpha_decomposition(settings: Settings) -> None:
     screener = CryptoOpportunityScreener(settings)
     btc_candles = trending_candles(up=True, count=220)
@@ -368,7 +483,10 @@ async def test_accumulation_screener_anti_chasing_rejects_pumped_tokens(settings
 
 
 @pytest.mark.asyncio
-async def test_accumulation_screener_identifies_tight_coil(settings: Settings) -> None:
+@pytest.mark.parametrize("open_weekly_pump", [False, True])
+async def test_accumulation_screener_identifies_tight_coil(
+    settings: Settings, open_weekly_pump: bool
+) -> None:
     """Ensure tokens in tight 30d range coiling right below ceiling with negative funding are detected."""
     inst_btc = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="BTCUSDT")
     inst_coil = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="COILUSDT")
@@ -420,6 +538,20 @@ async def test_accumulation_screener_identifies_tight_coil(settings: Settings) -
         candles_1h_map={"BTCUSDT": btc_candles, "COILUSDT": coil_1h},
         candles_4h_map={"BTCUSDT": trending_candles(up=True, count=70), "COILUSDT": coil_4h},
     )
+    if open_weekly_pump:
+        weekly = [
+            Candle(
+                opened_at=started + timedelta(weeks=index),
+                closed_at=started + timedelta(weeks=index + 1),
+                open=Decimal("10"), high=Decimal("10.2"), low=Decimal("9.9"),
+                close=Decimal("10.1") if index % 2 else Decimal("10"), volume=Decimal("1000"),
+            )
+            for index in range(20)
+        ]
+        weekly.append(replace(weekly[-1], opened_at=started + timedelta(weeks=20),
+                              closed_at=started + timedelta(weeks=21),
+                              high=Decimal("1000"), close=Decimal("1000"), closed=False))
+        market._candles_1w = {"COILUSDT": weekly}
 
     # Negative funding = retail shorting the base, smart money accumulating
     deriv_port = FakeDerivativesData(
@@ -431,6 +563,7 @@ async def test_accumulation_screener_identifies_tight_coil(settings: Settings) -
                 open_interest_change_1h=Decimal("0.04"),
                 open_interest_change_7d=Decimal("0.18"),
                 taker_buy_sell_ratio=Decimal("1.25"),
+                taker_buy_sell_ratio_4h=Decimal("1.35"),
                 bid_depth_notional=Decimal("3000000"),
                 ask_depth_notional=Decimal("1500000"),
             )
@@ -459,6 +592,13 @@ async def test_accumulation_screener_identifies_tight_coil(settings: Settings) -
     assert len(opportunities) > 0
     coil_opp = next((o for o in opportunities if o.instrument.id.symbol == "COILUSDT"), None)
     assert coil_opp is not None
+    assert coil_opp.taker_ratio == Decimal("1.35")
+    assert coil_opp.as_dict()["taker_buy_sell_ratio_window_hours"] == 4
+    assert coil_opp.as_dict()["taker_buy_sell_ratio_1h"] == "1.2500"
+    assert coil_opp.as_dict()["taker_buy_sell_ratio_4h"] == "1.3500"
+    rr_target_index = int(coil_opp.as_dict()["risk_reward_target_index"])
+    measured_rr = (coil_opp.suggested_targets[rr_target_index - 1] - coil_opp.suggested_entry) / (coil_opp.suggested_entry - coil_opp.suggested_stop)
+    assert coil_opp.risk_reward_ratio == measured_rr.quantize(Decimal("0.01"))
     assert coil_opp.setup_label in (
         SetupLabel.COIL_SPRING_LONG,
         SetupLabel.OI_ACCUMULATION_LONG,
@@ -477,7 +617,10 @@ async def test_accumulation_screener_identifies_tight_coil(settings: Settings) -
     assert coil_opp.breakout_trigger is not None
     assert coil_opp.breakout_trigger > coil_opp.current_price
     assert coil_opp.breakout_trigger < coil_opp.suggested_targets[0], "Breakout trigger must be below Target 1"
-    assert coil_opp.suggested_entry <= coil_opp.current_price
+    if coil_opp.execution_mode == "CEILING_BREAKOUT":
+        assert coil_opp.suggested_entry == coil_opp.breakout_trigger
+    else:
+        assert coil_opp.suggested_entry <= coil_opp.current_price
     assert coil_opp.suggested_entry > coil_opp.suggested_stop
     assert coil_opp.suggested_targets[0] > coil_opp.suggested_entry
 
@@ -806,6 +949,7 @@ async def test_utad_mtf_rsi_divergence_short_screening(settings: Settings) -> No
                 open_interest_change_1h=Decimal("0.01"),
                 open_interest_change_7d=Decimal("0.184"),
                 taker_buy_sell_ratio=Decimal("0.84"),  # aggressive taker sellers
+                taker_buy_sell_ratio_24h=Decimal("0.76"),
                 bid_depth_notional=Decimal("1200000"),
                 ask_depth_notional=Decimal("2800000"),
             )
@@ -834,6 +978,13 @@ async def test_utad_mtf_rsi_divergence_short_screening(settings: Settings) -> No
     assert len(opportunities) > 0
     near_opp = next((o for o in opportunities if o.instrument.id.symbol == "NEARUSDT"), None)
     assert near_opp is not None
+    assert near_opp.taker_ratio == Decimal("0.76")
+    assert near_opp.as_dict()["taker_buy_sell_ratio_window_hours"] == 24
+    assert near_opp.as_dict()["taker_buy_sell_ratio_1h"] == "0.8400"
+    assert near_opp.as_dict()["taker_buy_sell_ratio_24h"] == "0.7600"
+    assert near_opp.as_dict()["risk_reward_target_index"] == 2
+    measured_rr = (near_opp.suggested_entry - near_opp.suggested_targets[1]) / (near_opp.suggested_stop - near_opp.suggested_entry)
+    assert near_opp.risk_reward_ratio == measured_rr.quantize(Decimal("0.01"))
     assert near_opp.direction == Direction.SHORT
     assert near_opp.setup_label in (
         SetupLabel.UTAD_DIVERGENCE_SHORT,
@@ -1161,8 +1312,3 @@ async def test_macro_death_cross_eliminated_from_long_gates(settings: Settings) 
 
     long_opps = [o for o in opps if o.direction == Direction.LONG]
     assert len(long_opps) == 0, f"Expected SAGA-like death cross token to be eliminated from Longs, got {long_opps}"
-
-
-
-
-

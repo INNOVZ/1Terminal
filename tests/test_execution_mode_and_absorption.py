@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from decimal import Decimal
-import pytest
 
 from algotrader.domain.execution_brackets import build_long_bracket, build_short_bracket
 from algotrader.domain.indicators import VolumeProfileBin
@@ -12,7 +11,6 @@ from algotrader.domain.scoring import (
     classify_opportunity_grade,
     compute_3tier_ev_r,
 )
-
 
 # =====================================================================
 # INVARIANT 1: UNIFIED ENTRY/STOP ANCHOR FOR R:R AND EV_R
@@ -49,6 +47,8 @@ def test_invariant_1_ceiling_breakout_unified_anchor_and_positive_ev() -> None:
 
     assert bracket.execution_mode == "CEILING_BREAKOUT"
     assert bracket.effective_entry == bracket.breakout_trigger
+    assert bracket.suggested_entry == bracket.effective_entry
+    assert bracket.invalidation_stop == bracket.breakout_stop
     assert bracket.invalidation_stop < bracket.effective_entry
 
     # Targets must scale above effective_entry according to Invariant 1 formula:

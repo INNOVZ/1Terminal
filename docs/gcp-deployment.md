@@ -77,3 +77,100 @@ volume and data directory. Restoring the pre-migration image can re-enable tradi
 Local verification cannot establish the VM's current process inventory, exchange state, backups or
 firewall configuration. Check these in the deployment environment before treating the migration
 as complete.
+
+## Research archive acceptance (local implementation, not yet rolled out)
+
+New scans write immutable, checksummed input archives to `data/research`; the existing data bind mount
+must therefore provide space and write access for the archive as well as `screener_latest.json`.
+`ATLAS_RESEARCH_ARCHIVE_DIR` overrides the location; a different directory needs its own persistent
+mount and backup policy. Do not put research blobs in the watchlist SQLite database.
+
+After an explicitly approved rollout, run one bounded controlled scan and retain its `scan_id` and
+`scan_archive` receipt. Verify `status=saved`, the manifest/payload checksum, and offline replay in the
+same image/source/dependency release. Confirm a deliberately unwritable test archive location reports
+`unavailable` without silently converting valid candidates into zero results; do this in staging, not
+by removing production permissions. Preserve original archives unchanged during rollback or upgrades.
+
+24h/48h outcome collection is manual (`atlas observe-scan`); it is not enabled by the existing cron.
+It refuses cohorts above its explicit symbol limit and uses historical public minute candles only.
+Measure request weight, retries, duration, disk growth and missing coverage before scheduling it.
+Restore input and outcome directories together in a backup drill, then verify checksums and compatible
+replay. No retention deletion is currently configured. Local tests do not verify VM disk ownership,
+capacity, backups, request load or current deployment state.
+
+## Dedicated opt-in research VM (2026-10-26)
+
+Compatibility note: the approved fair-traversal observer extension changes its source-hashed
+measurement fingerprint. Do not move an incompatible active session onto this release or bypass
+`source_mismatch`; use a fresh compatible parent/child/session. Existing archives remain readable.
+Synthetic report-capacity checks do not replace a persistent-storage restore drill or VM/provider
+load acceptance before enabling collection.
+
+Approved destination only: `alfa2-512717` / `europe-west10-c` /
+`instance-20261025-174348`. This is a research-only VM, not a replacement API server.
+Use OS Login through IAP; no worker ports need public or internal ingress. Do not
+change the existing API VM, its project IAM, GitHub SSH secrets or Vercel routing.
+Do not run a bare `docker compose up` on the research VM: it defaults to the API.
+
+The optional Compose profile provides `research-ranks` and `research-outcomes`,
+each UID/GID10001, read-only root, dropped capabilities, no-new-privileges,
+256 MiB/0.5 CPU, bounded tmpfs and an archive-only mount. These are resource
+safeguards, not evidence that the largest cohort fits or meets its deadlines.
+No runtime dependency or exchange credential is required by the runner.
+
+Deploy only an independently reviewed, immutable full-SHA release after all
+verification gates. The host wrapper `scripts/research_compose_control.py` targets
+only the `atlas-research` Compose project and the two named worker services.
+It uses argv, a fixed local Docker context, and strictly parsed operator data;
+it never sources that data as shell code. Verify the local default Docker context
+points to this VM, and verify the release checkout SHA/cleanliness before use.
+
+Persistent control location (outside SHA releases):
+`/home/deploy/alfa-terminal/research-control.env`. Missing means disabled. An
+existing malformed, symlinked, oversized or group/world-writable file blocks
+preflight. Create/edit it only as the trusted operator with restrictive permissions.
+Do not commit it, mount it into containers or place credentials in it. Allowed
+keys are exactly `ATLAS_RESEARCH_ENABLED=true|false` and an optional canonical
+`ATLAS_RESEARCH_SESSION_ID` (required when true).
+
+The wrapper accepts `--release /home/deploy/atlas-releases/FULL_SHA` and
+`--action build|up|health|stop`. Use the same control file for new releases and
+rollback. With missing/false control, `up` stops only the named research workers;
+it does not start research or touch an API service or volume. With explicit true
+control and a valid enrolled session, `up` waits for both worker health checks.
+Source incompatibility is a blocked session, not permission to reinterpret it.
+
+The sole archive bind is `/home/deploy/alfa-terminal/data/research` to
+`/app/data/research`. Before collection, verify its persistent storage/UID10001
+ownership, >=2 GiB free, archive size <5 GiB, backup/restore expectations and boot
+disk deletion policy. Do not recursively change ownership of unrelated paths.
+Secure Boot, workload service-account permissions and measured resource usage
+remain explicit infrastructure review items, not claims satisfied by unit tests.
+
+Shipping code is not activation. After separate activation approval, choose one
+complete archived child and its exact parent, then use `atlas research-start
+--shadow-id UUID --archive-dir /app/data/research` in the compatible image.
+Enrollment/status/stop are offline; no recurring enrollment or candidate rescans
+are introduced. Record its session UUID in the operator control before starting
+the two roles. Observe `research-status` plus per-role `research-health` and actual
+archived snapshot/outcome/report IDs. A healthy terminal-idle process is not
+collecting; a heartbeat is not a successful market observation.
+
+Ranks run anchored five-minute slots without backfilling missed live observations.
+Outcome passes are due at the original 24h/48h endpoints plus60s, limited to30
+actual HTTP attempts/90s including backoff and cleanup, with fixed12h retry expiry.
+Both roles honor durable cooperative cooldowns; this is not a global IP quota
+guarantee. At expiry, reports retain unknown paths and the whole original cohort.
+Reserved reports freeze exact IDs/checksums/as-of so late evidence cannot change
+a restarted finalization. Durable filesystem publication is not a hard network
+deadline. SIGTERM waits for committed evidence where possible; OS kill/OOM can
+still leave explicitly interrupted or missing observations.
+
+Local packaging check: `uv run python -m tests.research_container_smoke --image IMAGE`
+uses synthetic archives, no network, constrained API/idle/stopped-worker containers
+and a stopped-worker restart. Test-created containers/volume are removed afterward.
+This is packaging/lifecycle verification, not target-VM capacity or24h/48h evidence.
+
+The existing workflow still deploys the API on main. A feature-branch CI pass or
+image build does not authorize merging main under this VM-only scope; publishing
+must resolve that trigger boundary before any out-of-scope external side effect.

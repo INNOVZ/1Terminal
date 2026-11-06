@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from algotrader.domain.models import Candle, Direction
@@ -508,29 +508,31 @@ def confirmed_macd_divergences(
 
 
 def resample_candles(candles: Sequence[Candle], rule: str = "1d") -> list[Candle]:
-    """Resample candles to higher timeframe (e.g. 4h -> 1d, 1d -> 1w)."""
+    """Aggregate complete UTC calendar periods; omit partial or gapped periods."""
     if not candles:
         return []
     closed = sorted((c for c in candles if c.closed), key=lambda x: x.closed_at)
     if not closed:
         return []
 
-    groups: dict[str, list[Candle]] = {}
+    groups: dict[datetime, list[Candle]] = {}
     for c in closed:
-        if rule == "1d":
-            key = c.closed_at.strftime("%Y-%m-%d")
-        elif rule == "1w":
-            iso_year, iso_week, _ = c.closed_at.isocalendar()
-            key = f"{iso_year}-W{iso_week:02d}"
-        else:
-            key = c.closed_at.strftime("%Y-%m-%d")
+        key = c.opened_at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        if rule == "1w":
+            key -= timedelta(days=key.weekday())
         groups.setdefault(key, []).append(c)
 
     resampled: list[Candle] = []
-    for _, group in groups.items():
-        if not group:
+    for period_start, group in groups.items():
+        sorted_grp = sorted(group, key=lambda x: x.opened_at)
+        period_end = period_start + timedelta(days=7 if rule == "1w" else 1)
+        if (
+            abs((sorted_grp[0].opened_at - period_start).total_seconds()) > 1
+            or abs((sorted_grp[-1].closed_at - period_end).total_seconds()) > 1
+            or any(abs((current.opened_at - previous.closed_at).total_seconds()) > 1
+                   for previous, current in zip(sorted_grp, sorted_grp[1:], strict=False))
+        ):
             continue
-        sorted_grp = sorted(group, key=lambda x: x.closed_at)
         resampled.append(
             Candle(
                 opened_at=sorted_grp[0].opened_at,
@@ -541,6 +543,8 @@ def resample_candles(candles: Sequence[Candle], rule: str = "1d") -> list[Candle
                 close=sorted_grp[-1].close,
                 volume=sum((g.volume for g in sorted_grp), ZERO),
                 quote_volume=sum((g.quote_volume for g in sorted_grp), ZERO),
+                taker_buy_volume=sum((g.taker_buy_volume for g in sorted_grp), ZERO),
+                taker_buy_quote_volume=sum((g.taker_buy_quote_volume for g in sorted_grp), ZERO),
                 closed=True,
             )
         )
@@ -1026,32 +1030,31 @@ def cumulative_volume_delta_metrics(
     )
 
 
-def taker_buy_ratio_from_candles(candles: Sequence[Candle]) -> Decimal:
-    """Compute taker_buy_sell_ratio directly from Binance kline index [10]:
+def taker_buy_ratio_from_candles(
+    candles: Sequence[Candle], *, hours: int | None = None
+) -> Decimal | None:
+    """Sum buy/sell volumes over a complete window, with a neutral ratio of 1.00.
 
-    taker_buy_vol / max(total_vol - taker_buy_vol, 1e-9) (i.e. buy_vol / sell_vol, centered at 1.00), rounded to 4 decimals.
-    Falls back to base asset volume ratio if quote volumes are zero.
+    With ``hours``, require consecutive closed hourly bars. Prefer quote volume;
+    otherwise use base volume consistently across the window. Zero default taker
+    fields cannot establish tape coverage, so that candle fallback stays missing.
     """
+    if hours is not None:
+        if hours <= 0 or len(candles) < hours:
+            return None
+        candles = candles[-hours:]
+        if any(not c.closed or abs((c.closed_at - c.opened_at).total_seconds() - 3600) > 1 for c in candles):
+            return None
+        if any(abs((current.opened_at - previous.opened_at).total_seconds() - 3600) > 1 for previous, current in zip(candles, candles[1:], strict=False)):
+            return None
     if not candles:
-        return Decimal("1.0000")
+        return None
 
-    total_quote_vol = sum((c.quote_volume for c in candles), ZERO)
-    total_taker_quote = sum((c.taker_buy_quote_volume for c in candles), ZERO)
-    total_vol = sum((c.volume for c in candles), ZERO)
-    total_taker_base = sum((c.taker_buy_volume for c in candles), ZERO)
-
-    if total_taker_quote == ZERO and total_taker_base == ZERO:
-        return Decimal("1.0000")
-
-    if total_quote_vol > ZERO and total_taker_quote > ZERO:
-        sell_vol = max(total_quote_vol - total_taker_quote, Decimal("1e-9"))
-        return round(total_taker_quote / sell_vol, 4)
-
-    if total_vol > ZERO and total_taker_base > ZERO:
-        sell_vol = max(total_vol - total_taker_base, Decimal("1e-9"))
-        return round(total_taker_base / sell_vol, 4)
-
-    return Decimal("1.0000")
-
-
-
+    volumes = [(c.quote_volume, c.taker_buy_quote_volume) for c in candles]
+    if not all(total.is_finite() and buy.is_finite() and total > ZERO and ZERO < buy <= total for total, buy in volumes):
+        volumes = [(c.volume, c.taker_buy_volume) for c in candles]
+        if not all(total.is_finite() and buy.is_finite() and total > ZERO and ZERO < buy <= total for total, buy in volumes):
+            return None
+    total_buy = sum((buy for _, buy in volumes), ZERO)
+    total_sell = sum((total - buy for total, buy in volumes), ZERO)
+    return round(total_buy / total_sell, 4) if total_sell > ZERO else None

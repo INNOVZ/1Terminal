@@ -1,0 +1,472 @@
+{
+  "source_hashes_unchanged": {
+    "/Users/jithinjacob/.gemini/antigravity/brain/04d32a04-b148-49b0-8804-0d5c73b1a80d/scratch/reproduce_48h_experiment.py": "c829654e98fd7cd4594b8e60529961037d2fdb36861a1990eb67796bca73e606",
+    "/Users/jithinjacob/.gemini/antigravity/brain/04d32a04-b148-49b0-8804-0d5c73b1a80d/scratch/raw_inputs_20261103T1200Z.json": "717d6ac7d2ec5e24cc0bd77773b0a7b3b68525827bf474002c989530ad66c14f",
+    "/Users/jithinjacob/.gemini/antigravity/brain/04d32a04-b148-49b0-8804-0d5c73b1a80d/scratch/experiment_results_20261103T1200Z.json": "77c0d768b26cc0d22519b17dffd2d710e7d40aa089d64e3ef42d74978ab6639b",
+    "/Users/jithinjacob/.gemini/antigravity/brain/04d32a04-b148-49b0-8804-0d5c73b1a80d/.system_generated/tasks/task-279.log": "7c64ecf93f23bcf0d61b39683db56a860633ad34ed10e9101b654502bb6f9b33",
+    "/Users/jithinjacob/.gemini/antigravity/brain/04d32a04-b148-49b0-8804-0d5c73b1a80d/.system_generated/tasks/task-286.log": "d37e599e714be6dfa14d3ed3b9ed73d183c2548fdcf2ca7c9ae0658c29467644"
+  },
+  "saved_json_exact_match": true,
+  "original_task279_log_rows_exact_match": true,
+  "original_task286_signal_times_prices_counts_match": true,
+  "original_task286_value_differences": [
+    {
+      "symbol": "HOTUSDT",
+      "original": [
+        "T-36h",
+        "0.0003692",
+        "+44.4%",
+        61.6,
+        "OI_ACCUMULATION_LONG"
+      ],
+      "reproduction": [
+        "T-36h",
+        "0.0003692",
+        "+44.4%",
+        60.8,
+        "OI_ACCUMULATION_LONG"
+      ]
+    },
+    {
+      "symbol": "HOTUSDT",
+      "original": [
+        "T-32h",
+        "0.0003921",
+        "+36.0%",
+        73.5,
+        "OI_ACCUMULATION_LONG"
+      ],
+      "reproduction": [
+        "T-32h",
+        "0.0003921",
+        "+36.0%",
+        72.8,
+        "OI_ACCUMULATION_LONG"
+      ]
+    },
+    {
+      "symbol": "HOTUSDT",
+      "original": [
+        "T-28h",
+        "0.0003822",
+        "+39.5%",
+        66.6,
+        "OI_ACCUMULATION_LONG"
+      ],
+      "reproduction": [
+        "T-28h",
+        "0.0003822",
+        "+39.5%",
+        65.9,
+        "OI_ACCUMULATION_LONG"
+      ]
+    },
+    {
+      "symbol": "HOTUSDT",
+      "original": [
+        "T-24h",
+        "0.0003790",
+        "+40.7%",
+        68.0,
+        "OI_ACCUMULATION_LONG"
+      ],
+      "reproduction": [
+        "T-24h",
+        "0.0003790",
+        "+40.7%",
+        67.3,
+        "OI_ACCUMULATION_LONG"
+      ]
+    },
+    {
+      "symbol": "HOTUSDT",
+      "original": [
+        "T-16h",
+        "0.0004392",
+        "+21.4%",
+        65.4,
+        "OI_ACCUMULATION_LONG"
+      ],
+      "reproduction": [
+        "T-16h",
+        "0.0004392",
+        "+21.4%",
+        64.6,
+        "OI_ACCUMULATION_LONG"
+      ]
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "original": [
+        "T-8h",
+        "0.0444400",
+        "-1.0%",
+        70.5,
+        "OI_ACCUMULATION_LONG"
+      ],
+      "reproduction": [
+        "T-8h",
+        "0.0444400",
+        "-1.1%",
+        70.5,
+        "OI_ACCUMULATION_LONG"
+      ]
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "original": [
+        "T-32h",
+        "0.0524900",
+        "+2.7%",
+        52.3,
+        "RANGE_BOTTOM_ACCUMULATION_LONG"
+      ],
+      "reproduction": [
+        "T-32h",
+        "0.0524900",
+        "+2.7%",
+        52.4,
+        "RANGE_BOTTOM_ACCUMULATION_LONG"
+      ]
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "original": [
+        "T-8h",
+        "0.0530100",
+        "+1.7%",
+        52.9,
+        "RANGE_BOTTOM_ACCUMULATION_LONG"
+      ],
+      "reproduction": [
+        "T-8h",
+        "0.0530100",
+        "+1.7%",
+        53.0,
+        "RANGE_BOTTOM_ACCUMULATION_LONG"
+      ]
+    }
+  ],
+  "raw_quality": [
+    {
+      "symbol": "HOTUSDT",
+      "dataset": "candles_1h",
+      "continuous_valid_rows": 319
+    },
+    {
+      "symbol": "HOTUSDT",
+      "dataset": "candles_4h",
+      "continuous_valid_rows": 239
+    },
+    {
+      "symbol": "HOTUSDT",
+      "dataset": "candles_1w",
+      "continuous_valid_rows": 39
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "dataset": "candles_1h",
+      "continuous_valid_rows": 319
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "dataset": "candles_4h",
+      "continuous_valid_rows": 239
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "dataset": "candles_1w",
+      "continuous_valid_rows": 39
+    },
+    {
+      "symbol": "BMTUSDT",
+      "dataset": "candles_1h",
+      "continuous_valid_rows": 319
+    },
+    {
+      "symbol": "BMTUSDT",
+      "dataset": "candles_4h",
+      "continuous_valid_rows": 239
+    },
+    {
+      "symbol": "BMTUSDT",
+      "dataset": "candles_1w",
+      "continuous_valid_rows": 39
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "dataset": "candles_1h",
+      "continuous_valid_rows": 319
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "dataset": "candles_4h",
+      "continuous_valid_rows": 239
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "dataset": "candles_1w",
+      "continuous_valid_rows": 39
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "dataset": "candles_1h",
+      "continuous_valid_rows": 319
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "dataset": "candles_4h",
+      "continuous_valid_rows": 239
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "dataset": "candles_1w",
+      "continuous_valid_rows": 39
+    },
+    {
+      "symbol": "BEATUSDT",
+      "dataset": "candles_1h",
+      "continuous_valid_rows": 319
+    },
+    {
+      "symbol": "BEATUSDT",
+      "dataset": "candles_4h",
+      "continuous_valid_rows": 239
+    },
+    {
+      "symbol": "BEATUSDT",
+      "dataset": "candles_1w",
+      "continuous_valid_rows": 39
+    }
+  ],
+  "independent_crosschecks": [
+    {
+      "symbol": "HOTUSDT",
+      "identical_hourly_bars": 13,
+      "identical_oi_samples": 85
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "identical_hourly_bars": 13,
+      "identical_oi_samples": 85
+    },
+    {
+      "symbol": "BMTUSDT",
+      "identical_hourly_bars": 13,
+      "identical_oi_samples": 85
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "identical_hourly_bars": 13,
+      "identical_oi_samples": 0
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "identical_hourly_bars": 13,
+      "identical_oi_samples": 0
+    },
+    {
+      "symbol": "BEATUSDT",
+      "identical_hourly_bars": 13,
+      "identical_oi_samples": 0
+    }
+  ],
+  "truncated_7d_oi_windows": [
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 44,
+      "claimed_7d_actual_hours": 155.0
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 40,
+      "claimed_7d_actual_hours": 159.0
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 36,
+      "claimed_7d_actual_hours": 163.0
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 32,
+      "claimed_7d_actual_hours": 167.0
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 44,
+      "claimed_7d_actual_hours": 155.0
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 40,
+      "claimed_7d_actual_hours": 159.0
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 36,
+      "claimed_7d_actual_hours": 163.0
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 32,
+      "claimed_7d_actual_hours": 167.0
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 44,
+      "claimed_7d_actual_hours": 155.0
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 40,
+      "claimed_7d_actual_hours": 159.0
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 36,
+      "claimed_7d_actual_hours": 163.0
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 32,
+      "claimed_7d_actual_hours": 167.0
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 44,
+      "claimed_7d_actual_hours": 155.0
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 40,
+      "claimed_7d_actual_hours": 159.0
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 36,
+      "claimed_7d_actual_hours": 163.0
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 32,
+      "claimed_7d_actual_hours": 167.0
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 44,
+      "claimed_7d_actual_hours": 155.0
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 40,
+      "claimed_7d_actual_hours": 159.0
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 36,
+      "claimed_7d_actual_hours": 163.0
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 32,
+      "claimed_7d_actual_hours": 167.0
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 44,
+      "claimed_7d_actual_hours": 155.0
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 40,
+      "claimed_7d_actual_hours": 159.0
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 36,
+      "claimed_7d_actual_hours": 163.0
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 32,
+      "claimed_7d_actual_hours": 167.0
+    }
+  ],
+  "unfiltered_future_weekly_inputs": [
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 44
+    },
+    {
+      "symbol": "HOTUSDT",
+      "horizon": 40
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 44
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "horizon": 40
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 44
+    },
+    {
+      "symbol": "BMTUSDT",
+      "horizon": 40
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 44
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "horizon": 40
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 44
+    },
+    {
+      "symbol": "TRUSTUSDT",
+      "horizon": 40
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 44
+    },
+    {
+      "symbol": "BEATUSDT",
+      "horizon": 40
+    }
+  ],
+  "common_ten_scan_comparison": {
+    "HOTUSDT": {
+      "observations_per_model": 10,
+      "baseline_signals": 0,
+      "patched_signals": 1,
+      "challenger_signals": 5
+    },
+    "ICNTUSDT": {
+      "observations_per_model": 10,
+      "baseline_signals": 1,
+      "patched_signals": 2,
+      "challenger_signals": 3
+    },
+    "BMTUSDT": {
+      "observations_per_model": 10,
+      "baseline_signals": 0,
+      "patched_signals": 0,
+      "challenger_signals": 3
+    },
+    "MEGAUSDT": {
+      "observations_per_model": 10,
+      "baseline_signals": 3,
+      "patched_signals": 3,
+      "challenger_signals": 6
+    }
+  }
+}

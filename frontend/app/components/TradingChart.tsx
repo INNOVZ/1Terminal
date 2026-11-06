@@ -176,6 +176,7 @@ export interface ChartProps {
   candleInterval?: CandleInterval;
   onChangeInterval?: (interval: CandleInterval) => void;
   direction?: string;
+  preservePublishedLevels?: boolean;
 }
 
 type PriceLine = ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]>;
@@ -184,6 +185,7 @@ function TradingChart({
   candles: initialCandles = [],
   symbol,
   direction = "long",
+  preservePublishedLevels = false,
   pocPrice,
   vahPrice,
   valPrice,
@@ -767,20 +769,20 @@ function TradingChart({
     const computedVP = computeVolumeProfile(candles);
 
     // Check if prop POC is disconnected (> 25% discrepancy from active price action) or missing
-    const isPocDisconnected = !pocPrice || (currentPrice > 0 && Math.abs(pocPrice - currentPrice) / currentPrice > 0.25);
+    const isPocDisconnected = !pocPrice || (!preservePublishedLevels && currentPrice > 0 && Math.abs(pocPrice - currentPrice) / currentPrice > 0.25);
     const effectivePoc = (!isPocDisconnected && pocPrice) ? pocPrice : (computedVP?.pocPrice ?? pocPrice ?? currentPrice);
     const effectiveVah = (!isPocDisconnected && vahPrice) ? vahPrice : (computedVP?.vahPrice ?? vahPrice ?? (effectivePoc ? effectivePoc * 1.03 : currentPrice * 1.03));
     const effectiveVal = (!isPocDisconnected && valPrice) ? valPrice : (computedVP?.valPrice ?? valPrice ?? (effectivePoc ? effectivePoc * 0.97 : currentPrice * 0.97));
 
     // Check if execution bracket/targets are disconnected (> 25% discrepancy from active price action)
     const isBracketDisconnected = currentPrice > 0 && entryPrice && (Math.abs(entryPrice - currentPrice) / currentPrice > 0.25);
-    const scaleFactor = (isBracketDisconnected && entryPrice) ? (currentPrice / entryPrice) : 1;
+    const scaleFactor = (!preservePublishedLevels && isBracketDisconnected && entryPrice) ? (currentPrice / entryPrice) : 1;
 
-    const effectiveEntry = entryPrice ? Number((entryPrice * scaleFactor).toFixed(6)) : currentPrice;
-    const effectiveStop = stopPrice ? Number((stopPrice * scaleFactor).toFixed(6)) : Number((currentPrice * 0.95).toFixed(6));
-    const effectiveTrigger = breakoutTrigger ? Number((breakoutTrigger * scaleFactor).toFixed(6)) : Number((currentPrice * 1.03).toFixed(6));
+    const effectiveEntry = entryPrice ? (preservePublishedLevels ? entryPrice : Number((entryPrice * scaleFactor).toFixed(6))) : currentPrice;
+    const effectiveStop = stopPrice ? (preservePublishedLevels ? stopPrice : Number((stopPrice * scaleFactor).toFixed(6))) : Number((currentPrice * 0.95).toFixed(6));
+    const effectiveTrigger = breakoutTrigger ? (preservePublishedLevels ? breakoutTrigger : Number((breakoutTrigger * scaleFactor).toFixed(6))) : Number((currentPrice * 1.03).toFixed(6));
     const effectiveTargets = (targets && targets.length > 0)
-      ? targets.map((t) => Number((t * scaleFactor).toFixed(6)))
+      ? targets.map((t) => preservePublishedLevels ? t : Number((t * scaleFactor).toFixed(6)))
       : [Number((currentPrice * 1.08).toFixed(6)), Number((currentPrice * 1.15).toFixed(6)), Number((currentPrice * 1.25).toFixed(6))];
 
     // Emit live adapted levels back to parent so VerificationPanel and Header stay perfectly synced
@@ -858,7 +860,7 @@ function TradingChart({
             lineWidth: 1,
             lineStyle: 3,
             axisLabelVisible: true,
-            title: "LIMIT ENTRY",
+            title: preservePublishedLevels ? "SUGGESTED ENTRY" : "LIMIT ENTRY",
           })
         );
       }
@@ -901,6 +903,7 @@ function TradingChart({
     showLevels,
     showTargets,
     direction,
+    preservePublishedLevels,
     candleInterval,
   ]);
 

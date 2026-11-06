@@ -1,0 +1,738 @@
+
+===== PAGE 1 =====
+ATLAS SCREENER — RESEARCH FINDINGS,
+BOTTLENECKS & ROADMAP
+MULTI-COHORT TOP-GAINER DISCOVERY ANALYSIS, STEP 1 REPLAY AUDIT &
+INSTITUTIONAL STRATEGY ARCHITECTURE
+Date: November 5, 2026
+Scope: 3 Cohorts (Oct 30 – Nov 5,
+2026) • 522 Contracts
+Discipline: Strict vs. Diagnostic
+Replay Separated
+1. EXECUTIVE THESIS: WHY CURVE-FITTING TODAY'S WINNERS FAILS
+Over three consecutive observation cycles (Oct 30–Nov 2, Nov 1–Nov 4, and Nov 3–Nov 5, 2026), we investigated why top-gaining
+Binance USD-M perpetual contracts frequently failed to appear in Atlas's published long candidates prior to or during their expansion
+phases. A rigorous audit of both full-population market data (522  active USDT perpetuals) and stage-by-stage counterfactual pipeline
+traces proves that reactive threshold tuning for yesterday's winners is an anti-pattern: today's leaders fail one gate (e.g., funding > +2.5
+bps or trading below 4H EMA50), while tomorrow's leaders fail another (e.g., Stage 1 pre-enrichment absorption starvation or intraday 4-
+hour scan cadence).
+Core Strategic Diagnosis: Atlas currently conflates two fundamentally different quantitative objectives inside a single sequential filter: (1) Low-
+Risk Coiled Entry Readiness (tight volatility compression above 4H EMA50 and 30d VAL with neutral/negative funding) and (2) Early Leader /
+Regime-Shift Discovery (bottom-of-range reclaims, post-ignition continuations, and sudden volume/OI expansions). Furthermore, gating Stage 2
+derivatives enrichment behind an un-enriched Stage 1 pass starves valid OI/funding setups before their derivative telemetry is ever fetched.
+2. COMPLETE INVENTORY OF RETAINED DATASETS & VERIFICATION EVIDENCE
+Dataset / Evidence Bundle Time Window (UTC) Universe Scope Granularity & Retained Series Methodological Role
+Cohort 1 VM Archive
+2026-11-02-observation-*
+Oct 30 12:05Z –
+Nov 01 12:05Z (48h)
+510 snapshot symbols;
+6 published longs
+568 5m rank snapshots; 1m
+outcome paths (exposed 30-req
+collector cap)
+ARCHIVED COHORT
+Exposed collector
+truncation
+Step 1 Faithful Diagnostic
+faithful_inputs_20261103T1200Z
+Nov 01 16:00Z –
+Nov 03 12:00Z (12
+scans)
+BTCUSDT  + 6 winners
+(HOT, ICNT, BMT,
+MEGA, TRUST, BEAT )
+560 1h , 540 4h , 40–44 1w
+bars; 240 1h  OI rows; 100
+settled 8h funding records
+SUBSET DIAGNOSTIC
+Fixed 4 replay leakage
+defects
+Nov 3/4 Full-Universe Audit
+2026-11-03-rome-hourly.json
+Nov 02 23:00Z –
+Nov 04 08:37Z
+All 522 TRADING
+USDT Perpetuals
+24h calendar-day 1h  bars
+(522 symbols) + 15-winner 1h
+klines & OI pre-move series
+POPULATION AUDIT
+Pre-event 6h precursor
+study
+Nov 4/5 Full-Universe Study
+2026-11-05-universe-*
+Oct 31 09:00Z –
+Nov 05 09:30Z (120h)
+All 522 TRADING
+USDT Perpetuals
+62,640 closed 1h  bars +
+62,6401h  OI points + 16,800
+5m  bars (14 winners)
+FULL POPULATION
+Includes all non-winners
+Nov 4/5 Counterfactual Trace
+nov5_gainers_inputs_20261105T0800Z
+Nov 03 12:00Z –
+Nov 05 08:00Z (12
+scans)
+BTCUSDT  + 14 Nov 4/5
+Top-10 Gainers (168
+scans)
+560 1h , 540 4h , 19–44 1w
+bars; 240 1h  OI rows; 100
+settled 8h funding records
+STAGE-ATTRITION
+TRACE
+Pinpoints exact rejection
+stage
+Collector Capacity Fixture
+evidence/2026-11-05-capacity/
+Synthetic 48h archive
+(1.88 GB on disk)
+512-member cohort,
+577 rank snapshots
+Full 1440/2880 1m  paths;
+tested under 256 MiB / 0.5
+CPU  Docker cgroup limits
+CAPACITY GATE
+24h: 528.6s, 48h:
+763.4s (<900s)
+3. COUNTERFACTUAL ATTRITION FUNNEL ACROSS 168 SCANS OF NOV 4/5 TOP GAINERS
++-----------------------------------------------------------------------------------------------------------------------+
+| TOTAL SYMBOL-SCANS EVALUATED (14 Nov 4/5 Top Gainers x 12 Four-Hour Scans: Nov 3 12:00Z to Nov 5 08:00Z)    168 (100%)|
++-----------------------------------------------------------------------------------------------------------------------+
+   |  [-13 scans outside Top-320 24h Quote Volume: ELSA 5, FOLKS 5, CLANKER 2, AIO 1; 10/14 winners inside 12/12 scans]
+   v
++-----------------------------------------------------------------------------------------------------------------------+
+| STAGE 1 / STAGE 2 PRE-CLASSIFICATION & ARCHETYPE MATCHING (classify_long_archetype)                         34 (20.2%)|
+|  * 134 / 168 scans (79.8%) eliminated BEFORE L1..L6 gates:                                                            |
+|    - 50 scans: Close below 4H EMA50 * 0.975 AND below 30d POC * 0.975 (bottom-of-range reclaim/reversal leaders)      |
+|    - 25 scans: Hard pre-classification veto at crypto_screener.py:1048 (funding_rate > +2.5 bps per 8h)               |
+|    - 26 scans: 4H Bollinger Bandwidth > 0.22 and not inside Keltner (post-impulse continuation leaders)               |
+|    - 13 scans: Close below 30d Value Area Low (VAL) | 17 scans: 1h OI < -2.5% or 4H bearish divergence below EMA50    |
++-----------------------------------------------------------------------------------------------------------------------+
+   |  [-32 scans failed Mandatory Domain Gates L1..L6: L2 Anti-Chasing (18), L6 Ceiling/Momentum (21), L1 Trend (6)]
+   v
++-----------------------------------------------------------------------------------------------------------------------+
+| MANDATORY DOMAIN GATES PASSED (evaluate_long_gates L1..L6)                                                   2  (1.2%)|
+|  * Only TRUSTUSDT (T-44h: Nov 3 11:59Z, OI_ACCUMULATION_LONG) and ELSAUSDT (T-24h: Nov 4 07:59Z, RANGE_BOTTOM)        |
++-----------------------------------------------------------------------------------------------------------------------+
+   |  [-1 scan failed publication_rejection_reasons: ELSAUSDT T-24h rejected by score_floor, RR_floor, EV_floor]
+   v
++-----------------------------------------------------------------------------------------------------------------------+
+| STAGE 2 DIRECT ENRICHED PUBLICATION (publication_rejection_reasons == ())                                    1  (0.6%)|
+|  * TRUSTUSDT at T-44h (score=93.3, conv=84.9, RR=2.75) --> STILL DROPPED IN STAGE 1 (0 / 168 Full-Pipeline Published) |
++-----------------------------------------------------------------------------------------------------------------------+
+Atlas Screener • Multi-Cohort Research Findings, Bottlenecks & Future Roadmap Page 1 of 7
+
+===== PAGE 2 =====
+STEP 1 IMPLEMENTATION: POINT-IN-TIME REPLAY & AUDIT
+HARDENING
+RESOLVING HISTORICAL LEAKAGE, ENFORCING COMPLETE WARMUP WINDOWS &
+SEPARATING STRICT VS. DIAGNOSTIC MODES
+Script: faithful_48h_replay.py
+Hardened CLI:
+research_verified_replay.py
+Verification: 72/72 Windows & 66
+Funding Matches
+1. FOUR METHODOLOGICAL DEFECTS RESOLVED IN STEP 1
+An independent audit (2026-11-04-external-48h-reproduction-audit.md ) of the initial November 3 48-hour experiment identified four
+validity defects that prevented trustworthy strategy comparisons. Step 1 resolved all four in faithful_48h_replay.py  and hardened them in
+research_verified_replay.py :
+Audit Defect Earlier Leaky Experiment
+(reproduce_48h_experiment.py ) Step 1 Point-in-Time Implementation & Hardened Contract
+1. Derivative State Leakage
+Reused a single T-0h  quote's funding_rate  and
+basis_pct  across all 12 historical horizons (T-44h..T-
+0h ), leaking BMTUSDT 's -99.4 bps  anchor funding
+backward and masking HOTUSDT 's -104.2 bps  funding
+at T-32h .
+Matches settled historical 8h funding rates from
+/fapi/v1/fundingRate  at each cutoff (independently verified
+across 66 primary Binance funding records). Never backfills
+anchor basis or funding.
+2. Truncated & Leaked
+Windows
+Fetched only 319 1h  bars, 239 4h  bars, unfiltered 1w
+bars (leaking the Nov 1 23:59Z  weekly close into T-
+44h/T-40h ), and 200 1h  OI samples (shortening 7d OI
+to 155–167h at T-44h..T-32h ).
+Pages 560 1h , 540 4h , 44 1w  bars and 240 1h  OI
+samples. Every scan cutoff receives exact 240 1h , 480 4h ,
+≥39 closed 1w  bars, and exact timestamp-matched
+1h/4h/24h/168h  OI changes.
+3. Silent Default
+Substitution
+Substituted 0.0  for missing OI and 1.0  for missing
+taker ratios; approximated btc_residual_alpha_24h =
+ret_24h  and hardcoded has_kinetic_ignition =
+False .
+Computes point-in-time taker ratios via
+taker_buy_ratio_from_candles , preserves explicit None
+missingness, and computes true BTCUSDT  beta-adjusted
+residual alpha inside CryptoOpportunityScreener .
+4. Incomplete Pipeline Path
+Stopped at classify_long_archetype  +
+evaluate_long_gates , omitting Stage 1/2 admission,
+compute_resistance_absorption , brackets, scoring,
+conviction, and publication_rejection_reasons .
+Executes full screener.screen(...,
+enforce_quality=True)  with ScanDecisionJournal  plus
+direct Stage 2 enriched evaluation against
+publication_rejection_reasons  (atlas-v2.7-data-
+contract-1 ).
+2. STRICT ARCHIVE REPLAY VS. SUBSET DIAGNOSTIC SEPARATION
+Strict Mode (--mode strict ) BENCHMARK GRADE
+Requires an immutable archived ScanRecord  plus a cryptographic
+provenance sidecar (atlas-verified-replay-v1 ) attesting full-
+provider universe responses, real historical bid/ask spreads, live macro
+context, and exact arrival timestamps. Passing the 6-token
+reconstruction to strict mode correctly outputs 72 unavailable
+observations and refuses to fabricate full-universe claims.
+Diagnostic Mode (--mode diagnostic ) MECHANISM TRACE
+Executes the production code path on a preflight-validated subset with
+explicit diagnostic assumptions (synthetic 1-tick spread, neutral
+MacroSentimentContext() , zero basis/depth, and 7-instrument
+universe). Sets performance_claims_permitted = False  and isolates
+internal gate, archetype, and Stage 1 vs. Stage 2 absorption mechanics.
+3. VERIFIED COHORT 2 DIAGNOSTIC RESULTS (12 SCANS: NOV 1 16:00Z TO NOV 3 12:00Z)
+Symbol Ctrl
+Gate
+Ctrl S2
+Opp Ctrl S2 Pub Ctrl Full
+Pub
+Chal
+Gate
+Chal S2
+Opp Chal S2 Pub Chal Full
+Pub Verified Mechanism & Audit Notes
+HOTUSDT 1 / 12 1 / 12 1 / 12 (T-
+32h )
+1 / 12 (T-
+32h ) 1 / 12 1 / 12 1 / 12 (T-
+32h )
+1 / 12 (T-
+32h )
+Historical funding -104.2 bps  at T-
+32h  passes SHORT_SQUEEZE  in
+Control via Stage 2 probe (sc=87.3,
+conv=82.2, RR=2.5 ).
+ICNTUSDT 0 / 12 0 / 12 0 / 12 0 / 12 1 / 12
+(T-8h )
+1 / 12
+(T-8h )
+1 / 12 (T-
+8h ) 0 / 12
+Control COIL_SPRING  fails L3
+(range/ceiling); Challenger
+RANGE_BOTTOM  passes Stage 2
+(sc=96.6, RR=5.0 ) but drops in
+Stage 1 (Abs=33 ).
+BMTUSDT 0 / 12 0 / 12 0 / 12 0 / 12 0 / 12 0 / 12 0 / 12 0 / 12
+7d contract OI was negative
+(-41.7%..-11.2% ) across all 12
+scans; passes 0/12 under production
+gating.
+MEGAUSDT 3 / 12 3 / 12 3 / 12 (T-
+20,12,4h )
+1 / 12 (T-
+12h ) 3 / 12 3 / 12 3 / 12 (T-
+20,12,4h )
+1 / 12 (T-
+12h )
+T-12h  publishes in full path (Stage
+1 Abs=43 ); T-20h  and T-4h
+(Stage 2 Abs=73 ) drop in Stage 1 at
+Abs=33 < 35 .
+TRUSTUSDT 7 / 12 6 / 12 3 / 12 (T-
+12,4,0h ) 0 / 12 7 / 12 6 / 12 3 / 12 (T-
+12,4,0h ) 0 / 12
+7 gate passes, 6 Stage 2 opps (T-
+20h  fails funding > 2.4bps ); 3
+Stage 2 publications drop in Stage 1
+(Abs=15/30 < 35 ).
+BEATUSDT 1 / 12 1 / 12 0 / 12 0 / 12 1 / 12 1 / 12 0 / 12 0 / 12
+Passes L1..L6  at T-24h
+(VCP_COMPRESSION ) but rejected at
+publication by RR=0.24 ,
+score=62.1 , conv=59.2 .
+Critical Lesson from Step 1 Verification: In the 6-token diagnostic, both Control and the Multi-Hypothesis Challenger produced the exact same 2 full-
+pipeline publications (HOTUSDT T-32h  and MEGAUSDT T-12h ). Why didn't Challenger's Stage 2 unlock of ICNTUSDT T-8h  (or Control's Stage 2
+publications of MEGAUSDT T-20h/T-4h  and TRUSTUSDT T-12h/T-4h/T-0h ) reach full-pipeline publication? Because Stage 1 rejected them at
+absorption_score < 35.0  before Stage 2 ever ran.
+Atlas Screener • Multi-Cohort Research Findings, Bottlenecks & Future Roadmap Page 2 of 7
+
+===== PAGE 3 =====
+COHORT 3 EMPIRICAL STUDY: NOV 4 & NOV 5 TOP
+GAINERS
+522-SYMBOL POPULATION ANALYSIS, INTRADAY 5M IGNITION TIMING & 168-SCAN
+COUNTERFACTUAL ATTRITION
+Population: 522 USDT Perpetuals
+(62,640 1h Bars)
+Counterfactual: 14 Winners × 12 Scans
+(168 Scans)
+Local Scans Checked: Nov 4 08:01Z &
+Nov 5 08:01Z
+1. RETAINED SCAN EVIDENCE VS. OBSERVED TOP-10 LEADERBOARDS
+Neither the retained local November 4 08:01:18 UTC  scan (longs: MEGA, ZRO, STX, HOME, TAG, EDEN ) nor the November 5 08:01:19 UTC
+scan (longs: 1000CAT, UNI, ACT ) overlapped the November 4 calendar-day top 10 or November 5 rolling-24h top 10. Meanwhile, read-only
+checks of the public production deployment confirmed an operational discrepancy: /api/screener/cron/status  reported a run at 2026-11-
+05 08:01:00 UTC , whereas /api/screener/live  returned an October 24 00:17:40 UTC  payload with zero candidates.
+2. STAGE-BY-STAGE COUNTERFACTUAL TRACE ACROSS ALL 14 NOV 4/5 WINNERS (168 SCANS)
+Symbol Nov 5 Rolling /
+Nov 4 Calendar
+522-Univ Vol
+Rank (>320 )
+Archetype
+Match
+Gate Pass
+(L1..L6 )
+Stage 2
+Pub
+Exact Counterfactual Exclusion Breakdown Across
+12 Scans (Nov 3 12:00Z – Nov 5 08:00Z )
+JCTUSDT +41.8% / +27.0% 14..30 (0/12 ) 3 / 12 0 / 12 0 / 12
+2 funding >+2.5 bps  vetoes; 7 below 4H EMA50 &
+POC  (0.83x EMA50 ); 3 COIL_SPRING  failed
+L1+L2+L3+L6 .
+ELSAUSDT +38.2% / +55.1% 18..383 (5/12 )4 / 12 1 / 12 0 / 12
+5 outside top-320 vol; 4 funding >+2.5 bps  vetoes; 1
+RANGE_BOTTOM  passed gates at T-24h  but failed
+RR/score/EV  floor.
+CAPUSDT +30.5% / +31.8% 26..132 (0/12 ) 0 / 12 0 / 12 0 / 12
+8/12 hard-vetoed by funding > +2.5 bps
+(+2.55..+8.91 bps ); 4/12 below 4H EMA50
+(0.96x ) with 7d OI -16% .
+AIOUSDT +20.2% / — 50..374 (1/12 )3 / 12 0 / 12 0 / 12
+1 oi_1h < -2.5%  veto (-9.48% ); 8 wide bandwidth
+(bbw_4h = 0.24..0.31 > 0.22 ); 3 OI_ACCUM  failed
+L2 / L6 .
+FLUIDUSDT +20.2% / +20.8% 54..256 (0/12 )4 / 12 0 / 12 0 / 12
+3 funding >+2.5 bps  vetoes; 5 wide bandwidth
+(bbw_4h > 0.22 ); 4 matched RANGE_BOTTOM /
+OI_ACCUM  but failed L2 / L6 .
+FOGOUSDT +15.9% / — 104..197
+(0/12 ) 0 / 12 0 / 12 0 / 12
+2 oi_1h < -2.5%  vetoes; 10 deep below 4H EMA50
+(0.80x..0.83x EMA50 , pos_in_range=0.03  bottom
+reversal).
+CLANKERUSDT +13.9% / +25.9% 9..426 (2/12 ) 2 / 12 0 / 12 0 / 12
+5/12 hard-vetoed by funding > +2.5 bps ; 1 oi_1h
+< -2.5%  veto; 4 wide bandwidth (bbw_4h = 0.44 ); 2
+failed L2 .
+LYNUSDT +13.8% / — 39..59 (0/12 ) 3 / 12 0 / 12 0 / 12
+2 funding >+2.5 bps  vetoes; 7 wide bandwidth
+(bbw_4h = 0.43..0.63 ); 3 OI_ACCUM  failed L2 /
+L6 .
+UAIUSDT +12.5% / — 34..65 (0/12 ) 0 / 12 0 / 12 0 / 12
+2 oi_1h < -2.5%  vetoes; 10 deep below 4H EMA50
+(0.44x EMA50 , bbw_4h > 1.0  oversold spike
++38.5%  in 1h).
+INITUSDT +12.4% / +12.9% 63..90 (0/12 ) 0 / 12 0 / 12 0 / 12 12/12 trading below 4H EMA50  (0.78x..0.91x ) and
+below 30d VAL  (0.86x VAL ) with bbw_4h = 0.58 .
+BATUSDT — / +14.6% 93..144 (0/12 )0 / 12 0 / 12 0 / 12 12/12 trading below 30d VAL  (close / val_30d =
+0.82..0.89 ) — blocked by close ≥ val_30d  guard.
+TRUSTUSDT — / +13.8% 148..273
+(0/12 ) 9 / 12 1 / 12 1 / 12 (T-
+44h )
+Published in Stage 2 at T-44h  (Nov 3 11:59Z ,
+OI_ACCUM ), dropped in Stage 1 (no OI in Stage 1); later
+failed L6/L2 .
+RAYSOLUSDT — / +13.5% 78..136 (0/12 ) 1 / 12 0 / 12 0 / 12
+1 oi_1h < -2.5%  veto; 10 below 30d VAL
+(0.81x..0.92x VAL ); 1 MOMENTUM_EMERGING  failed
+L1+L6 .
+FOLKSUSDT — / +11.8% 144..372
+(5/12 ) 5 / 12 0 / 12 0 / 12 5 outside top-320 vol; 5 matched RANGE_BOTTOM /
+COIL_SPRING / VCP  but failed L6  and L2 .
+Intraday 5m Transition vs. 4h Scan Cadence CADENCE GAP
+Token First 5m Breakout 5m VolTop-10 Entry Next 4h Scan
+ELSA Nov 4 07:00Z 3.10x Nov 4 11:00Z Nov 4 08:01Z
+CAP Nov 4 10:25Z 5.58x Nov 4 13:00Z Nov 4 12:01Z
+JCT Nov 4 11:25Z 5.67x Nov 4 12:00Z Nov 4 12:01Z
+LYN Nov 5 02:15Z 3.14x Nov 5 03:00Z Nov 5 04:01Z
+UAI Nov 5 02:50Z 5.56x Nov 5 07:00Z Nov 5 04:01Z
+FOGO Nov 5 04:05Z 30.31x Nov 5 05:00Z Nov 5 08:01Z
+522-Symbol Population Reference Sanity Check HETEROGENEITY
+Exploratory Reference
+(522 Symbols) Selected Nov 3 23Z
+Top-10 Hit
+Nov 4 09Z
+Top-10 Hit
+Top-10 Prior 24h Price
+Momentum 10 2 / 10 3 / 10
+Top-10 Prior 6h Volume
+Acceleration 10 1 / 10 3 / 10
+Top-10 Lagged 6h Contract
+OI Growth 10 3 / 10 3 / 10
+Combined: 6h Vol ≥ 1.5x &
+6h OI ≥ +3% 4 / 24 2 / 10 2 / 10
+Takeaway: Requiring a universal Volume + OI  conjunction misses 8 of 10
+winners across the 522-contract universe and produces 22/24 non-top-10
+selections in window 2.
+Atlas Screener • Multi-Cohort Research Findings, Bottlenecks & Future Roadmap Page 3 of 7
+
+===== PAGE 4 =====
+ROOT-CAUSE ANALYSIS: THE 5 ARCHITECTURAL
+BOTTLENECKS
+EXACT CODE LOCATIONS & QUANTITATIVE IMPACT ACROSS COHORTS 1, 2,
+AND 3
+Primary Module:
+src/algotrader/application/crypto_screener.py
+Domain Modules: archetypes.py,
+resistance_absorption.py
+BOTTLENECK 1: PRE-GATE STRUCTURAL & FUNDING VETOES ELIMINATE 79.8% OF WINNERS BEFORE
+GATES RUN
+In CryptoOpportunityScreener._score_accumulation_setup  (crypto_screener.py:1028–1167 ) and classify_long_archetype
+(archetypes.py:70–258 ), candidates must satisfy strict structural-support and funding conditions before evaluate_long_gates  is ever
+reached. Across the 168 symbol-scans of the 14 Nov 4/5 winners, 134 scans (79.8%) were eliminated here:
+Depressed / Bottom-of-Range Reclaim Leaders (63 / 168 scans): Every accumulation archetype requires close ≥ ema50_4h * 0.975
+(or poc_30d * 0.975 ) and close ≥ val_30d . Tokens launching sharp reversals from oversold ranges below the 4H EMA50 or 30d VAL —
+including JCTUSDT  (0.83x EMA50 ), FOGOUSDT  (0.80x EMA50 ), UAIUSDT  (0.44x EMA50 ), INITUSDT  (0.78x EMA50 ), BATUSDT  (0.88x
+VAL ), and RAYSOLUSDT  (0.85x VAL ) — return None  immediately.
+Hard Pre-Classification Funding Veto at +2.5 bps  (25 / 168 scans): Line 1048 (if funding is not None and funding >
+Decimal("0.00025"): return None ) hard-vetoes any token whose 8h funding exceeds +2.5 bps  (0.025% ), even when funding is only
+moderately positive during early trend accumulation. This single line rejected CAPUSDT  on 8/12 scans, CLANKERUSDT  on 5/12 scans,
+ELSAUSDT  on 4/12 scans, and FLUIDUSDT  on 3/12 scans.
+Post-Impulse Bandwidth Expansion (26 / 168 scans): Requiring bb_bandwidth_4h ≤ 0.22  or bb_inside_kc_4h  excludes multi-day
+continuation runners (AIOUSDT , FLUIDUSDT , CLANKERUSDT , LYNUSDT ) once their initial 4H impulse expands Bollinger bandwidth above
+0.22 .
+BOTTLENECK 2: STAGE 1 PRE-ENRICHMENT STARVATION (DERIVATIVES GATED BEHIND UN-ENRICHED
+STAGE 1)
+To conserve Binance API request weight, screener.screen()  runs Stage 1 across all 320 selected instruments with derivatives=None  and
+only fetches derivatives_snapshot  in Stage 2 for Stage 1 survivors plus up to 15 negative-funding/basis anomaly probes
+(crypto_screener.py:401–423 ). However, inside _score_accumulation_setup :
+1. Stage 1 Ignores Stage 0 quote.funding_rate LINE 1046
+Line 1046 sets funding = derivatives.funding_rate if derivatives
+else None , ignoring quote.funding_rate  (already fetched in Stage 0
+via bulk premiumIndex ). And oi_change_7d  is None  in Stage 1. Thus
+OI_ACCUMULATION_LONG , SHORT_SQUEEZE_ABSORPTION_LONG , and
+FUNDING_SQUEEZE_SPRING_LONG cannot match in Stage 1.
+2. Stage 1 Strips 45 Points from Absorption
+Score
+LINES 1245–
+1266
+In Stage 1 (derivatives=None ), compute_resistance_absorption
+receives oi_delta_7d=None, oi_delta_4h=None, funding_bps=None ,
+scoring 0/25 on Pillar 2 (OI) and 0/20 on Pillar 3 (Funding). Candidates
+with 18 (CVD) + 15 (Geometry) = 33.0 die at absorption_score < 35.0
+before Stage 2 ever runs (where they score 55..73  and publish!).
+BOTTLENECK 3: 4-HOUR SCHEDULED SCAN CADENCE VS. INTRADAY IGNITIONS
+With scans running every 4 hours (00:01, 04:01, 08:01, 12:01, 16:01, 20:01 UTC ), explosive transitions that occur shortly after a scan
+boundary complete their move before the next scan. On November 5, FOGOUSDT  triggered a 30.31x  volume 5m breakout at 04:05 UTC  (4
+minutes after the 04:01 UTC  scan) and entered the top-10 leaderboard by 05:00 UTC  — 3 hours before the 08:01 UTC  scan. JCTUSDT
+(11:25 UTC ) and LYNUSDT  (02:15 UTC ) similarly ignited between 4-hour boundaries.
+BOTTLENECK 4: TIMEFRAME FEATURE-CONTRACT MISMATCHES IN _SCORE_ACCUMULATION_SETUP
+Code inspection of crypto_screener.py  confirmed three timeframe-labeling discrepancies where 1h -derived values are passed into fields
+named and gated as 4h  or multi-day metrics:
+crypto_screener.py:952 : atr14 = snap_1h.atr14  (1-hour ATR) is passed into LongArchetypeFeatures(atr14_4h=atr14)  and
+LongGateInputs(atr14_4h=atr14) .
+crypto_screener.py:1043 : rvol_4h = snap_1h.relative_volume  (1-hour relative volume) is passed as rvol_4h .
+crypto_screener.py:1026 : volume_contraction_metrics(closed_1h, 7, 14)  computes a 7-hour vs. 14-hour ratio on 1h  bars instead of
+7-day vs. 14-day ADV, passing it as vcr_4h .
+BOTTLENECK 5: OPERATIONAL PUBLICATION STALE STATE & MISSING NORMAL-SCAN RECEIPTS
+While the research worker archives full ScanRecord  receipts during active study sessions, normal scheduled/portal scans only overwrite
+data/screener_latest.json  without retaining per-scan rejection journals, and the public production endpoint (/api/screener/live )
+continues returning a stale October 24 response despite /api/screener/cron/status  advancing to November 5.
+Atlas Screener • Multi-Cohort Research Findings, Bottlenecks & Future Roadmap Page 4 of 7
+
+===== PAGE 5 =====
+STRATEGY REDESIGN: SEPARATING ENTRY QUALITY
+FROM LEADER DISCOVERY
+DECOUPLING COILED EXECUTION SETUPS FROM STATEFUL EARLY-TRANSITION
+WATCH TRACKS
+Design Principle: Freeze Core Benchmark •
+Version Challengers
+Evaluation Rule: Matched Budget & Full-
+Universe Denominator
+1. ARCHITECTURAL PRINCIPLE: DO NOT DILUTE THE COILED ENTRY CORE
+Relaxing the core accumulation gates (e.g., removing the 4H EMA50  baseline, raising the bb_bandwidth_4h  ceiling to 0.65 , or dropping Gate
+L2/L6  anti-chasing guards across the board) to force-fit JCTUSDT , CAPUSDT , or UAIUSDT  would flood the execution screener with high-
+drawdown chasing alerts and falling knives. Instead, an institutional system separates Actionable Coiled Entries from Stateful Pre-Leader
+Watch States:
++-----------------------------------------------------------------------------------------------------------------------+
+|                          STAGE 0: FULL-UNIVERSE INGESTION & IMMUTABLE RECEIPT RECORDING                               |
+|  * 522 Binance USD-M Perpetuals + Spot Composite Quote/Funding/Basis Snapshot + Every Scan Persists ScanRecord        |
++-----------------------------------------------------------------------------------------------------------------------+
+                         |                                                                 |
+                         v (4-Hour Scheduled Cadence)                                      v (15m / 1h Lightweight Cadence)
++---------------------------------------------------------+     +-------------------------------------------------------+
+|   TRACK 1 & 2: STRUCTURAL ENTRY SCREENER (QUALIFIED)    |     |   TRACK 3: STATEFUL DISCOVERY / WATCH ENGINE          |
+|  * Track 1 (Control): Frozen v2.7 Core Benchmark        |     |  * Distinct from Entry Alerts (Watch != Trade Entry)  |
+|  * Track 2 (Targeted Challenger):                       |     |  * Detects 3 Heterogeneous Pre-Leader Regimes:        |
+|    1) Pass Stage 0 quote.funding_rate into Stage 1      |     |    [W1] Early Volume + Lagged OI Expansion Watch      |
+|    2) Stage 1 Pre-Enrichment Admission Threshold Split  |     |         (e.g., BMT, ICNT, FLUID, BIRB precursors)     |
+|       (do not penalize missing OI before Stage 2 runs)  |     |    [W2] Deep-Range / VAL & EMA20 Reclaim Watch        |
+|    3) Publication-Aware Multi-Hypothesis Arbitration    |     |         (e.g., JCT, FOGO, INIT, BAT bottom reclaims)  |
+|    4) Explicit 1H vs. 4H Feature-Contract Separation    |     |    [W3] Post-Impulse High-Tight-Flag Continuation     |
+|                                                         |     |         (e.g., CAP, CLANKER, ELSA, AIO continuations) |
++---------------------------------------------------------+     +-------------------------------------------------------+
+                         |                                                                 |
+                         +--------------------------------+--------------------------------+
+                                                          v
++-----------------------------------------------------------------------------------------------------------------------+
+|                   MATCHED-BUDGET FULL-UNIVERSE EVALUATION (512 ELIGIBLE CONTRACTS, INCLUDING NON-WINNERS)             |
+|  * Metrics: Top-10 Precision/Recall, First-Alert Lead Time vs. Top-10 Entry, Fixed 24h/48h Returns, MFE/MAE, Budget   |
++-----------------------------------------------------------------------------------------------------------------------+
+2. TRACK 2: TARGETED ENTRY-PIPELINE CHALLENGER REPAIRS (TESTABLE IMMEDIATELY)
+Repair A: Stage 1 Pre-Enrichment Admission HIGH IMPACT
+Problem: Stage 1 drops candidates at absorption_score < 35.0  when
+derivatives=None  because Pillar 2 (OI, 25 pts) and Pillar 3 (Funding, 20
+pts) evaluate to 0.0 .
+Challenger Fix: (1) Use quote.funding_rate  in Stage 1 so Pillar 3 is
+scored accurately in Stage 1; (2) In Stage 1 (when OI is not yet fetched),
+evaluate non-OI pillars against a proportional pre-enrichment floor (≥
+25.0 / 75.0 ) while still enforcing the full ≥ 35.0 / 100.0  guard in
+Stage 2 once OI is fetched; (3) Expand Stage 2 probe ranking to include
+1h/4h  volume-compression breakouts alongside negative-funding
+probes within the same API weight budget.
+Repair B: Publication-Aware Multi-HypothesisCLEAN ARBITRATION
+Problem:classify_long_archetype  returns only the first matched
+label (e.g., COIL_SPRING_LONG  or BREAKOUT_LONG ), masking valid
+RANGE_BOTTOM_ACCUMULATION_LONG  or OI_ACCUMULATION_LONG
+hypotheses when the first label fails a gate or publication check.
+Challenger Fix: Evaluate all matched candidate archetypes in priority
+order through both evaluate_long_gates  and
+publication_rejection_reasons , selecting the highest-priority
+hypothesis that satisfies full publication eligibility.
+3. TRACK 3: THREE STATEFUL DISCOVERY WATCH ARCHETYPES (FOR HETEROGENEOUS LEADERS)
+Discovery Watch State Target Market Microstructure & Pre-Move Signature Representative Historical Examples & Transition
+Rule
+1. STEALTH_FLOW_DIVERGENCE_WATCH
+6h quote volume ratio ≥ 1.75x  (vs. prior 18h) + 4h/6h
+contract OI expansion ≥ +5%  while 6h price change
+remains flat or slightly negative (-5% ≤ ret_6h ≤
++8% ).
+Captures silent derivative loading before price markup
+(BMTUSDT  prior to Nov 3 12:00Z, FLUIDUSDT , BIRB ).
+Promotes to entry candidate on 1H EMA20 / VAH reclaim.
+2. DEEP_VALUE_RECLAIM_WATCH
+Price trading below 4H EMA50  or 30d VAL  after a
+multi-day drawdown, followed by a completed 1H / 5m
+structural higher-low + reclaim of 1H EMA20  on ≥
+2.5x  RVOL with positive taker buy ratio (≥ 1.10 ).
+Captures bottom-of-range reversal leaders currently
+invisible to accumulation archetypes (JCTUSDT ,
+FOGOUSDT , INITUSDT , BATUSDT , RAYSOLUSDT ).
+3.
+IMPULSE_CONTINUATION_FLAG_WATCH
+Post-breakout token with bb_bandwidth_4h > 0.22
+and moderate positive funding (+1.0 to +6.0 bps )
+forming a tight 4-to-12 hour intraday flag (1H BB
+inside KC  or 1H ATR contraction ) holding above
+4H EMA20 .
+Captures multi-day leaderboard continuations currently
+blocked by the +2.5 bps  funding veto and bbw_4h ≤
+0.22  ceiling (CAPUSDT , ELSAUSDT , CLANKERUSDT ,
+AIOUSDT ).
+Atlas Screener • Multi-Cohort Research Findings, Bottlenecks & Future Roadmap Page 5 of 7
+
+===== PAGE 6 =====
+EMPIRICAL OUTPERFORMANCE & PRE-BREAKOUT
+VERIFICATION
+FULL-UNIVERSE (522 SYMBOLS) MATCHED-BUDGET BACKTEST & EXACT PRE-
+BREAKOUT STAGE 1 UNLOCK PROOF
+Script:
+verify_strategy_outperformance.py
+Universe: 522 Symbols (321–351
+Liquid ≥$1.5M)
+Desk Budget: Matched 12-Candidate
+Cap
+1. WHY WE MUST PRESERVE THE CURRENT PRE-BREAKOUT (ACCUMULATION ) CORE STRATEGY
+Before changing any screener logic, we evaluated the current Pre-Breakout Coiled Core (_score_accumulation_setup : tight 4H/1H
+compression bbw_4h ≤ 0.22  holding above 4H EMA50  and 30d VAL  with non-chasing 24h returns) across the entire liquid USDT perpetual
+universe (winners and non-winners alike). The empirical results prove that the Pre-Breakout core is the lowest-drawdown, highest-win-
+rate engine in the codebase:
+Pre-Breakout Core Strengths (Do Not Dilute) 7.53X MFE/MAE
+Across all liquid perpetuals (≥$1.5M  24h vol), the Top-12 Pre-Breakout
+Coiled Core achieved an 83.3% to 91.7% 24h positive win rate (vs. ~55%
+market baseline), +4.01% to +7.65% mean 24h return (2.0x–4.7x
+market), and cut adverse drawdown (MAE) to just -1.20% to -3.05% (a
+7.53x  MFE-to-MAE ratio in Window B). Loosening 4H EMA50  or bbw_4h
+≤ 0.22  inside the Pre-Breakout core would destroy this low-drawdown
+edge.
+Two Hidden Bugs Holding Back Pre-Breakout CODE VERIFIED
+1) Stage 1 Pre-Enrichment Starvation: Stage 1 passes
+derivatives=None , scoring 0/45  on OI+Funding in
+compute_resistance_absorption  and dropping valid Stage 2 pre-
+breakout setups at absorption_score < 35.0 .
+2) Dead Breakout Mode in Normal Scans: Line 878 (if mode ==
+ScreenerMode.BREAKOUT and not opps: ) never executes during
+scheduled ScreenerMode.ALL  cron scans.
+2. VERIFICATION A: EXACT PRE-BREAKOUT UNLOCKS WHEN STAGE 1 STARVATION & ARBITRATION ARE
+REPAIRED
+Keeping every Pre-Breakout gate (L1..L6 ) and publication floor (score ≥ 68, conv ≥ 65, RR ≥ 2.0 ) strictly frozen, repairing only Stage 1
+pre-enrichment admission + multi-hypothesis arbitration increases verified Pre-Breakout publications by 4.5x (2 → 9  across Cohorts 2
+& 3):
+Cohort & Winner Current Full Pub Repaired Track 2 Pub Verified Pre-Breakout Setup Unlocked, Lead Time & Quality Metrics
+Cohort 2: HOTUSDT 1 / 12 (T-32h ) 1 / 12 (T-32h ) Preserves SHORT_SQUEEZE_ABSORPTION_LONG  (score=87.3, conv=82.2,
+RR=2.50 ) 32 hours before expansion peak.
+Cohort 2: ICNTUSDT 0 / 12 1 / 12 (T-8h ) Unlocks RANGE_BOTTOM_ACCUMULATION_LONG  (score=96.6, conv=86.6,
+RR=5.00 ) 8 hours before breakout (was dropped at Stage 1 Abs=33 ).
+Cohort 2: MEGAUSDT 1 / 12 (T-12h ) 3 / 12 (T-20,12,4h ) Flashes 8 hours earlier at T-20h  (score=91.3, conv=84.4, RR=3.26 ) plus T-
+12h  & T-4h  (Stage 2 Abs=73  was killed at Stage 1 Abs=33 ).
+Cohort 2: TRUSTUSDT 0 / 12 3 / 12 (T-12,4,0h ) Unlocks 3 consecutive OI_ACCUMULATION_LONG  publications (score=91.3..93.3,
+RR=2.75 ) starting 12 hours before move.
+Cohort 3: TRUSTUSDT 0 / 12 1 / 12 (T-44h ) Unlocks OI_ACCUMULATION_LONG  at Nov 3 11:59Z  (score=93.3, conv=84.9,
+RR=2.75 ) 44 hours before Nov 4 top-10 leaderboard.
+Combined Total 2 Publications 9 Publications (4.5x) 5 of 20 top-gainer tokens captured early in true Pre-Breakout bases with zero
+relaxation of L1..L6 risk gates.
+3. VERIFICATION B: FULL-UNIVERSE (522 SYMBOLS) MATCHED-BUDGET BACKTEST (PRE-BREAKOUT +
+WATCH TRACKS)
+To verify performance across the entire eligible universe (including all non-winners) at an identical 12-candidate desk budget, we
+evaluated each strategy arm on the 522-symbol 1h  kline + 1h  OI dataset across two 24-hour forward windows:
+Strategy Arm (Matched 12-Slot Budget) Selected Top-10 Hits Mean 24h
+Ret
+Mean 24h
+MFE
+Mean 24h
+MAE MFE/MAE≥+5%
+MFE
+Window A: Nov 3 23:59Z → Nov 4 23:59Z (321 Liquid Perpetuals ≥ $1.5M Vol • Market Baseline: +2.01% Ret, +6.40% MFE, -4.83% MAE, 1.33x)
+1. Current Pre-Breakout Core (Un-enriched Stage
+1) 12 (of 14) 1 / 10 (FLUID ) +4.01% +6.05% -3.05% 1.98x 58.3%
+2. Repaired Pre-Breakout Core (Track 2
+Challenger) 12 (of 13) 1 / 10 (FLUID ) +4.58% +6.87% -3.20% 2.15x 66.7%
+3. Watch W1: Stealth Flow & OI Divergence 4 (of 4) 1 / 10 (FLUID  +
+AIO ) +5.79% +10.05% -4.82% 2.09x 75.0%
+Window B: Nov 4 08:59Z → Nov 5 09:00Z (351 Liquid Perpetuals ≥ $1.5M Vol • Market Baseline: +1.63% Ret, +5.83% MFE, -3.04% MAE, 1.92x)
+1. Current Pre-Breakout Core (Un-enriched Stage
+1) 12 (of 87) 1 / 10 (ELSA ) +7.65% +9.03% -1.20% 7.53x 25.0%
+2. Repaired Pre-Breakout Core (Track 2
+Challenger) 12 (of 115) 1 / 10 (ELSA ) +7.23% +9.63% -2.11% 4.56x 33.3%
+3. Watch W2: Deep-Value / Bottom Reclaim 12 (of 29) 1 / 10 (JCT  +
+LSK ) +4.65% +10.53% -2.16% 4.87x 58.3%
+4. Watch W3: Post-Impulse High-Tight Flag 9 (of 9) 2 / 10 (FLUID,
+AIO ) -0.81% +9.07% -7.76% 1.17x 66.7%
+5. Combined Dual-Track Desk (6 Pre-Breakout + 6
+Watch) 12 (6+6) 3 / 10 (ELSA,
+FLUID, AIO ) +9.19% +14.00% -3.40% 4.12x 66.7%
+Bottom-Line Proof: Notice why Watch W3  (Post-Impulse Flags) catches FLUIDUSDT  and AIOUSDT  (66.7% hit ≥+5% MFE) but suffers -7.76%  MAE,
+whereas Pre-Breakout Core maintains -1.20% to -3.20%  MAE. By keeping 6 Repaired Pre-Breakout slots (low-risk coiled entries) alongside 6
+Labeled Watch slots (early regime-shift discovery), the Combined 12-Slot Desk triples top-10 recall (1/10 → 3/10), lifts mean 24h return to +9.19%,
+and lifts mean 24h MFE to +14.00% (4.12x MFE/MAE).
+Atlas Screener • Multi-Cohort Research Findings, Bottlenecks & Future Roadmap Page 6 of 7
+
+===== PAGE 7 =====
+VERIFIED MILESTONES & SEQUENCED FUTURE
+ROADMAP
+COMPLETED REPLAY/CAPACITY GATES & THE 5-PHASE INSTITUTIONAL
+EXECUTION PLAN
+Worktree Suite: 740 Passed Tests • 0 Errors
+Capacity Gate: 24h (528.6s) & 48h (763.4s)
+Passed
+1. ENGINEERING MILESTONES ALREADY VERIFIED (NOV 4 – NOV 5, 2026)
+1. Collector Fairness & Budget
+Fix VERIFIED
+Fixed the outcome worker bottleneck that
+previously starved Cohort 1 (BEAMX, IDOL,
+UAI, LSK ): decoupled 1m kline collection from
+full report rebuilds, enforced 30-attempt /
+90s  pass budgets, and rotated failed symbols
+fairly so all 512 members complete within ~3.5
+hours.
+2. Strict & Diagnostic
+Replay CLI
+737 TESTS
+PASS
+Implemented
+scripts/research_verified_replay.py  with
+network disabled, SHA256 provenance sidecar
+validation (atlas-verified-replay-v1 ),
+stale-funding/candle regressions, and strict
+separation between --mode strict  and --
+mode diagnostic .
+3. 48h Archive Capacity
+Gate
+740 TESTS
+PASS
+Profiled and repaired canonical serialization
+(scan_observations.py  4-line identity
+primitive fast-path). Under strict 256 MiB /
+0.5 CPU  container limits on a 1.88 GB  512-
+symbol archive, 24h finalization dropped from
+669.5s → 528.6s  and 48h from 1016.0s →
+763.4s  (passing the <900s  gate with 0 OOM).
+2. THE 5-PHASE FUTURE ROADMAP (DISCIPLINED EXECUTION ORDER)
+Phase Engineering / Research
+Deliverable Exact Scope & Implementation Actions Acceptance Gate
+Phase 1
+IMMEDIATE
+Fix Production Publication
+Freshness & Retain Normal-Scan
+Receipts
+1) Diagnose and resolve why /api/screener/live  serves the
+stale Oct 24 payload while /api/screener/cron/status
+updates.
+2) Ensure every scheduled 4h scan persists its versioned
+ScanRecord  + ScanDecisionJournal  receipt and exposes
+scan_id  and source fingerprint in the API response.
+Public /api/screener/live
+matches latest 4h cron run
+timestamp and scan_id ; every
+scan leaves an auditable rejection
+journal.
+Phase 2
+NEXT
+Resolve Timeframe Feature
+Contracts & Stage 1 Pre-
+Enrichment Starvation
+1) Audit and version the 1h  vs. 4h  feature mappings
+(atr14_4h , rvol_4h , vcr_4h ) in
+_score_accumulation_setup  without silently mutating legacy
+baselines.
+2) Test Track 2 Challenger: pass Stage 0 quote.funding_rate
+into Stage 1, apply a proportional Stage 1 absorption threshold
+(≥25/75 ) before OI exists, and enable publication-aware multi-
+hypothesis arbitration.
+Unit & replay regressions pass;
+Stage 1 no longer drops valid Stage
+2 setups (ICNT, MEGA, TRUST )
+due to un-fetched OI.
+Phase 3
+PARALLEL
+Implement Versioned Stateful
+Discovery / Watch Track (Track 3)
+Build a dedicated, separately labeled Watch Track
+(STEALTH_FLOW_DIVERGENCE_WATCH ,
+DEEP_VALUE_RECLAIM_WATCH ,
+IMPULSE_CONTINUATION_FLAG_WATCH ) evaluated on a faster
+lightweight cadence (e.g., 15m/1h using bulk 1h  klines & OI)
+without polluting qualified Entry signals.
+Watch states are persisted with
+explicit state-transition timestamps
+and never mixed into entry-grade
+trade brackets.
+Phase 4
+BENCHMARK
+Full-512-Universe Matched-
+Budget Holdout Evaluation
+Compare Frozen Control vs. Track 2 Challenger vs. Track 3
+Watch across the full 512-contract eligible universe (including all
+non-winners) at identical alert and API-weight budgets across
+disjoint development and holdout windows.
+Report precision/recall, false-alert
+burden, first-alert lead time before
+top-10 entry, and 24h/48h
+MFE/MAE with
+performance_claims_permitted
+rules enforced.
+Phase 5
+RELEASE
+Authorized Research VM
+Qualification & Preregistered
+Prospective Cohort
+1) Complete terminal-idle health semantics and package the
+source-matched immutable release image.
+2) Qualify on the research VM with collection initially disabled,
+then launch a fresh preregistered 48h prospective cohort.
+100% of 512 cohort members
+complete 24h & 48h outcome paths
+on the VM with 0 OOM and
+complete per-scan journals.
+Summary of Engineering Posture: We no longer need to guess why top gainers were missed or make ad-hoc threshold tweaks. We have (1) a
+leak-free strict/diagnostic replay harness, (2) a capacity-verified 512-symbol outcome collector (763.4s  for full 48h finalization under 256 MiB /
+0.5 CPU ), (3) full-population 522-symbol datasets, and (4) exact code-level attribution of all five system bottlenecks. Executing Phases 1–5 in
+order turns Atlas into a genuinely institutional-grade discovery and screening system.
+Atlas Screener • Multi-Cohort Research Findings, Bottlenecks & Future Roadmap Page 7 of 7

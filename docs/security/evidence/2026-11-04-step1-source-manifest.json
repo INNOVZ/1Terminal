@@ -1,0 +1,9 @@
+{
+  "source_directory": "/Users/jithinjacob/.gemini/antigravity/brain/04d32a04-b148-49b0-8804-0d5c73b1a80d/scratch",
+  "sha256": {
+    "faithful_48h_replay.py": "1975626327e1996d2fbf5ec9b981705edfedf32e8bd7c346e583ca3ffadc1481",
+    "faithful_inputs_20261103T1200Z.json": "9515073b70216531bd3be5de299960579639eed497d649e9afc324347798c83a",
+    "faithful_replay_results_20261103T1200Z.json": "f8726ff48b2d8c84b0cedafb3cda95ae27444436497f526cfa2c8e8b817abb2a"
+  },
+  "bundle_sha256": "67ded10a8834cbc659794584e562606dd4306745f4c00b9fdb3b284bfc524a47"
+}

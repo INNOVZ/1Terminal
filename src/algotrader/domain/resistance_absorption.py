@@ -13,10 +13,10 @@ class ResistanceAbsorptionSnapshot:
     """Inputs for evaluating the 5 institutional breakout confirmation pillars."""
 
     cvd_zscore_24h: float | Decimal
-    taker_buy_ratio_4h: float | Decimal
+    taker_buy_ratio_4h: float | Decimal | None
     oi_delta_7d: float | Decimal | None
     oi_delta_4h: float | Decimal | None
-    funding_bps: float | Decimal
+    funding_bps: float | Decimal | None
     low_4h: Decimal
     low_4h_prev: Decimal
     low_4h_prev2: Decimal
@@ -34,10 +34,10 @@ def compute_resistance_absorption(
     snapshot: ResistanceAbsorptionSnapshot | None = None,
     *,
     cvd_zscore_24h: float | Decimal = 0.0,
-    taker_buy_ratio_4h: float | Decimal = 0.50,
+    taker_buy_ratio_4h: float | Decimal | None = None,
     oi_delta_7d: float | Decimal | None = None,
     oi_delta_4h: float | Decimal | None = None,
-    funding_bps: float | Decimal = 0.0,
+    funding_bps: float | Decimal | None = None,
     low_4h: Decimal = Decimal("0"),
     low_4h_prev: Decimal = Decimal("0"),
     low_4h_prev2: Decimal = Decimal("0"),
@@ -75,10 +75,13 @@ def compute_resistance_absorption(
 
     # 1. Pillar 1: CVD Order-Flow Absorption (25 Points Max)
     cvd_z = float(cvd_zscore_24h)
-    taker_ratio = float(taker_buy_ratio_4h)
-    if cvd_z >= 0.50 and taker_ratio >= 0.53:
+    # The public feature is buy/sell (neutral 1.00); these legacy thresholds
+    # describe buyer share (neutral 0.50), so convert once at this boundary.
+    taker_ratio = float(taker_buy_ratio_4h) if taker_buy_ratio_4h is not None else None
+    taker_share = taker_ratio / (1.0 + taker_ratio) if taker_ratio is not None and taker_ratio >= 0 else None
+    if cvd_z >= 0.50 and taker_share is not None and taker_share >= 0.53:
         pts_cvd = 25.0
-    elif cvd_z >= 0.0 and taker_ratio >= 0.51:
+    elif cvd_z >= 0.0 and taker_share is not None and taker_share >= 0.51:
         pts_cvd = 18.0
     elif cvd_z >= -0.20:
         pts_cvd = 8.0
@@ -86,26 +89,28 @@ def compute_resistance_absorption(
         pts_cvd = 0.0
 
     # 2. Pillar 2: Open Interest Expansion Fuel (25 Points Max)
-    oi_7d = float(oi_delta_7d) if oi_delta_7d is not None else 0.0
-    oi_4h = float(oi_delta_4h) if oi_delta_4h is not None else 0.0
-    if oi_7d >= 0.05 and oi_4h >= 0.015:
+    oi_7d = float(oi_delta_7d) if oi_delta_7d is not None else None
+    oi_4h = float(oi_delta_4h) if oi_delta_4h is not None else None
+    if oi_7d is not None and oi_7d >= 0.05 and oi_4h is not None and oi_4h >= 0.015:
         pts_oi = 25.0
-    elif (oi_7d >= 0.03 and oi_4h >= 0.0) or (oi_4h >= 0.015):
+    elif (oi_7d is not None and oi_7d >= 0.03 and oi_4h is not None and oi_4h >= 0.0) or (oi_4h is not None and oi_4h >= 0.015):
         pts_oi = 18.0
-    elif (oi_7d >= 0.0) or (oi_4h >= 0.005):
+    elif (oi_7d is not None and oi_7d >= 0.0) or (oi_4h is not None and oi_4h >= 0.005):
         pts_oi = 10.0
-    elif oi_7d >= -0.03 and oi_4h >= 0.0:
+    elif oi_7d is not None and oi_7d >= -0.03 and oi_4h is not None and oi_4h >= 0.0:
         pts_oi = 5.0
     else:
         pts_oi = 0.0
 
     # 3. Pillar 3: Trapped Shorts / Funding Squeeze Fuel (20 Points Max)
-    f_bps = float(funding_bps)
+    f_bps = float(funding_bps) if funding_bps is not None else None
     # If passed as decimal funding rate (e.g. -0.0007), convert to basis points (-7.0)
-    if abs(f_bps) <= 0.005 and f_bps != 0.0:
+    if f_bps is not None and abs(f_bps) <= 0.005 and f_bps != 0.0:
         f_bps = f_bps * 10000.0
 
-    if f_bps <= -1.0:
+    if f_bps is None:
+        pts_funding = 0.0
+    elif f_bps <= -1.0:
         pts_funding = 20.0
     elif -1.0 < f_bps <= 1.01:
         pts_funding = 15.0
@@ -157,13 +162,17 @@ def compute_resistance_absorption(
     # 3. "RETEST_ONLY_WAIT_FOR_DIP" (Amber): All other valid candidates
     dist_to_vah = float((Decimal(str(vah_30d)) - Decimal(str(close))) / max(Decimal(str(close)), EPSILON))
 
-    is_severe_oi_drain = oi_7d < -0.08 or (oi_7d < -0.03 and oi_4h < -0.01)
+    is_severe_oi_drain = oi_7d is not None and (oi_7d < -0.08 or (oi_7d < -0.03 and oi_4h is not None and oi_4h < -0.01))
     is_tape_dump_at_vah = (cvd_z <= -1.0 and dist_to_vah <= 0.03)
 
     if is_severe_oi_drain or is_tape_dump_at_vah or score < 35.0:
         status = "HIGH_REJECTION_RISK"
         score = min(score, 34.0)
-    elif score >= 55.0 and (oi_7d >= 0.0 or oi_4h >= 0.005 or taker_ratio >= 0.515) and cvd_z > -0.25:
+    elif score >= 55.0 and (
+        (oi_7d is not None and oi_7d >= 0.0)
+        or (oi_4h is not None and oi_4h >= 0.005)
+        or (taker_share is not None and taker_share >= 0.515)
+    ) and cvd_z > -0.25:
         status = "BREAKOUT_CONFIRMED"
     else:
         status = "RETEST_ONLY_WAIT_FOR_DIP"

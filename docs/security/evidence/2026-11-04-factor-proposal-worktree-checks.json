@@ -1,0 +1,81 @@
+{
+  "kind": "synthetic_source_checks_not_historical_backtest",
+  "gate_inputs": {
+    "close": "100",
+    "ema50_4h": "96",
+    "ema20_1h": "98",
+    "ema200_4h": "101",
+    "low_24h": "99",
+    "atr14_4h": "2",
+    "vcr_4h": "0.85",
+    "ema20_4h": "98",
+    "excursion_72h": "0.12",
+    "ret_24h": "0.05",
+    "rsi_1h": "56",
+    "rsi_4h": "58",
+    "high_30d": "110",
+    "low_30d": "88",
+    "poc_30d": "98",
+    "val_30d": "94",
+    "vah_30d": "106",
+    "bb_inside_kc_4h": "True",
+    "bb_bandwidth_4h": "0.14",
+    "bb_inside_kc_4h_lookback": "()",
+    "rvol_4h": "1.25",
+    "oi_delta_7d": "0.08",
+    "oi_delta_4h": "0.03",
+    "oi_delta_1h": "None",
+    "taker_buy_ratio_4h": "None",
+    "high_4h": "None",
+    "low_4h": "None",
+    "atr14_1h": "None",
+    "funding_rate_8h": "None",
+    "oi_delta_24h": "None",
+    "rsi_1d": "None",
+    "rsi_1w": "None",
+    "ret_7d": "0",
+    "prior_bb_bandwidth_4h": "None",
+    "candle_4h_close_pos": "None",
+    "pivot_resistance": "None",
+    "has_kinetic_ignition": "True",
+    "pocket_pivot_1h": "False",
+    "micro_expansion_1h": "False",
+    "of_absorption_1h": "False",
+    "taker_buy_ratio_1h": "None"
+  },
+  "same_inputs_accumulation_gate_result": [
+    true,
+    {
+      "L1": true,
+      "L2": true,
+      "L3": true,
+      "L4": true,
+      "L5": true,
+      "L6": true
+    }
+  ],
+  "same_inputs_breakout_gate_result": [
+    false,
+    {
+      "L1": false,
+      "L2": true,
+      "L3": true,
+      "L4": true,
+      "L5": true,
+      "L6": true
+    }
+  ],
+  "both_archetypes_conditions_satisfied": true,
+  "chosen_archetype": "OI_ACCUMULATION_LONG",
+  "factor_scorer_oi_inputs": [
+    "oi_change_7d",
+    "oi_change_4h",
+    "oi_change_1h"
+  ],
+  "independence_example_085_pow_10": "0.19687440434072265625",
+  "source_sha256": {
+    "/Users/jithinjacob/.codex/worktrees/dual-track-shadow/trdindicator/src/algotrader/domain/archetypes.py": "eb68231d361ed225c1a61a77a913a9e26bae2f21e270069b98d7a7e3062b6597",
+    "/Users/jithinjacob/.codex/worktrees/dual-track-shadow/trdindicator/src/algotrader/domain/scoring.py": "a6a711ae4a60b37b71f0417c53c838791231b868193eaffffc311748b8498b9a",
+    "/Users/jithinjacob/.codex/worktrees/dual-track-shadow/trdindicator/src/algotrader/domain/screening_gates.py": "abeab6097dca01407ecc8451bd63ac23794650e501ec3387ec622cd12f401c0c"
+  }
+}

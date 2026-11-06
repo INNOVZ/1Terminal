@@ -5,8 +5,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from algotrader.adapters.binance.futures import BinanceUsdmAdapter
 from algotrader.application.research import beta_correlation, feature_information_report
+from algotrader.domain.errors import VenueError
 from algotrader.domain.models import (
     AssetClass,
     Candle,
@@ -264,37 +267,183 @@ def test_beta_correlation_uses_aligned_returns() -> None:
 
 
 class DerivativesClient:
+    def __init__(
+        self,
+        *,
+        missing_hour: int | None = None,
+        malformed_hour: int | None = None,
+        missing_taker_hour: int | None = None,
+        missing_funding: bool = False,
+        provider_lag_hours: int = 0,
+        zero_sell_hour: int | None = None,
+    ) -> None:
+        self.missing_hour = missing_hour
+        self.malformed_hour = malformed_hour
+        self.missing_taker_hour = missing_taker_hour
+        self.missing_funding = missing_funding
+        self.provider_lag_hours = provider_lag_hours
+        self.zero_sell_hour = zero_sell_hour
+        self.oi_request: dict[str, object] | None = None
+        self.taker_request: dict[str, object] | None = None
+
     async def request(
         self, method: str, path: str, *, params: dict[str, object] | None = None, **_: Any
     ) -> object:
-        del method, params
+        del method
+        hour_ms = 3_600_000
+        provider_now_ms = int(datetime.now(UTC).timestamp() * 1000) - self.provider_lag_hours * hour_ms
+        reference_ms = (provider_now_ms // hour_ms) * hour_ms
+        started_ms = reference_ms - 168 * hour_ms
+        quantities = {0: 50, 144: 80, 164: 90, 167: 100, 168: 110}
+        oi_history = [
+            {
+                "timestamp": started_ms + index * hour_ms,
+                "sumOpenInterest": "not-a-number" if index == self.malformed_hour else str(quantities.get(index, 100)),
+                "sumOpenInterestValue": str(1000 + index * 10),
+            }
+            for index in range(169)
+            if index != self.missing_hour
+        ]
+        taker_history = [
+            {
+                "buySellRatio": "2.0" if offset == 1 else "1.0",
+                "buyVol": "20" if offset == 1 else "10",
+                "sellVol": "0" if offset == self.zero_sell_hour else "10",
+                "timestamp": reference_ms - offset * hour_ms,
+            }
+            for offset in range(24, 0, -1)
+            if offset != self.missing_taker_hour
+        ]
+        taker_history.append(
+            {"buySellRatio": "100", "buyVol": "1000", "sellVol": "10", "timestamp": reference_ms}
+        )  # Current, still-open hourly period must not affect a closed-window ratio.
         payloads: dict[str, object] = {
             "/fapi/v1/premiumIndex": {
                 "markPrice": "101",
                 "indexPrice": "100",
                 "lastFundingRate": "0.0002",
+                "time": provider_now_ms,
             },
-            "/fapi/v1/openInterest": {"openInterest": "1000"},
-            "/futures/data/openInterestHist": [
-                {"sumOpenInterestValue": "100"},
-                {"sumOpenInterestValue": "110"},
-            ],
-            "/futures/data/takerlongshortRatio": [{"buySellRatio": "1.25"}],
+            "/fapi/v1/openInterest": {
+                "openInterest": "110",
+                "time": provider_now_ms,
+            },
+            "/futures/data/openInterestHist": oi_history,
+            "/futures/data/takerlongshortRatio": taker_history,
             "/fapi/v1/depth": {
                 "bids": [["100", "2"]],
                 "asks": [["101", "1"]],
             },
         }
+        if path == "/futures/data/openInterestHist":
+            self.oi_request = params
+        if path == "/futures/data/takerlongshortRatio":
+            self.taker_request = params
+        if path == "/fapi/v1/premiumIndex" and self.missing_funding:
+            return {"markPrice": "101", "indexPrice": "100", "time": provider_now_ms}
         return payloads[path]
 
 
 async def test_usdm_derivatives_snapshot_uses_public_market_data() -> None:
-    adapter = BinanceUsdmAdapter(DerivativesClient())  # type: ignore[arg-type]
+    client = DerivativesClient()
+    adapter = BinanceUsdmAdapter(client)  # type: ignore[arg-type]
 
     snapshot = await adapter.derivatives_snapshot(_instrument())
 
     assert snapshot.funding_rate == Decimal("0.0002")
     assert snapshot.basis_rate == Decimal("0.01")
     assert snapshot.open_interest_change_1h == Decimal("0.1")
-    assert snapshot.taker_buy_sell_ratio == Decimal("1.25")
+    assert snapshot.open_interest_change_4h == Decimal(20) / Decimal(90)
+    assert snapshot.open_interest_change_24h == Decimal("0.375")
+    assert snapshot.open_interest_change_7d == Decimal("1.2")
+    assert snapshot.taker_buy_sell_ratio == Decimal("2")
+    assert snapshot.taker_buy_sell_ratio_4h == Decimal("1.25")
+    assert snapshot.taker_buy_sell_ratio_24h == Decimal(250) / Decimal(240)
     assert snapshot.depth_imbalance == Decimal("99") / Decimal("301")
+    assert client.oi_request is not None
+    assert client.oi_request["period"] == "1h"
+    assert int(client.oi_request["limit"]) >= 169
+    assert client.taker_request == {"symbol": "BTCUSDT", "period": "1h", "limit": 26}
+
+
+async def test_usdm_derivatives_snapshot_does_not_invent_missing_one_hour_oi() -> None:
+    adapter = BinanceUsdmAdapter(DerivativesClient(missing_hour=167))  # type: ignore[arg-type]
+
+    snapshot = await adapter.derivatives_snapshot(_instrument())
+
+    assert snapshot.open_interest_change_1h is None
+    assert snapshot.open_interest_change_4h == Decimal(20) / Decimal(90)
+    assert snapshot.open_interest_change_7d == Decimal("1.2")
+
+
+async def test_missing_funding_is_not_reported_as_observed_zero_funding() -> None:
+    adapter = BinanceUsdmAdapter(DerivativesClient(missing_funding=True))  # type: ignore[arg-type]
+
+    snapshot = await adapter.derivatives_snapshot(_instrument())
+
+    assert snapshot.funding_rate is None
+    assert snapshot.degraded_telemetry is True
+
+
+async def test_live_derivatives_do_not_accept_stale_provider_clock() -> None:
+    adapter = BinanceUsdmAdapter(DerivativesClient(provider_lag_hours=6))  # type: ignore[arg-type]
+
+    snapshot = await adapter.derivatives_snapshot(_instrument())
+
+    assert snapshot.degraded_telemetry is True
+    assert snapshot.open_interest_change_1h is None
+    assert snapshot.open_interest_change_7d is None
+    assert snapshot.taker_buy_sell_ratio is None
+
+
+async def test_usdm_derivatives_snapshot_skips_malformed_oi_observation() -> None:
+    adapter = BinanceUsdmAdapter(DerivativesClient(malformed_hour=167))  # type: ignore[arg-type]
+
+    snapshot = await adapter.derivatives_snapshot(_instrument())
+
+    assert snapshot.open_interest_change_1h is None
+    assert snapshot.open_interest_change_4h == Decimal(20) / Decimal(90)
+
+
+async def test_usdm_derivatives_snapshot_does_not_invent_taker_windows_with_gaps() -> None:
+    adapter = BinanceUsdmAdapter(DerivativesClient(missing_taker_hour=2))  # type: ignore[arg-type]
+
+    snapshot = await adapter.derivatives_snapshot(_instrument())
+
+    assert snapshot.taker_buy_sell_ratio == Decimal("2")
+    assert snapshot.taker_buy_sell_ratio_4h is None
+    assert snapshot.taker_buy_sell_ratio_24h is None
+
+
+async def test_taker_window_includes_an_observed_zero_sell_hour() -> None:
+    adapter = BinanceUsdmAdapter(DerivativesClient(zero_sell_hour=2))  # type: ignore[arg-type]
+
+    snapshot = await adapter.derivatives_snapshot(_instrument())
+
+    assert snapshot.taker_buy_sell_ratio == Decimal("2")
+    assert snapshot.taker_buy_sell_ratio_4h == Decimal(50) / Decimal(30)
+    assert snapshot.taker_buy_sell_ratio_24h == Decimal(250) / Decimal(230)
+
+
+async def test_derivatives_snapshot_does_not_substitute_one_hour_oi_for_four_hours() -> None:
+    adapter = BinanceUsdmAdapter(DerivativesClient(missing_hour=164))  # type: ignore[arg-type]
+
+    snapshot = await adapter.derivatives_snapshot(_instrument())
+
+    assert snapshot.open_interest_change_1h == Decimal("0.1")
+    assert snapshot.open_interest_change_4h is None
+
+
+async def test_live_usdm_candles_reject_stale_closed_bar() -> None:
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+
+    class StaleClient:
+        async def request(self, *_: Any, **__: Any) -> list[list[object]]:
+            close_ms = now_ms - 3 * 3_600_000
+            return [[close_ms - 3_600_000, "100", "101", "99", "100", "10", close_ms,
+                     "1000", 1, "5", "500", "0"]]
+
+    adapter = BinanceUsdmAdapter(StaleClient())  # type: ignore[arg-type]
+
+    with pytest.raises(VenueError, match="stale"):
+        await adapter.candles(_instrument(), "1h", 240)

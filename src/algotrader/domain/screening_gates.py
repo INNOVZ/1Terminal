@@ -42,7 +42,7 @@ class LongGateInputs:
     oi_delta_7d: Decimal | None = None
     oi_delta_4h: Decimal | None = None
     oi_delta_1h: Decimal | None = None
-    taker_buy_ratio_4h: Decimal = Decimal("1.0000")
+    taker_buy_ratio_4h: Decimal | None = None
     # High-tight flag continuation inputs (Section 4)
     high_4h: Decimal | None = None
     low_4h: Decimal | None = None
@@ -83,7 +83,7 @@ class ShortGateInputs:
     has_climax_blowoff: bool
     poc_30d: Decimal
     macd_hist_4h: Decimal
-    taker_buy_ratio_24h: Decimal = Decimal("1.0000")
+    taker_buy_ratio_24h: Decimal | None = None
     funding_rate_8h: Decimal | None = None
     oi_delta_7d: Decimal | None = None
     oi_delta_1h: Decimal | None = None
@@ -293,6 +293,7 @@ def evaluate_long_gates(
             and (((inputs.close - inputs.ema20_1h) / atr14_1h) <= Decimal("1.10"))
             and (funding <= Decimal("0.0001"))
             and (oi_24h >= Decimal("0.10"))
+            and inputs.taker_buy_ratio_4h is not None
             and (inputs.taker_buy_ratio_4h >= Decimal("1.08"))
         )
         flag_l2 = (
@@ -480,15 +481,18 @@ def evaluate_short_gates(
     funding_8h = inputs.funding_rate_8h or Decimal("0")
     oi_7d = inputs.oi_delta_7d or Decimal("0")
     oi_1h = inputs.oi_delta_1h or Decimal("0")
-    taker_24h = inputs.taker_buy_ratio_24h or Decimal("1.0000")
+    taker_24h = inputs.taker_buy_ratio_24h
 
     is_short_squeeze_risk = (
         (inputs.funding_rate_8h is not None and funding_8h < Decimal("0.0"))
         and (inputs.close >= inputs.ema50_4h * Decimal("0.975"))
     )
     is_buyer_dominated_trend = (
-        (taker_24h >= Decimal("1.20") and inputs.close >= inputs.ema50_4h)
-        or (taker_24h >= Decimal("1.05") and not inputs.has_bearish_div and inputs.close >= inputs.ema50_4h)
+        taker_24h is not None
+        and (
+            (taker_24h >= Decimal("1.20") and inputs.close >= inputs.ema50_4h)
+            or (taker_24h >= Decimal("1.05") and not inputs.has_bearish_div and inputs.close >= inputs.ema50_4h)
+        )
     )
     if is_short_squeeze_risk or is_buyer_dominated_trend:
         return False, {"S1": False, "S2": False, "S3": False, "S4": False, "S5": False}
@@ -561,7 +565,7 @@ def evaluate_short_gates(
         (pos_in_range_30d >= Decimal("0.65"))
         and rejected_from_high
         and (is_climax_blowoff or is_utad_divergence)
-        and (inputs.close <= inputs.ema20_4h or inputs.taker_buy_ratio_24h <= Decimal("0.92"))
+        and (inputs.close <= inputs.ema20_4h or (taker_24h is not None and taker_24h <= Decimal("0.92")))
     )
 
     # Track B: Structural Breakdown / Macro Distribution Rollover
@@ -582,7 +586,7 @@ def evaluate_short_gates(
         (inputs.macd_hist_4h <= Decimal("0.05"))
         and (
             inputs.macd_hist_4h <= macd_prev
-            or inputs.taker_buy_ratio_24h <= Decimal("1.00")
+            or (taker_24h is not None and taker_24h <= Decimal("1.00"))
             or inputs.close <= inputs.ema20_4h
         )
     )
@@ -601,23 +605,26 @@ def evaluate_short_gates(
         basis = inputs.basis_bps or Decimal("0")
         oi_7d = inputs.oi_delta_7d or Decimal("0")
         oi_1h = inputs.oi_delta_1h or Decimal("0")
-        taker_1h = inputs.taker_buy_ratio_1h or Decimal("1.0000")
+        taker_1h = inputs.taker_buy_ratio_1h
 
         trapped_longs = (
             (funding_8h >= Decimal("0.0001") or basis >= Decimal("12.0")) and (oi_7d >= Decimal("0.15"))
         ) or (
             (funding_8h >= Decimal("0.00005") or basis >= Decimal("4.0"))
-            and (oi_7d >= Decimal("0.0") or taker_1h <= Decimal("0.92"))
+            and (
+                (inputs.oi_delta_7d is not None and oi_7d >= Decimal("0.0"))
+                or (taker_1h is not None and taker_1h <= Decimal("0.92"))
+            )
         ) or (
-            inputs.taker_buy_ratio_24h <= Decimal("0.92")
+            taker_24h is not None and taker_24h <= Decimal("0.92")
         )
         squeeze_flush = (
             (funding_8h <= Decimal("-0.0003"))
             and (oi_7d >= Decimal("0.25"))
             and (oi_1h <= Decimal("-0.015"))
-            and (taker_1h <= Decimal("0.85"))
+            and taker_1h is not None and (taker_1h <= Decimal("0.85"))
         ) or (
-            (funding_8h <= Decimal("-0.00015")) and (taker_1h <= Decimal("0.92"))
+            (funding_8h <= Decimal("-0.00015")) and taker_1h is not None and (taker_1h <= Decimal("0.92"))
         )
         s5 = trapped_longs or squeeze_flush
 

@@ -1,0 +1,220 @@
+{
+  "window_a": {
+    "actual_signal_close": "2026-11-03T23:59:59.999000+00:00",
+    "actual_end_close": "2026-11-04T23:59:59.999000+00:00",
+    "hourly_warmup": 87,
+    "proxy_4h_bars": 21,
+    "resample_first_hour": "2026-10-31T09:00:00+00:00",
+    "resample_latest_close": "2026-11-03T20:59:59.999000+00:00",
+    "arms": [
+      {
+        "name": "1. Current Pre-Breakout Coiled Core (Stage 1 Un-enriched Proxy)",
+        "decimal_mean_return_pct": "4.012334948538207666265740378",
+        "selected": [
+          "PORTALUSDT",
+          "USDCUSDT",
+          "CCUSDT",
+          "FLUIDUSDT",
+          "PREDICTUSDT",
+          "XRPUSDT",
+          "KMNOUSDT",
+          "KAVAUSDT",
+          "AEROUSDT",
+          "XMRUSDT",
+          "CAKEUSDT",
+          "AUSDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "2. Repaired Pre-Breakout Coiled Core (Track 2 Challenger)",
+        "decimal_mean_return_pct": "4.584591532699016617062216394",
+        "selected": [
+          "PORTALUSDT",
+          "USDCUSDT",
+          "SKRUSDT",
+          "CCUSDT",
+          "POWERUSDT",
+          "FLUIDUSDT",
+          "RAVEUSDT",
+          "KMNOUSDT",
+          "PREDICTUSDT",
+          "CAKEUSDT",
+          "XMRUSDT",
+          "XRPUSDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "3. Watch W1: Stealth Flow & OI Divergence",
+        "decimal_mean_return_pct": "5.791313888828711063026554842",
+        "selected": [
+          "USDCUSDT",
+          "FLUIDUSDT",
+          "AIOUSDT",
+          "2ZUSDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "4. Watch W2: Deep-Value / Bottom Reclaim",
+        "decimal_mean_return_pct": "-1.388639419275714245780826657",
+        "selected": [
+          "2ZUSDT",
+          "AVNTUSDT",
+          "PLAYUSDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "5. Watch W3: Post-Impulse High-Tight Flag",
+        "decimal_mean_return_pct": "-1.052443218809036719133735592",
+        "selected": [
+          "AIOUSDT",
+          "ICNTUSDT",
+          "BMTUSDT",
+          "HOTUSDT",
+          "RUNEUSDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "6. Combined Dual-Track System (6 Coiled Core + 6 Watch)",
+        "decimal_mean_return_pct": "2.803724595825724158461092594",
+        "selected": [
+          "PORTALUSDT",
+          "USDCUSDT",
+          "SKRUSDT",
+          "CCUSDT",
+          "POWERUSDT",
+          "FLUIDUSDT",
+          "AIOUSDT",
+          "2ZUSDT",
+          "AVNTUSDT",
+          "PLAYUSDT",
+          "ICNTUSDT",
+          "BMTUSDT"
+        ],
+        "exact_24_future_bars": true
+      }
+    ]
+  },
+  "window_b": {
+    "actual_signal_close": "2026-11-04T08:59:59.999000+00:00",
+    "actual_end_close": "2026-11-05T08:59:59.999000+00:00",
+    "hourly_warmup": 96,
+    "proxy_4h_bars": 24,
+    "resample_first_hour": "2026-10-31T09:00:00+00:00",
+    "resample_latest_close": "2026-11-04T08:59:59.999000+00:00",
+    "arms": [
+      {
+        "name": "1. Current Pre-Breakout Coiled Core (Stage 1 Un-enriched Proxy)",
+        "decimal_mean_return_pct": "7.646039448572810404158660188",
+        "selected": [
+          "ELSAUSDT",
+          "IDUSDT",
+          "ATHUSDT",
+          "AKTUSDT",
+          "USDCUSDT",
+          "JSTUSDT",
+          "ASTERUSDT",
+          "UNIUSDT",
+          "FORMUSDT",
+          "ETHUSDT",
+          "BTCUSDT",
+          "BNBUSDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "2. Repaired Pre-Breakout Coiled Core (Track 2 Challenger)",
+        "decimal_mean_return_pct": "7.230215153082233436870678739",
+        "selected": [
+          "USELESSUSDT",
+          "ELSAUSDT",
+          "IDUSDT",
+          "ATHUSDT",
+          "AKTUSDT",
+          "JSTUSDT",
+          "FORMUSDT",
+          "UNIUSDT",
+          "WLDUSDT",
+          "LTCUSDT",
+          "ASTERUSDT",
+          "\u725b\u6765USDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "3. Watch W1: Stealth Flow & OI Divergence",
+        "decimal_mean_return_pct": "1.436671965569679645863476481",
+        "selected": [
+          "FLUIDUSDT",
+          "CGPTUSDT",
+          "LSKUSDT",
+          "IDUSDT",
+          "AKTUSDT",
+          "WLDUSDT",
+          "BMTUSDT",
+          "MOVRUSDT",
+          "USDCUSDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "4. Watch W2: Deep-Value / Bottom Reclaim",
+        "decimal_mean_return_pct": "4.654713634340177670775674398",
+        "selected": [
+          "LSKUSDT",
+          "MUBARAKUSDT",
+          "SKYAIUSDT",
+          "JCTUSDT",
+          "1000LUNCUSDT",
+          "MARSCOINUSDT",
+          "BCHUSDT",
+          "NEARUSDT",
+          "LINKUSDT",
+          "TIAUSDT",
+          "ALTUSDT",
+          "KATUSDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "5. Watch W3: Post-Impulse High-Tight Flag",
+        "decimal_mean_return_pct": "-0.8130041334646600218825076378",
+        "selected": [
+          "FLUIDUSDT",
+          "BMTUSDT",
+          "AIOUSDT",
+          "\u725b\u6765USDT",
+          "PONSUSDT",
+          "CTUSDT",
+          "IDOLUSDT",
+          "HAEDALUSDT",
+          "POWRUSDT"
+        ],
+        "exact_24_future_bars": true
+      },
+      {
+        "name": "6. Combined Dual-Track System (6 Coiled Core + 6 Watch)",
+        "decimal_mean_return_pct": "9.192650029500258424885447242",
+        "selected": [
+          "USELESSUSDT",
+          "ELSAUSDT",
+          "IDUSDT",
+          "ATHUSDT",
+          "AKTUSDT",
+          "JSTUSDT",
+          "FLUIDUSDT",
+          "CGPTUSDT",
+          "LSKUSDT",
+          "MUBARAKUSDT",
+          "BMTUSDT",
+          "AIOUSDT"
+        ],
+        "exact_24_future_bars": true
+      }
+    ]
+  }
+}

@@ -18,6 +18,11 @@ export interface Opportunity {
   suggested_stop: number | string;
   suggested_targets: (number | string)[];
   risk_reward_ratio: number | string;
+  risk_reward_target_index?: number;
+  taker_buy_sell_ratio_window_hours?: number | null;
+  taker_buy_sell_ratio_1h?: number | string;
+  taker_buy_sell_ratio_4h?: number | string;
+  taker_buy_sell_ratio_24h?: number | string;
   estimated_win_rate_pct?: number | string;
   expected_value_r?: number | string;
   poc_price?: number | string;

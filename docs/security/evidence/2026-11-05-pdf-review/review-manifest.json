@@ -1,0 +1,33 @@
+{
+  "pdf_unchanged": true,
+  "pdf_sha256": "d12277dcde516581b3cb87c40ffb0c4dd36326b9c9823953c24968d58a11af15",
+  "focused_worktree_tests": {
+    "passed": 68,
+    "seconds": 54.3
+  },
+  "strict_recheck": {
+    "exit": 3,
+    "unavailable": 72,
+    "eligible": 0
+  },
+  "no_strategy_or_deployment_change": true,
+  "report_sha256": "a13ab741559dda33f09f4dd2a8746eef01e991d6e5e7f6cb3003aaeb54b71fbc",
+  "evidence_sha256": {
+    "absorption-mechanism-check.json": "cbc62313cc86564a6e2914456d39df4310009d3842990d634983b2ec8fc37944",
+    "api-recheck.json": "6c000438a122cdbdad70254d339a77ab54d1b39ad4561ba42edd5d676f12b8fc",
+    "claim-consistency-check.json": "6a6e1fbd66338255bdfe2fa1a3ffb8216fe97419a8d04b0a61539ec56aa1e3fa",
+    "external-evidence-manifest.json": "6f0a0144bbf41424c1d3a6593b444c8796db5acb7c2b1f45487c380671edd4b7",
+    "external-population-reproduction.json": "5dd994a6ea22edc6f3f7e13829ac9f7599a245e57203621b481010156081ba2e",
+    "faithful_48h_replay.py.reviewed.txt": "1975626327e1996d2fbf5ec9b981705edfedf32e8bd7c346e583ca3ffadc1481",
+    "feature-and-archetype-check.json": "fc19d8a4e1e7fb5856a18bc01eaa2bef50730c96e31d1ac368c345d671580c8f",
+    "independent-excursion-check.json": "6d5a7ee8f1885e5175040190516a9be5f2b19634f2e86f8efb1f5787d7274759",
+    "independent-hourly-rank-check.json": "65c4ac810a8ba18dfdd1ad99a08d96ef5356260753c1e871ade589687a018680",
+    "independent-proxy-metric-check.json": "93d1d7a4d42a59062b1fe773d686f24d76571ba0a08464a69465b9345b8b34cc",
+    "pdf-extracted.txt": "0fd9abfd6d522527db90443889d648de0086aa924c22c90a25f19e9cf86ce235",
+    "pdf-metadata.json": "bcea1154589d56520036cf79056159774c1266f2fcdacb3e500adeb7dad5f1e1",
+    "self-recheck.json": "07410ff027872098660f3c13373583e70e98dca2aa4cc3ca742e83543791d0a9",
+    "strict-recheck.json": "c552c805bf22a025f4caf9e662d95a38ae7f5c05678bcda8df9ea4dff23747e0",
+    "trace_nov5_gainers_counterfactual.py.reviewed.txt": "6f987a79838dae8fbefb5cd02de5f6141e79f061c6fb8557c08f71eeeb1a8819",
+    "verify_strategy_outperformance.py.reviewed.txt": "e29b8d726b9e878e03cd7b27001140347862a0ec601bc0fdc6c81812f417012e"
+  }
+}

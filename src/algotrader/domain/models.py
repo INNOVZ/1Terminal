@@ -259,12 +259,14 @@ class DerivativesSnapshot:
     basis_rate: Decimal
     open_interest: Decimal
     open_interest_change_1h: Decimal | None
-    taker_buy_sell_ratio: Decimal
+    taker_buy_sell_ratio: Decimal | None
     bid_depth_notional: Decimal
     ask_depth_notional: Decimal
     open_interest_change_4h: Decimal | None = None
     open_interest_change_24h: Decimal | None = None
     open_interest_change_7d: Decimal | None = None
+    taker_buy_sell_ratio_4h: Decimal | None = None
+    taker_buy_sell_ratio_24h: Decimal | None = None
     observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     degraded_telemetry: bool = False
 
