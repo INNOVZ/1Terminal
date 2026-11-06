@@ -123,7 +123,21 @@ jobs:
               alpine:3.20 \
               sh -c 'chown -R 10001:10001 /state /data && chmod -R u+rwX /state /data'
             docker compose --project-name alfa-terminal --file "$release/compose.yaml" build
-            if ! docker compose --project-name alfa-terminal --file "$release/compose.yaml" up -d --wait --wait-timeout 300 --remove-orphans; then
+            docker compose --project-name alfa-terminal --file "$release/compose.yaml" up -d --remove-orphans
+
+            echo "=== Waiting for service readiness ==="
+            success=0
+            for i in $(seq 1 30); do
+              if docker compose --project-name alfa-terminal --file "$release/compose.yaml" exec -T atlas python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=10)" >/dev/null 2>&1; then
+                echo "Service is ready and passing healthchecks on attempt $i!"
+                success=1
+                break
+              fi
+              echo "Waiting for readyz endpoint... attempt $i/30"
+              sleep 5
+            done
+
+            if [ "$success" -ne 1 ]; then
               echo "=== DEPLOYMENT FAILED: DOCKER COMPOSE LOGS ==="
               docker compose --project-name alfa-terminal --file "$release/compose.yaml" logs --tail 200
               exit 1

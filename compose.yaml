@@ -27,11 +27,11 @@ services:
         - -c
         - >-
           import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5)
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 20s
+          urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=15)
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 45s
     restart: unless-stopped
 
   research-ranks:
