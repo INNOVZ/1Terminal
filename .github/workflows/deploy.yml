@@ -81,6 +81,24 @@ jobs:
           envs: RELEASE_SHA
           script: |
             set -eu
+            # Reclaim disk space from build cache, unused images, and old releases
+            echo "=== Checking disk space ==="
+            df -h
+            docker builder prune -af || true
+            docker image prune -af || true
+            if [ -d /home/deploy/atlas-releases ]; then
+              active_release=$(docker inspect alfa-terminal-atlas-1 --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' 2>/dev/null || echo "")
+              for d in /home/deploy/atlas-releases/*; do
+                if [ -d "$d" ] && [ "$d" != "$active_release" ] && [ "$d" != "/home/deploy/atlas-releases/$RELEASE_SHA" ]; then
+                  echo "Pruning old release worktree: $d"
+                  rm -rf "$d" || true
+                fi
+              done
+              git -C /home/deploy/alfa-terminal worktree prune 2>/dev/null || true
+            fi
+            echo "=== Disk space after cleanup ==="
+            df -h
+
             cd /home/deploy/alfa-terminal
             git fetch origin main
             git cat-file -e "$RELEASE_SHA^{commit}"
