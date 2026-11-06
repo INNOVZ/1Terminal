@@ -78,12 +78,15 @@ jobs:
           host: ${{ secrets.GCP_VM_IP }}
           username: ${{ secrets.GCP_VM_USER || 'deploy' }}
           key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+          command_timeout: 30m
           envs: RELEASE_SHA
           script: |
             set -eu
-            # Reclaim disk space from build cache, unused images, and old releases
+            # Reclaim disk space from build cache, logs, unused images, and old releases
             echo "=== Checking disk space ==="
             df -h
+            journalctl --vacuum-size=50M 2>/dev/null || true
+            sudo apt-get clean 2>/dev/null || apt-get clean 2>/dev/null || true
             docker builder prune -af || true
             docker image prune -af || true
             if [ -d /home/deploy/atlas-releases ]; then
