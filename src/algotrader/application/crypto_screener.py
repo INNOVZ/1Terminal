@@ -430,7 +430,7 @@ class CryptoOpportunityScreener:
             async with stage2_semaphore:
                 try:
                     deriv_res = await asyncio.wait_for(
-                        derivatives_port.derivatives_snapshot(opp.instrument), timeout=4.0
+                        derivatives_port.derivatives_snapshot(opp.instrument), timeout=15.0
                     )
                     is_mandatory_deriv_setup = (
                         opp.direction == Direction.SHORT
@@ -489,7 +489,7 @@ class CryptoOpportunityScreener:
             async with stage2_semaphore:
                 try:
                     deriv_res = await asyncio.wait_for(
-                        derivatives_port.derivatives_snapshot(inst), timeout=4.0
+                        derivatives_port.derivatives_snapshot(inst), timeout=15.0
                     )
                     if not isinstance(deriv_res, DerivativesSnapshot) or deriv_res.degraded_telemetry:
                         return None

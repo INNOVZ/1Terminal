@@ -206,6 +206,15 @@ async def reconcile_radar_cohort(
             updated["candles"] = candles_payload
             updated["radar_status"] = decision.state.value
             updated["radar_status_label"] = decision.label
+            updated["gates_passed"] = decision.gates_passed
+            updated["gates_total"] = decision.gates_total
+            updated["failed_gates"] = list(decision.failed_gates)
+            if decision.updated_checklist:
+                updated["checklist"] = [dict(item) for item in decision.updated_checklist]
+            if isinstance(updated.get("checklist_verification"), dict):
+                cv = dict(updated["checklist_verification"])
+                cv["passed_count"] = decision.gates_passed
+                updated["checklist_verification"] = cv
             if decision.pnl_from_entry_pct is not None:
                 updated["trade_pnl_pct"] = str(decision.pnl_from_entry_pct)
             return updated
@@ -299,6 +308,17 @@ async def _do_crypto_screen(
                 seen_bases.add(base)
                 o.setdefault("radar_status", RadarLifecycleState.FRESH_COIL.value)
                 o.setdefault("radar_status_label", "🆕 FRESH COIL")
+                raw_cl = o.get("checklist") or []
+                if isinstance(raw_cl, list) and raw_cl:
+                    passed_cnt = sum(1 for c in raw_cl if isinstance(c, dict) and c.get("passed"))
+                    failed_list = [str(c.get("title", "")) for c in raw_cl if isinstance(c, dict) and not c.get("passed")]
+                    o.setdefault("gates_passed", passed_cnt)
+                    o.setdefault("gates_total", len(raw_cl))
+                    o.setdefault("failed_gates", failed_list)
+                else:
+                    o.setdefault("gates_passed", 5)
+                    o.setdefault("gates_total", 5)
+                    o.setdefault("failed_gates", [])
                 deduped_opps.append(o)
 
         now = datetime.now(UTC)
@@ -490,6 +510,8 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
 def start_screener_cron(interval_hours: int = 4) -> None:
     """Starts the 4-hour background screener daemon if not already running."""
     global _cron_task
+    if not _screener_cache:
+        warm_screener_cache()
     if _cron_task is None or _cron_task.done():
         _cron_task = asyncio.create_task(
             _screener_cron_loop(interval_hours=interval_hours),

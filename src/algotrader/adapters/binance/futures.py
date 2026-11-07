@@ -184,7 +184,7 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
         # batch row has not landed yet.
         effective_closed_start = latest_closed_start
         if (
-            (reference_at % hour_ms) <= 300_000
+            (reference_at % hour_ms) <= 1_200_000
             and latest_closed_start not in taker_samples
             and (latest_closed_start - hour_ms) in taker_samples
         ):

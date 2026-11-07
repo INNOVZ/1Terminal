@@ -307,7 +307,7 @@ function VerificationPanel({
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          marginBottom: "14px",
+          marginBottom: "10px",
         }}
       >
         <span
@@ -325,7 +325,7 @@ function VerificationPanel({
           className={
             isGradeAPlus
               ? "badge-grade-a-plus"
-              : isHighRejection
+              : isHighRejection || passCount < totalCount
                 ? "badge-grade-b"
                 : "badge-grade-a"
           }
@@ -335,9 +335,55 @@ function VerificationPanel({
             ? "GRADE B (RETEST ONLY)"
             : isGradeAPlus
               ? `GRADE A+ (${passCount}/${totalCount} PASS)`
-              : `GRADE A (${passCount}/${totalCount} PASS)`}
+              : `⚠️ ${passCount}/${totalCount} GATES PASS`}
         </span>
       </div>
+
+      {/* Live Radar Lifecycle & System Gate Audit Banner */}
+      {(opportunity.radar_status_label || passCount < totalCount) && (
+        <div
+          style={{
+            marginBottom: "12px",
+            padding: "8px 10px",
+            borderRadius: "8px",
+            fontSize: "11px",
+            fontFamily: "var(--font-mono)",
+            background:
+              passCount === totalCount
+                ? "rgba(16, 185, 129, 0.08)"
+                : "rgba(244, 157, 13, 0.10)",
+            border:
+              passCount === totalCount
+                ? "1px solid rgba(16, 185, 129, 0.28)"
+                : "1px solid rgba(244, 157, 13, 0.35)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "4px",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
+              RADAR LIFECYCLE:
+            </span>
+            <strong
+              style={{
+                color:
+                  passCount === totalCount ? "var(--accent-emerald)" : "#f49d0d",
+              }}
+            >
+              {opportunity.radar_status_label || "ACTIVE SETUP"}
+            </strong>
+          </div>
+          <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+            {passCount === totalCount
+              ? "✓ All 5/5 (L1–L6) institutional system gates verified live."
+              : `⚠️ Gate Drift (${passCount}/${totalCount} passing) — Failed: ${checklist
+                  .filter((c) => !c.passed)
+                  .map((c) => c.title)
+                  .join(", ")}. Setup remains above Stop Loss.`}
+          </div>
+        </div>
+      )}
 
       {/* Dynamic Verification Checklist */}
       <div

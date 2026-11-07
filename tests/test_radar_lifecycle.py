@@ -224,3 +224,47 @@ async def test_reconcile_radar_cohort_retains_active_and_eliminates_stopped() ->
     assert [r["symbol"] for r in retained] == ["HOMEUSDT"]
     assert retained[0]["current_price"] == "0.00539"
     assert retained[0]["radar_status"] == "AT_ENTRY_ZONE"
+    assert retained[0]["gates_passed"] == 5
+    assert retained[0]["failed_gates"] == []
+
+
+def test_retained_candidate_with_gate_drift_reports_failed_gates_for_dashboard() -> None:
+    now = datetime(2026, 11, 7, 7, 0, tzinfo=UTC)
+    gmx_cand = {
+        "symbol": "GMXUSDT",
+        "direction": "long",
+        "setup_label": "COIL_SPRING_LONG",
+        "current_price": "8.440",
+        "suggested_entry": "8.375",
+        "breakout_trigger": "8.850",
+        "suggested_stop": "7.672",
+        "suggested_targets": ["9.450", "10.200", "11.500"],
+        "poc_price": "8.440",
+        "val_price": "7.980",
+        "vah_price": "8.920",
+        "checklist": [
+            {"title": "Trend Baseline", "passed": True, "detail": "Holding above 4H EMA50 ($8.39)"},
+            {"title": "Anti-Chasing Validated", "passed": True, "detail": "72h range tight (11.2%)"},
+            {"title": "Value Acceptance", "passed": True, "detail": "Accepted above 30d POC ($8.44)"},
+            {"title": "Volatility Compression", "passed": True, "detail": "Bandwidth 0.12 (BB inside KC Squeeze)"},
+            {"title": "Smart Money Absorption", "passed": True, "detail": "7d OI +4.2%, funding +0.50 bps"},
+        ],
+        "evaluated_at": (now - timedelta(hours=12)).isoformat(),
+    }
+
+    decision = evaluate_radar_candidate_lifecycle(
+        gmx_cand,
+        current_price=Decimal("8.061"),
+        ema50_4h=Decimal("8.390"),
+        now=now,
+    )
+
+    assert decision.retained is True
+    assert decision.state is RadarLifecycleState.ACTIVE_COIL
+    assert decision.gates_passed == 3
+    assert decision.gates_total == 5
+    assert "Trend Baseline" in decision.failed_gates
+    assert "Value Acceptance" in decision.failed_gates
+    assert "3/5 GATES" in decision.label
+
+

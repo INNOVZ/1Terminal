@@ -47,6 +47,9 @@ export interface Opportunity {
   radar_status?: "FRESH_COIL" | "AT_ENTRY_ZONE" | "IN_ACTIVE_TRADE" | "ACTIVE_COIL" | string;
   radar_status_label?: string;
   trade_pnl_pct?: string;
+  gates_passed?: number;
+  gates_total?: number;
+  failed_gates?: string[];
   score_breakdown?: {
     trend?: string;
     momentum?: string;
@@ -93,8 +96,24 @@ const CandidateCard = memo(function CandidateCard({
   }, [onSelect, opp]);
 
   const isShort = opp.direction?.toLowerCase() === "short";
-  const passCount = opp.checklist ? opp.checklist.filter((c) => c.passed).length : 5;
-  const totalCount = opp.checklist ? opp.checklist.length : 5;
+  const passCount =
+    opp.gates_passed !== undefined
+      ? opp.gates_passed
+      : opp.checklist
+        ? opp.checklist.filter((c) => c.passed).length
+        : 5;
+  const totalCount =
+    opp.gates_total !== undefined
+      ? opp.gates_total
+      : opp.checklist
+        ? opp.checklist.length
+        : 5;
+  const failedGates =
+    opp.failed_gates && opp.failed_gates.length > 0
+      ? opp.failed_gates
+      : opp.checklist
+        ? opp.checklist.filter((c) => !c.passed).map((c) => c.title)
+        : [];
   const isHighRejection = opp.breakout_readiness_status === "HIGH_REJECTION_RISK";
   const isGradeAPlus = passCount === totalCount && !isHighRejection;
 
@@ -136,8 +155,27 @@ const CandidateCard = memo(function CandidateCard({
             {isShort ? "SHORT" : "LONG"}
           </span>
           {isGradeAPlus ? (
-            <span className="badge-grade-a-plus" style={{ fontSize: "9px", padding: "1px 5px" }}>
-              <ShieldCheck size={10} /> 5/5
+            <span
+              className="badge-grade-a-plus"
+              style={{ fontSize: "9px", padding: "1px 5px" }}
+              title="All 5/5 Institutional Screening Gates Passing Live"
+            >
+              <ShieldCheck size={10} /> {passCount}/{totalCount}
+            </span>
+          ) : passCount < totalCount ? (
+            <span
+              style={{
+                fontSize: "9px",
+                fontWeight: 800,
+                padding: "1px 5px",
+                borderRadius: "4px",
+                background: passCount <= 3 ? "rgba(239, 68, 68, 0.16)" : "rgba(244, 157, 13, 0.16)",
+                color: passCount <= 3 ? "var(--accent-crimson)" : "#f49d0d",
+                border: `1px solid ${passCount <= 3 ? "rgba(239, 68, 68, 0.4)" : "rgba(244, 157, 13, 0.4)"}`,
+              }}
+              title={`Gate Drift Warning — Failed: ${failedGates.join(", ")}`}
+            >
+              ⚠️ {passCount}/{totalCount} GATES
             </span>
           ) : isHighRejection ? (
             <span className="badge-grade-b" style={{ fontSize: "9px", padding: "1px 5px" }}>
@@ -277,6 +315,29 @@ const CandidateCard = memo(function CandidateCard({
           )}
         </div>
       </div>
+
+      {/* Live Gate Drift Warning Row (only shown if a retained setup fails 1+ live system gates) */}
+      {failedGates.length > 0 && (
+        <div
+          style={{
+            marginTop: "6px",
+            padding: "3px 6px",
+            borderRadius: "4px",
+            fontSize: "10px",
+            fontFamily: "var(--font-mono)",
+            fontWeight: 700,
+            background: "rgba(244, 157, 13, 0.10)",
+            border: "1px solid rgba(244, 157, 13, 0.30)",
+            color: "#f49d0d",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <span>⚠️ Gate Drift: {failedGates.join(", ")}</span>
+          <span style={{ opacity: 0.85 }}>Stop Intact</span>
+        </div>
+      )}
     </div>
   );
 });
