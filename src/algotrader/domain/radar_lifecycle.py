@@ -95,10 +95,35 @@ def _compute_ema_from_1h(closes_1h: Sequence[Decimal], span_1h: int = 200) -> De
     return ema_val
 
 
+def _compute_rsi_4h_from_1h(closes_1h: Sequence[Decimal], period: int = 14) -> Decimal | None:
+    """Computes live 4H Wilder RSI(14) from 1H closes sampled every 4 hours anchored to the latest bar."""
+    if len(closes_1h) < (period + 1) * 4:
+        return None
+    closes_4h = list(reversed(closes_1h[::-4]))
+    if len(closes_4h) <= period:
+        return None
+    deltas = [closes_4h[i] - closes_4h[i - 1] for i in range(1, len(closes_4h))]
+    gains = [d if d > Decimal("0") else Decimal("0") for d in deltas]
+    losses = [-d if d < Decimal("0") else Decimal("0") for d in deltas]
+    avg_gain = sum(gains[:period], Decimal("0")) / Decimal(str(period))
+    avg_loss = sum(losses[:period], Decimal("0")) / Decimal(str(period))
+    p_dec = Decimal(str(period))
+    p_minus_1 = Decimal(str(period - 1))
+    for g, l_val in zip(gains[period:], losses[period:], strict=False):
+        avg_gain = (avg_gain * p_minus_1 + g) / p_dec
+        avg_loss = (avg_loss * p_minus_1 + l_val) / p_dec
+    if avg_loss == Decimal("0"):
+        return Decimal("100.0")
+    rs = avg_gain / avg_loss
+    return Decimal("100") - (Decimal("100") / (Decimal("1") + rs))
+
+
 def _fmt_price(val: Decimal) -> str:
     f = float(val)
-    if f < 0.0001:
+    if f < 0.01:
         return f"{f:.6f}"
+    if f < 0.1:
+        return f"{f:.5f}"
     if f < 1.0:
         return f"{f:.4f}"
     if f < 10.0:
@@ -142,102 +167,132 @@ def reverify_candidate_gates(
 
     # 1. Gate L1: Trend Baseline (4H EMA50)
     trend_passed = True
-    trend_detail = f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)})" if eff_ema50 else "Holding above 4H EMA50 baseline"
+    trend_detail = f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)})" if eff_ema50 else "Holding above 4H EMA50"
     if eff_ema50 is not None and eff_ema50 > Decimal("0"):
+        diff_ema_pct = (current_price - eff_ema50) / eff_ema50 * Decimal("100")
         if not is_short:
             # Allow 0.8% wick tolerance on EMA50 shelf
             trend_passed = current_price >= eff_ema50 * Decimal("0.992")
-            if trend_passed:
-                trend_detail = f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)})"
+            if current_price >= eff_ema50:
+                trend_detail = f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
+            elif trend_passed:
+                trend_detail = f"Testing 4H EMA50 support (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
             else:
-                diff_pct = (current_price - eff_ema50) / eff_ema50 * Decimal("100")
-                trend_detail = f"Slipped {float(diff_pct):.1f}% below 4H EMA50 (${_fmt_price(eff_ema50)})"
+                trend_detail = f"Slipped {float(diff_ema_pct):.1f}% below 4H EMA50 (${_fmt_price(eff_ema50)})"
         else:
             trend_passed = current_price <= eff_ema50 * Decimal("1.008")
-            if trend_passed:
-                trend_detail = f"Capped below 4H EMA50 (${_fmt_price(eff_ema50)})"
+            if current_price <= eff_ema50:
+                trend_detail = f"Capped below 4H EMA50 (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
+            elif trend_passed:
+                trend_detail = f"Testing 4H EMA50 resistance (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
             else:
-                diff_pct = (current_price - eff_ema50) / eff_ema50 * Decimal("100")
-                trend_detail = f"Reclaimed +{float(diff_pct):.1f}% above 4H EMA50 (${_fmt_price(eff_ema50)})"
+                trend_detail = f"Reclaimed +{float(diff_ema_pct):.1f}% above 4H EMA50 (${_fmt_price(eff_ema50)})"
 
-    # 2. Gate L2: Anti-Chasing / Excursion Validation
+    # 2. Gate L2: Anti-Chasing / Excursion Validation (preserve exact 1D/1W RSI telemetry)
     highs_72h = _extract_decimals_from_candles(candle_source[-72:], "high")
     lows_72h = _extract_decimals_from_candles(candle_source[-72:], "low")
+    rsi_suffix = ""
+    for item in candidate.get("checklist") or ():
+        if isinstance(item, Mapping) and "RSI" in str(item.get("detail", "")):
+            parts = [p.strip() for p in str(item.get("detail", "")).split("|") if "RSI" in p]
+            if parts:
+                rsi_suffix = " | " + " | ".join(parts)
+            break
+    if not rsi_suffix:
+        r1d = _to_dec(candidate.get("rsi_1d"))
+        r1w = _to_dec(candidate.get("rsi_1w"))
+        if r1d is not None and r1w is not None:
+            rsi_suffix = f" | 1D RSI {float(r1d):.1f} | 1W RSI {float(r1w):.1f}"
+        else:
+            r4h = _compute_rsi_4h_from_1h(closes_1h)
+            if r4h is not None:
+                rsi_suffix = f" | 4H RSI {float(r4h):.1f}"
+
     anti_chase_passed = True
-    anti_chase_detail = "72h range controlled | Multi-timeframe RSI aligned"
+    anti_chase_detail = f"72h range controlled{rsi_suffix}"
     if highs_72h and lows_72h:
         h72 = max(highs_72h)
         l72 = min(lows_72h)
         rng_72_pct = (h72 - l72) / max(l72, Decimal("1e-8")) * Decimal("100")
-        # If already entered lower (current_price > entry), larger range expansion is healthy profit expansion
         in_profit = entry is not None and entry > Decimal("0") and (
             (not is_short and current_price > entry * Decimal("1.02"))
             or (is_short and current_price < entry * Decimal("0.98"))
         )
         anti_chase_passed = rng_72_pct <= Decimal("28.0") or bool(in_profit)
         if anti_chase_passed:
-            anti_chase_detail = f"72h range {'expanding in profit' if in_profit and rng_72_pct > Decimal('20.0') else 'tight'} ({float(rng_72_pct):.1f}%)"
+            state_word = "expanding in profit" if (in_profit and rng_72_pct > Decimal("20.0")) else "tight"
+            anti_chase_detail = f"72h range {state_word} ({float(rng_72_pct):.1f}%){rsi_suffix}"
         else:
-            anti_chase_detail = f"72h excursion wide ({float(rng_72_pct):.1f}%) — wait for pullback"
+            anti_chase_detail = f"72h excursion wide ({float(rng_72_pct):.1f}%){rsi_suffix}"
 
     # 3. Gate L3: Value Acceptance (30d POC & Value Area)
     value_passed = True
     value_detail = "Accepted above 30d POC"
     if poc is not None and poc > Decimal("0"):
+        diff_poc = (current_price - poc) / poc * Decimal("100")
         vah_str = f" | VAH: ${_fmt_price(vah)}" if vah is not None else ""
         if not is_short:
-            # Passes if holding at/above POC (with 1.0% shelf tolerance)
+            # Passes if holding at/above POC (with 1.0% retest shelf tolerance)
             value_passed = current_price >= poc * Decimal("0.990")
-            if value_passed:
+            if current_price >= poc:
                 value_detail = f"Accepted above 30d POC (${_fmt_price(poc)}){vah_str}"
+            elif value_passed:
+                value_detail = f"Testing 30d POC shelf (${_fmt_price(poc)}, {float(diff_poc):+.1f}%){vah_str}"
             else:
-                diff_poc = (current_price - poc) / poc * Decimal("100")
                 val_str = f" | Testing VAL (${_fmt_price(val)})" if val is not None else ""
                 value_detail = f"Below 30d POC (${_fmt_price(poc)}, {float(diff_poc):.1f}%){val_str}"
         else:
             value_passed = current_price <= poc * Decimal("1.010")
-            if value_passed:
+            if current_price <= poc:
                 value_detail = f"Rejected below 30d POC (${_fmt_price(poc)})"
+            elif value_passed:
+                value_detail = f"Testing 30d POC resistance (${_fmt_price(poc)}, {float(diff_poc):+.1f}%)"
             else:
-                value_detail = f"Trading above 30d POC (${_fmt_price(poc)})"
+                value_detail = f"Trading above 30d POC (${_fmt_price(poc)}, {float(diff_poc):+.1f}%)"
 
     # 4. Gate L4: Volatility Compression / Breakout Structure
     vol_passed = True
-    vol_detail = "Volatility structure intact"
+    vol_detail = "Volatility compression intact"
     bbw = _to_dec(candidate.get("bb_bandwidth_4h"))
+    kc_sq = candidate.get("kc_squeeze_4h")
     if bbw is None:
         for item in candidate.get("checklist") or ():
             if isinstance(item, Mapping) and "Bandwidth" in str(item.get("detail", "")):
                 m = re.search(r"Bandwidth\s+([0-9.]+)", str(item.get("detail", "")))
                 if m:
                     bbw = _to_dec(m.group(1))
-                    break
+                if "KC Squeeze" in str(item.get("detail", "")) and kc_sq is None:
+                    kc_sq = True
+                break
     if bbw is not None:
-        # If bandwidth expanded (>0.24), check if it expanded in the trade's favor
         in_favorable_expansion = (
             (not is_short and vah is not None and current_price >= vah)
             or (not is_short and entry is not None and current_price >= entry * Decimal("1.02"))
         )
         vol_passed = bbw <= Decimal("0.24") or in_favorable_expansion
-        if bbw <= Decimal("0.20"):
+        if bbw <= Decimal("0.13") or kc_sq is True and bbw <= Decimal("0.15"):
             vol_detail = f"Bandwidth {float(bbw):.2f} (BB inside KC Squeeze)"
+        elif bbw <= Decimal("0.20"):
+            vol_detail = f"Bandwidth {float(bbw):.2f} (Controlled 4H Base Coil)"
         elif in_favorable_expansion:
-            vol_detail = f"Bandwidth {float(bbw):.2f} (Expanding into active breakout)"
+            vol_detail = f"Bandwidth {float(bbw):.2f} (Expanding in Active Trade)"
         else:
             vol_detail = f"Bandwidth loosened ({float(bbw):.2f}) without upside breakout"
 
     # 5. Gate L5/L6: Smart Money & Derivatives Absorption
     oi_7d = _to_dec(candidate.get("oi_change_7d_pct"))
     funding_bps = _to_dec(candidate.get("funding_rate_bps"))
+    taker_r = _to_dec(candidate.get("taker_buy_sell_ratio"))
     vcr = _to_dec(candidate.get("volume_contraction_ratio")) or _to_dec(candidate.get("vcr_4h"))
     sm_passed = True
     if oi_7d is not None and not is_short and oi_7d < Decimal("-8.0"):
         sm_passed = False
     if vcr is not None and vcr > Decimal("1.45") and not (entry is not None and current_price > entry * Decimal("1.02")):
         sm_passed = False
-    oi_str = f"7d OI {float(oi_7d):+.1f}%" if oi_7d is not None else "OI steady"
+    oi_str = f"7d OI {float(oi_7d):+.1f}%" if oi_7d is not None else "7d OI 0.0%"
     fund_str = f", funding {float(funding_bps):+.2f} bps" if funding_bps is not None else ""
-    sm_detail = f"{oi_str}{fund_str}" if sm_passed else f"Orderflow weakened ({oi_str}{fund_str})"
+    taker_str = f", taker {float(taker_r):.2f}" if taker_r is not None else ""
+    sm_detail = f"{oi_str}{fund_str}{taker_str}" if sm_passed else f"Orderflow weakened ({oi_str}{fund_str}{taker_str})"
 
     updated_checklist: tuple[dict[str, Any], ...] = (
         {"title": "Trend Baseline", "passed": trend_passed, "detail": trend_detail},

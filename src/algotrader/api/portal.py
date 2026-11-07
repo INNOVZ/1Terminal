@@ -178,6 +178,10 @@ async def reconcile_radar_cohort(
         try:
             async with sem:
                 raw_1h = await asyncio.wait_for(futures.candles(inst, "1h", 250), timeout=4.0)
+                deriv_snap = None
+                if hasattr(futures, "derivatives_snapshot"):
+                    with contextlib.suppress(Exception):
+                        deriv_snap = await asyncio.wait_for(futures.derivatives_snapshot(inst), timeout=6.0)
             closed_1h = [c for c in raw_1h if getattr(c, "closed", True)]
             if not closed_1h:
                 return None
@@ -193,15 +197,24 @@ async def reconcile_radar_cohort(
                 }
                 for c in closed_1h[-200:]
             ]
+            updated = dict(prev)
+            if deriv_snap is not None:
+                if getattr(deriv_snap, "open_interest_change_7d", None) is not None:
+                    updated["oi_change_7d_pct"] = f"{float(deriv_snap.open_interest_change_7d * Decimal('100')):+.2f}%"
+                if getattr(deriv_snap, "open_interest_change_1h", None) is not None:
+                    updated["oi_change_1h_pct"] = f"{float(deriv_snap.open_interest_change_1h * Decimal('100')):+.2f}%"
+                if getattr(deriv_snap, "funding_rate", None) is not None:
+                    updated["funding_rate_bps"] = f"{float(deriv_snap.funding_rate * Decimal('10000')):+.2f} bps"
+                if getattr(deriv_snap, "taker_buy_sell_ratio", None) is not None:
+                    updated["taker_buy_sell_ratio"] = f"{float(deriv_snap.taker_buy_sell_ratio):.4f}"
             decision = evaluate_radar_candidate_lifecycle(
-                prev,
+                updated,
                 current_price=live_price,
                 recent_candles_1h=candles_payload,
                 now=ref_now,
             )
             if not decision.retained:
                 return None
-            updated = dict(prev)
             updated["current_price"] = str(live_price)
             updated["candles"] = candles_payload
             updated["radar_status"] = decision.state.value

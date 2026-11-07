@@ -136,14 +136,36 @@ function VerificationPanel({
   const checklist = useMemo(() => {
     const raw = opportunity?.checklist || [];
     if (!adaptedLevels?.pocPrice) return raw;
+    const currPrice = livePrice ?? Number(opportunity?.current_price || 0);
+    const isShortDir = opportunity?.direction?.toLowerCase() === "short";
     return raw.map((item) => {
       let detail = item.detail;
       if (item.title === "Value Acceptance" && adaptedLevels.pocPrice) {
-        detail = `Accepted above 30d POC ($${adaptedLevels.pocPrice.toFixed(decimals)})${adaptedLevels.vahPrice ? ` | VAH: $${adaptedLevels.vahPrice.toFixed(decimals)}` : ""}`;
+        const poc = adaptedLevels.pocPrice;
+        const pocDiffPct = poc > 0 && currPrice > 0 ? ((currPrice - poc) / poc) * 100 : 0;
+        const vahStr = adaptedLevels.vahPrice ? ` | VAH: $${adaptedLevels.vahPrice.toFixed(decimals)}` : "";
+        const valStr = adaptedLevels.valPrice ? ` | VAL: $${adaptedLevels.valPrice.toFixed(decimals)}` : "";
+        if (!isShortDir) {
+          if (currPrice >= poc) {
+            detail = `Accepted above 30d POC ($${poc.toFixed(decimals)}, +${pocDiffPct.toFixed(1)}%)${vahStr}`;
+          } else if (item.passed) {
+            detail = `Testing 30d POC shelf ($${poc.toFixed(decimals)}, ${pocDiffPct.toFixed(1)}%)${vahStr}`;
+          } else {
+            detail = `Below 30d POC ($${poc.toFixed(decimals)}, ${pocDiffPct.toFixed(1)}%)${valStr}`;
+          }
+        } else {
+          if (currPrice <= poc) {
+            detail = `Accepted below 30d POC ($${poc.toFixed(decimals)}, ${pocDiffPct.toFixed(1)}%)${valStr}`;
+          } else if (item.passed) {
+            detail = `Testing 30d POC ceiling ($${poc.toFixed(decimals)}, +${pocDiffPct.toFixed(1)}%)${valStr}`;
+          } else {
+            detail = `Reclaimed above 30d POC ($${poc.toFixed(decimals)}, +${pocDiffPct.toFixed(1)}%)${vahStr}`;
+          }
+        }
       }
       return { ...item, detail };
     });
-  }, [opportunity?.checklist, adaptedLevels, decimals]);
+  }, [opportunity?.checklist, opportunity?.direction, opportunity?.current_price, adaptedLevels, decimals, livePrice]);
 
   const passCount = useMemo(
     () => checklist.filter((c) => c.passed).length,
@@ -371,7 +393,32 @@ function VerificationPanel({
                   passCount === totalCount ? "var(--accent-emerald)" : "#f49d0d",
               }}
             >
-              {opportunity.radar_status_label || "ACTIVE SETUP"}
+              {(() => {
+                const entryNum = Number(
+                  adaptedLevels?.entryPrice ??
+                    (opportunity.suggested_entry || opportunity.pullback_entry || 0),
+                );
+                const currNum = bracket.currentPriceNum;
+                if (entryNum > 0 && currNum > 0) {
+                  const diffPct = isShort
+                    ? ((entryNum - currNum) / entryNum) * 100
+                    : ((currNum - entryNum) / entryNum) * 100;
+                  const diffStr = `${diffPct >= 0 ? "+" : ""}${diffPct.toFixed(1)}%`;
+                  if (passCount < totalCount) {
+                    return `⚠️ ${passCount}/${totalCount} GATES (${diffStr})`;
+                  }
+                  if (Math.abs(diffPct) <= 1.5) {
+                    return `🟢 AT ENTRY ZONE (${diffStr})`;
+                  }
+                  if (diffPct > 1.5) {
+                    return `🚀 IN TRADE (${diffStr})`;
+                  }
+                  return opportunity.radar_status === "FRESH_COIL"
+                    ? `🆕 FRESH COIL (${diffStr})`
+                    : `🎯 ACTIVE COIL (${diffStr})`;
+                }
+                return opportunity.radar_status_label || "ACTIVE SETUP";
+              })()}
             </strong>
           </div>
           <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>
