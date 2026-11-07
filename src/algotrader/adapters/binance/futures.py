@@ -178,11 +178,23 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
             if buy_volume.is_finite() and sell_volume.is_finite() and buy_volume >= 0 and sell_volume >= 0:
                 taker_samples[timestamp] = (buy_volume, sell_volume)
 
+        # Within the 5-minute top-of-hour batch aggregation window (matching the 300_000ms
+        # OI rollover grace on line 146), Binance publishes hourly takerlongshortRatio rows
+        # asynchronously across symbols. Anchor to the prior closed hour if the new hour's
+        # batch row has not landed yet.
+        effective_closed_start = latest_closed_start
+        if (
+            (reference_at % hour_ms) <= 300_000
+            and latest_closed_start not in taker_samples
+            and (latest_closed_start - hour_ms) in taker_samples
+        ):
+            effective_closed_start = latest_closed_start - hour_ms
+
         def taker_ratio_over(hours: int) -> Decimal | None:
             if not provider_clock_fresh:
                 return None
             samples = [
-                taker_samples.get(latest_closed_start - offset * hour_ms)
+                taker_samples.get(effective_closed_start - offset * hour_ms)
                 for offset in range(hours)
             ]
             if any(sample is None for sample in samples):

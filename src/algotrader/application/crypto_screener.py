@@ -980,6 +980,7 @@ class CryptoOpportunityScreener:
 
         pos_in_range = (close - low_30d) / max(high_30d - low_30d, Decimal("1e-8"))
         low_24h = min(c.low for c in (closed_1h[-24:] if len(closed_1h) >= 24 else closed_1h))
+        low_48h = min(c.low for c in (closed_1h[-48:] if len(closed_1h) >= 48 else closed_1h))
 
         # 30-Day Volume Profile (using 180 4H bars = 720 hours = 30 days)
         vp_window = closed_4h[-180:] if len(closed_4h) >= 180 else (closed_1h[-240:] if len(closed_1h) >= 240 else closed_1h)
@@ -1143,6 +1144,7 @@ class CryptoOpportunityScreener:
             ema20_4h=ema20_4h,
             ema20_1h=snap_1h.ema20,
             rvol_1h=snap_1h.relative_volume,
+            low_48h=low_48h,
         )
         archetype = classify_long_archetype(long_features)
         if archetype is None:

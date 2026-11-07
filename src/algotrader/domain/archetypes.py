@@ -42,6 +42,7 @@ class LongArchetypeFeatures:
     ema20_4h: Decimal | None = None
     ema20_1h: Decimal | None = None
     rvol_1h: Decimal | None = None
+    low_48h: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,11 +124,16 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
     ):
         return SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG
 
-    # 1. COIL_SPRING_LONG (Wyckoff Phase C Shakeout)
+    # 1. COIL_SPRING_LONG (Wyckoff Phase C Shakeout — 24h-48h Spring Memory)
     spring_threshold = min(features.ema50_4h, features.poc_30d) - Decimal("0.10") * atr
     reclaim_threshold = max(features.ema50_4h, features.poc_30d * Decimal("0.99"))
+    spring_low = (
+        min(features.low_24h, features.low_48h)
+        if features.low_48h is not None
+        else features.low_24h
+    )
     if (
-        features.low_24h < spring_threshold
+        spring_low < spring_threshold
         and features.close >= reclaim_threshold
         and features.vcr_4h <= Decimal("0.90")
     ):
@@ -249,12 +255,22 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
             features.bb_bandwidth_4h <= Decimal("0.15")
             and is_val_support_holding
             and features.close >= features.poc_30d * Decimal("0.985")
-            and taker_4h is not None and taker_4h >= Decimal("0.95")
+            and (
+                (taker_4h is not None and taker_4h >= Decimal("0.95"))
+                or (
+                    features.bb_bandwidth_4h <= Decimal("0.11")
+                    and features.close >= features.ema50_4h
+                    and features.close >= features.poc_30d
+                    and features.vcr_4h <= Decimal("0.90")
+                    and taker_4h is not None
+                    and taker_4h >= Decimal("0.85")
+                )
+            )
             and has_supply_exhaustion
         ):
             if features.pos_in_range_30d > Decimal("0.55"):
                 return SetupLabel.VCP_COMPRESSION_LONG
-            return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
+            return SetupLabel.COIL_SPRING_LONG if features.bb_bandwidth_4h <= Decimal("0.11") else SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
     return None
 
 

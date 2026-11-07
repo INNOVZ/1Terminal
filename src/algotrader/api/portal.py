@@ -21,6 +21,10 @@ from algotrader.domain.crypto_screener_models import (
     ScreenerMode,
     calculate_opportunity_win_rate_and_ev,
 )
+from algotrader.domain.radar_lifecycle import (
+    RadarLifecycleState,
+    evaluate_radar_candidate_lifecycle,
+)
 from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
 from algotrader.domain.watchlist_models import WatchlistItem, WatchlistPriority, WyckoffStage
 from algotrader.infrastructure.persistence import atomic_write_json
@@ -142,6 +146,84 @@ _screener_task: asyncio.Task[dict[str, Any]] | None = None
 _screener_task_lock = asyncio.Lock()
 
 
+async def reconcile_radar_cohort(
+    prior_opportunities: list[dict[str, Any]],
+    seen_bases: set[str],
+    futures: Any,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Re-audits prior radar setups against live 1H candles and retains active trades until stop or target."""
+    if not prior_opportunities or futures is None or not hasattr(futures, "instruments") or not hasattr(futures, "candles"):
+        return []
+    try:
+        all_insts = await asyncio.wait_for(futures.instruments(), timeout=6.0)
+        if not isinstance(all_insts, (list, tuple)):
+            return []
+        inst_by_symbol = {inst.id.symbol: inst for inst in all_insts if hasattr(inst, "id")}
+    except Exception:
+        return []
+
+    ref_now = now or datetime.now(UTC)
+    sem = asyncio.Semaphore(8)
+    retained: list[dict[str, Any]] = []
+
+    async def _check_single(prev: dict[str, Any]) -> dict[str, Any] | None:
+        sym = str(prev.get("symbol", ""))
+        base = prev.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
+        if not sym or not base or base in seen_bases:
+            return None
+        inst = inst_by_symbol.get(sym)
+        if inst is None:
+            return None
+        try:
+            async with sem:
+                raw_1h = await asyncio.wait_for(futures.candles(inst, "1h", 250), timeout=4.0)
+            closed_1h = [c for c in raw_1h if getattr(c, "closed", True)]
+            if not closed_1h:
+                return None
+            live_price = Decimal(str(closed_1h[-1].close))
+            candles_payload = [
+                {
+                    "time": int(c.closed_at.timestamp()),
+                    "open": float(c.open),
+                    "high": float(c.high),
+                    "low": float(c.low),
+                    "close": float(c.close),
+                    "volume": float(c.volume),
+                }
+                for c in closed_1h[-200:]
+            ]
+            decision = evaluate_radar_candidate_lifecycle(
+                prev,
+                current_price=live_price,
+                recent_candles_1h=candles_payload,
+                now=ref_now,
+            )
+            if not decision.retained:
+                return None
+            updated = dict(prev)
+            updated["current_price"] = str(live_price)
+            updated["candles"] = candles_payload
+            updated["radar_status"] = decision.state.value
+            updated["radar_status_label"] = decision.label
+            if decision.pnl_from_entry_pct is not None:
+                updated["trade_pnl_pct"] = str(decision.pnl_from_entry_pct)
+            return updated
+        except Exception:
+            return None
+
+    checked = await asyncio.gather(*(_check_single(p) for p in prior_opportunities))
+    for item in checked:
+        if item is not None:
+            sym = str(item.get("symbol", ""))
+            base = item.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
+            if base and base not in seen_bases:
+                seen_bases.add(base)
+                retained.append(item)
+    return retained
+
+
+
 async def _do_crypto_screen(
     mode: str = "all",
     min_score: float = 50.0,
@@ -215,16 +297,37 @@ async def _do_crypto_screen(
             base = o.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
             if base and base not in seen_bases:
                 seen_bases.add(base)
+                o.setdefault("radar_status", RadarLifecycleState.FRESH_COIL.value)
+                o.setdefault("radar_status_label", "🆕 FRESH COIL")
                 deduped_opps.append(o)
 
         now = datetime.now(UTC)
+
+        # Reconcile previously discovered radar candidates so active trades (AT_ENTRY_ZONE,
+        # IN_ACTIVE_TRADE, ACTIVE_COIL) are retained until they hit stop loss or final target.
+        prior_opps = (
+            list(_screener_cache.get("opportunities", []))
+            if isinstance(_screener_cache, dict)
+            else []
+        )
+        retained_prior = await reconcile_radar_cohort(
+            prior_opportunities=prior_opps,
+            seen_bases=seen_bases,
+            futures=futures,
+            now=now,
+        )
+
         macro_narrative = (
             opportunities[0].macro_narrative
             if opportunities
-            else "No qualifying candidates; macro context unavailable in this result."
+            else (
+                str(_screener_cache.get("macro_narrative"))
+                if retained_prior and isinstance(_screener_cache, dict) and _screener_cache.get("macro_narrative")
+                else "No qualifying candidates; macro context unavailable in this result."
+            )
         )
-        # When freshly screened setups qualify, strictly prioritize them
-        final_opps = deduped_opps
+        # Freshly screened setups lead first, followed by active retained setups
+        final_opps = deduped_opps + retained_prior
 
         result = {
             "timestamp": now.isoformat(),

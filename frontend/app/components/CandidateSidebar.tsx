@@ -44,6 +44,9 @@ export interface Opportunity {
   resistance_absorption_score?: number | string;
   breakout_readiness_status?: "BREAKOUT_CONFIRMED" | "RETEST_ONLY_WAIT_FOR_DIP" | "HIGH_REJECTION_RISK" | string;
   tick_size?: string | number;
+  radar_status?: "FRESH_COIL" | "AT_ENTRY_ZONE" | "IN_ACTIVE_TRADE" | "ACTIVE_COIL" | string;
+  radar_status_label?: string;
+  trade_pnl_pct?: string;
   score_breakdown?: {
     trend?: string;
     momentum?: string;
@@ -231,6 +234,31 @@ const CandidateCard = memo(function CandidateCard({
           </strong>
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          {opp.radar_status_label && (
+            <span
+              style={{
+                fontSize: "9px",
+                fontWeight: 800,
+                padding: "1px 5px",
+                borderRadius: "4px",
+                background:
+                  opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
+                    ? "rgba(16, 185, 129, 0.14)"
+                    : "rgba(59, 130, 246, 0.14)",
+                color:
+                  opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
+                    ? "var(--accent-emerald)"
+                    : "#60a5fa",
+                border:
+                  opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
+                    ? "1px solid rgba(16, 185, 129, 0.35)"
+                    : "1px solid rgba(59, 130, 246, 0.35)",
+              }}
+              title={`Radar Lifecycle: ${opp.radar_status || "ACTIVE"}`}
+            >
+              {opp.radar_status_label}
+            </span>
+          )}
           {opp.estimated_win_rate_pct !== undefined && (
             <span
               style={{
@@ -247,7 +275,6 @@ const CandidateCard = memo(function CandidateCard({
               Uncalibrated
             </span>
           )}
-          
         </div>
       </div>
     </div>
