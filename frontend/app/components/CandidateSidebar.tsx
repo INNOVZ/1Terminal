@@ -119,6 +119,8 @@ const CandidateCard = memo(function CandidateCard({
 
   const currentPrice = price !== undefined && !isNaN(price) && price > 0 ? price : Number(opp.current_price || 0);
   const formattedPrice = formatCandidatePrice(currentPrice, opp.tick_size);
+  const entryNum = Number(opp.suggested_entry || opp.pullback_entry || 0);
+  const formattedEntry = entryNum > 0 ? formatCandidatePrice(entryNum, opp.tick_size) : null;
 
   return (
     <div
@@ -289,59 +291,46 @@ const CandidateCard = memo(function CandidateCard({
         )}
       </div>
 
-      {/* Bottom Line: Radar Lifecycle Status (and Gate Drift if any) */}
-      {(opp.radar_status_label || failedGates.length > 0) && (
+      {/* Bottom Line: Status text on left + Entry on right (no badge box) */}
+      {(opp.radar_status_label || formattedEntry) && (
         <div
           style={{
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            marginTop: "8px",
+            marginTop: "7px",
             paddingTop: "6px",
             borderTop: "1px solid rgba(255, 255, 255, 0.06)",
-            gap: "6px",
+            gap: "8px",
+            fontSize: "10.5px",
             fontFamily: "var(--font-mono)",
           }}
         >
-          {opp.radar_status_label && (
-            <span
-              style={{
-                fontSize: "9.5px",
-                fontWeight: 800,
-                padding: "1px 6px",
-                borderRadius: "4px",
-                whiteSpace: "nowrap",
-                background:
-                  opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
-                    ? "rgba(16, 185, 129, 0.14)"
-                    : "rgba(59, 130, 246, 0.14)",
-                color:
-                  opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
-                    ? "var(--accent-emerald)"
+          <span
+            style={{
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+              color:
+                opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
+                  ? "var(--accent-emerald)"
+                  : passCount < totalCount
+                    ? "#f49d0d"
                     : "#60a5fa",
-                border:
-                  opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
-                    ? "1px solid rgba(16, 185, 129, 0.35)"
-                    : "1px solid rgba(59, 130, 246, 0.35)",
-              }}
-              title={`Radar Lifecycle: ${opp.radar_status || "ACTIVE"}`}
-            >
-              {opp.radar_status_label}
-            </span>
-          )}
-          {failedGates.length > 0 && (
+            }}
+          >
+            {opp.radar_status_label || "ACTIVE SETUP"}
+          </span>
+          {formattedEntry && (
             <span
               style={{
-                fontSize: "9.5px",
-                fontWeight: 700,
-                color: "#f49d0d",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
+                color: "var(--text-secondary)",
                 whiteSpace: "nowrap",
               }}
-              title={`Gate Drift: ${failedGates.join(", ")}`}
             >
-              ⚠️ {failedGates.join(", ")}
+              Entry:{" "}
+              <strong style={{ color: "var(--text-primary)" }}>
+                ${formattedEntry}
+              </strong>
             </span>
           )}
         </div>
