@@ -120,73 +120,6 @@ const CandidateCard = memo(function CandidateCard({
   const currentPrice = price !== undefined && !isNaN(price) && price > 0 ? price : Number(opp.current_price || 0);
   const formattedPrice = formatCandidatePrice(currentPrice, opp.tick_size);
 
-  // Real-time entry & lifecycle calculations driven by live WebSocket price
-  const entryNum = Number(opp.suggested_entry || opp.pullback_entry || 0);
-  const formattedEntry = entryNum > 0 ? formatCandidatePrice(entryNum, opp.tick_size) : null;
-  const liveEntryDiffPct =
-    entryNum > 0 && currentPrice > 0
-      ? isShort
-        ? ((entryNum - currentPrice) / entryNum) * 100
-        : ((currentPrice - entryNum) / entryNum) * 100
-      : null;
-
-  const isAtEntryZone = liveEntryDiffPct !== null && Math.abs(liveEntryDiffPct) <= 1.5;
-  const isInActiveTrade = liveEntryDiffPct !== null && liveEntryDiffPct > 1.5;
-
-  const liveStatusBadge = useMemo(() => {
-    const diffTag =
-      liveEntryDiffPct !== null
-        ? `${liveEntryDiffPct >= 0 ? "+" : ""}${liveEntryDiffPct.toFixed(1)}%`
-        : "";
-    if (passCount < totalCount) {
-      return {
-        label: `⚠️ ${passCount}/${totalCount} GATES${diffTag ? ` (${diffTag})` : ""}`,
-        bg: passCount <= 3 ? "rgba(239, 68, 68, 0.14)" : "rgba(244, 157, 13, 0.14)",
-        color: passCount <= 3 ? "var(--accent-crimson)" : "#f49d0d",
-        border: passCount <= 3 ? "1px solid rgba(239, 68, 68, 0.35)" : "1px solid rgba(244, 157, 13, 0.35)",
-      };
-    }
-    if (isAtEntryZone) {
-      return {
-        label: `🟢 AT ENTRY ZONE${diffTag ? ` (${diffTag})` : ""}`,
-        bg: "rgba(16, 185, 129, 0.14)",
-        color: "var(--accent-emerald)",
-        border: "1px solid rgba(16, 185, 129, 0.35)",
-      };
-    }
-    if (isInActiveTrade) {
-      return {
-        label: `🚀 IN TRADE (${diffTag})`,
-        bg: "rgba(16, 185, 129, 0.14)",
-        color: "var(--accent-emerald)",
-        border: "1px solid rgba(16, 185, 129, 0.35)",
-      };
-    }
-    return {
-      label: opp.radar_status === "FRESH_COIL" ? "🆕 FRESH COIL" : `🎯 ACTIVE COIL${diffTag ? ` (${diffTag})` : ""}`,
-      bg: "rgba(59, 130, 246, 0.14)",
-      color: "#60a5fa",
-      border: "1px solid rgba(59, 130, 246, 0.35)",
-    };
-  }, [liveEntryDiffPct, passCount, totalCount, isAtEntryZone, isInActiveTrade, opp.radar_status]);
-
-  const cleanFunding = useMemo(() => {
-    if (opp.funding_rate_bps === undefined || opp.funding_rate_bps === null || opp.funding_rate_bps === "N/A") {
-      return null;
-    }
-    const raw = String(opp.funding_rate_bps).replace(/bps/gi, "").trim();
-    const num = Number(raw);
-    if (!isNaN(num)) {
-      return `${num >= 0 ? "+" : ""}${num.toFixed(1)} bps`;
-    }
-    return `${raw} bps`;
-  }, [opp.funding_rate_bps]);
-
-  const rrDisplay = useMemo(() => {
-    const rr = Number(opp.risk_reward_ratio || 0);
-    return rr > 0 ? `${rr.toFixed(1)}:1` : null;
-  }, [opp.risk_reward_ratio]);
-
   return (
     <div
       onClick={handleClick}
@@ -201,7 +134,7 @@ const CandidateCard = memo(function CandidateCard({
         transition: "all 0.18s ease",
       }}
     >
-      {/* Row 1: Symbol + Direction Badge + Gate Badge + Score */}
+      {/* Header row: Symbol + Direction Badge + Score */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <span style={{ fontWeight: 800, fontSize: "14px", color: "var(--text-primary)" }}>
@@ -242,7 +175,7 @@ const CandidateCard = memo(function CandidateCard({
               }}
               title={`Gate Drift Warning — Failed: ${failedGates.join(", ")}`}
             >
-              ⚠️ {passCount}/{totalCount}
+              ⚠️ {passCount}/{totalCount} GATES
             </span>
           ) : isHighRejection ? (
             <span className="badge-grade-b" style={{ fontSize: "9px", padding: "1px 5px" }}>
@@ -315,18 +248,16 @@ const CandidateCard = memo(function CandidateCard({
         </div>
       </div>
 
-      {/* Row 3: Institutional Derivatives & Risk-Reward Telemetry (single clean line) */}
+      {/* Key Metrics row: 7d OI + Uncalibrated */}
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          marginTop: "7px",
-          fontSize: "10.5px",
+          marginTop: "8px",
+          fontSize: "11px",
           fontFamily: "var(--font-mono)",
           color: "var(--text-secondary)",
-          whiteSpace: "nowrap",
-          gap: "6px",
         }}
       >
         <span>
@@ -340,92 +271,81 @@ const CandidateCard = memo(function CandidateCard({
             {opp.oi_change_7d_pct || "N/A"}
           </strong>
         </span>
-        {cleanFunding && (
-          <span>
-            Fund:{" "}
-            <strong style={{ color: "var(--text-primary)" }}>
-              {cleanFunding}
-            </strong>
-          </span>
-        )}
-        {rrDisplay && (
+        {opp.estimated_win_rate_pct !== undefined && (
           <span
             style={{
               fontSize: "10px",
               fontWeight: 700,
               padding: "1px 5px",
               borderRadius: "4px",
-              background: "rgba(16, 185, 129, 0.10)",
-              color: "var(--accent-emerald)",
-              border: "1px solid rgba(16, 185, 129, 0.25)",
+              background: "rgba(244, 157, 13, 0.12)",
+              color: "#f49d0d",
+              border: "1px solid rgba(244, 157, 13, 0.25)",
             }}
-            title="Verified Risk-to-Reward Ratio to Primary Target"
+            title="Research score has not been calibrated against forward outcomes"
           >
-            R:R {rrDisplay}
+            Uncalibrated
           </span>
         )}
       </div>
 
-      {/* Row 4 (Bottom Line): Real-Time Lifecycle Status & Live Entry Telemetry */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginTop: "8px",
-          paddingTop: "7px",
-          borderTop: "1px solid rgba(255, 255, 255, 0.06)",
-          gap: "6px",
-          fontFamily: "var(--font-mono)",
-        }}
-      >
-        <span
+      {/* Bottom Line: Radar Lifecycle Status (and Gate Drift if any) */}
+      {(opp.radar_status_label || failedGates.length > 0) && (
+        <div
           style={{
-            fontSize: "9.5px",
-            fontWeight: 800,
-            padding: "2px 6px",
-            borderRadius: "4px",
-            whiteSpace: "nowrap",
-            background: liveStatusBadge.bg,
-            color: liveStatusBadge.color,
-            border: liveStatusBadge.border,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginTop: "8px",
+            paddingTop: "6px",
+            borderTop: "1px solid rgba(255, 255, 255, 0.06)",
+            gap: "6px",
+            fontFamily: "var(--font-mono)",
           }}
-          title={
-            failedGates.length > 0
-              ? `Gate Drift Warning — Failed: ${failedGates.join(", ")}`
-              : `Live Radar Lifecycle Status`
-          }
         >
-          {liveStatusBadge.label}
-        </span>
-
-        {failedGates.length > 0 ? (
-          <span
-            style={{
-              fontSize: "9.5px",
-              fontWeight: 700,
-              color: "#f49d0d",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-            title={`Failed Gate(s): ${failedGates.join(", ")}`}
-          >
-            Failed: {failedGates.join(", ")}
-          </span>
-        ) : formattedEntry ? (
-          <span
-            style={{
-              fontSize: "10px",
-              color: "var(--text-muted)",
-              whiteSpace: "nowrap",
-            }}
-            title="Optimal Limit Retest / Entry Level"
-          >
-            Entry <strong style={{ color: "var(--text-primary)" }}>${formattedEntry}</strong>
-          </span>
-        ) : null}
-      </div>
+          {opp.radar_status_label && (
+            <span
+              style={{
+                fontSize: "9.5px",
+                fontWeight: 800,
+                padding: "1px 6px",
+                borderRadius: "4px",
+                whiteSpace: "nowrap",
+                background:
+                  opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
+                    ? "rgba(16, 185, 129, 0.14)"
+                    : "rgba(59, 130, 246, 0.14)",
+                color:
+                  opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
+                    ? "var(--accent-emerald)"
+                    : "#60a5fa",
+                border:
+                  opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
+                    ? "1px solid rgba(16, 185, 129, 0.35)"
+                    : "1px solid rgba(59, 130, 246, 0.35)",
+              }}
+              title={`Radar Lifecycle: ${opp.radar_status || "ACTIVE"}`}
+            >
+              {opp.radar_status_label}
+            </span>
+          )}
+          {failedGates.length > 0 && (
+            <span
+              style={{
+                fontSize: "9.5px",
+                fontWeight: 700,
+                color: "#f49d0d",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={`Gate Drift: ${failedGates.join(", ")}`}
+            >
+              ⚠️ {failedGates.join(", ")}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 });
