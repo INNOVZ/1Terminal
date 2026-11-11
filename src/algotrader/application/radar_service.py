@@ -51,7 +51,7 @@ async def reconcile_radar_cohort(
             failed_gates=[],
         )
         updated["radar_origin"] = "retained"
-        updated["radar_status_label"] = "⚠️ DATA UNAVAILABLE"
+        updated["radar_status_label"] = "DATA UNAVAILABLE"
         updated["checklist"] = [
             {
                 "title": title,

@@ -161,7 +161,7 @@ const CandidateCard = memo(function CandidateCard({
           </span>
           {dataUnavailable ? (
             <span title="Some lifecycle checks lack fresh market data" style={{ fontSize: "9px", color: "#f49d0d" }}>
-              ⚠️ DATA INCOMPLETE
+              DATA INCOMPLETE
             </span>
           ) : isGradeAPlus ? (
             <span
@@ -184,7 +184,7 @@ const CandidateCard = memo(function CandidateCard({
               }}
               title={`Gate Drift Warning — Failed: ${failedGates.join(", ")}`}
             >
-              ⚠️ {passCount}/{totalCount} GATES
+              {passCount}/{totalCount} GATES
             </span>
           ) : isHighRejection ? (
             <span className="badge-grade-b" style={{ fontSize: "9px", padding: "1px 5px" }}>
@@ -325,7 +325,7 @@ const CandidateCard = memo(function CandidateCard({
                     : "#60a5fa",
             }}
           >
-            {opp.radar_status_label || "ACTIVE SETUP"}
+            {(opp.radar_status_label || "ACTIVE SETUP").replace(/^[^\w\s]+\s*/, "")}
           </span>
           {formattedEntry && (
             <span

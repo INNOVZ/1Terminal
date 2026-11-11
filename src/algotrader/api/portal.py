@@ -239,7 +239,7 @@ async def _do_crypto_screen(
                 seen_bases.add(base)
                 o["radar_origin"] = "fresh"
                 o.setdefault("radar_status", RadarLifecycleState.FRESH_COIL.value)
-                o.setdefault("radar_status_label", "🆕 FRESH COIL")
+                o.setdefault("radar_status_label", "FRESH COIL")
                 raw_cl = o.get("checklist") or []
                 if isinstance(raw_cl, list) and raw_cl:
                     passed_cnt = sum(1 for c in raw_cl if isinstance(c, dict) and c.get("passed"))

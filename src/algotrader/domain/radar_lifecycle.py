@@ -337,7 +337,7 @@ def evaluate_radar_candidate_lifecycle(
         return RadarLifecycleDecision(
             retained=False,
             state=RadarLifecycleState.INVALIDATED,
-            label="❌ INVALIDATED",
+            label="INVALIDATED",
             reason="missing_price_or_stop",
             current_price=current_price,
         )
@@ -366,7 +366,7 @@ def evaluate_radar_candidate_lifecycle(
             return RadarLifecycleDecision(
                 retained=False,
                 state=RadarLifecycleState.INVALIDATED,
-                label="❌ STOP HIT",
+                label="STOP HIT",
                 reason="long_stop_loss_breached",
                 current_price=current_price,
             )
@@ -380,7 +380,7 @@ def evaluate_radar_candidate_lifecycle(
             return RadarLifecycleDecision(
                 retained=False,
                 state=RadarLifecycleState.INVALIDATED,
-                label="❌ VALUE AREA LOST",
+                label="VALUE AREA LOST",
                 reason="long_value_area_breakdown",
                 current_price=current_price,
             )
@@ -393,7 +393,7 @@ def evaluate_radar_candidate_lifecycle(
             return RadarLifecycleDecision(
                 retained=False,
                 state=RadarLifecycleState.INVALIDATED,
-                label="❌ SHORT SQUEEZED",
+                label="SHORT SQUEEZED",
                 reason="short_stop_loss_breached",
                 current_price=current_price,
             )
@@ -406,7 +406,7 @@ def evaluate_radar_candidate_lifecycle(
             return RadarLifecycleDecision(
                 retained=False,
                 state=RadarLifecycleState.INVALIDATED,
-                label="❌ SHORT INVALIDATED",
+                label="SHORT INVALIDATED",
                 reason="short_reclaimed_above_value",
                 current_price=current_price,
             )
@@ -415,7 +415,7 @@ def evaluate_radar_candidate_lifecycle(
         return RadarLifecycleDecision(
             retained=True,
             state=RadarLifecycleState.ACTIVE_COIL,
-            label="⚠️ DATA UNAVAILABLE",
+            label="DATA UNAVAILABLE",
             reason="invalid_discovery_timestamp",
             current_price=current_price,
             gates_passed=0,
@@ -486,7 +486,7 @@ def evaluate_radar_candidate_lifecycle(
                 return RadarLifecycleDecision(
                     retained=False,
                     state=RadarLifecycleState.COMPLETED_TARGET,
-                    label="🎯 TARGET HIT",
+                    label="TARGET HIT",
                     reason="long_final_target_reached",
                     current_price=current_price,
                 )
@@ -498,7 +498,7 @@ def evaluate_radar_candidate_lifecycle(
                 return RadarLifecycleDecision(
                     retained=False,
                     state=RadarLifecycleState.COMPLETED_TARGET,
-                    label="🎯 TARGET HIT",
+                    label="TARGET HIT",
                     reason="short_final_target_reached",
                     current_price=current_price,
                 )
@@ -507,7 +507,7 @@ def evaluate_radar_candidate_lifecycle(
         return RadarLifecycleDecision(
             retained=True,
             state=RadarLifecycleState.IN_ACTIVE_TRADE,
-            label="🚀 TRIGGER OBSERVED",
+            label="TRIGGER OBSERVED",
             reason="setup_trigger_observed",
             current_price=current_price,
             pnl_from_entry_pct=pnl_pct,
@@ -528,7 +528,7 @@ def evaluate_radar_candidate_lifecycle(
             return RadarLifecycleDecision(
                 retained=False,
                 state=RadarLifecycleState.EXPIRED,
-                label="⌛ EXPIRED",
+                label="EXPIRED",
                 reason="max_retention_age_exceeded",
                 current_price=current_price,
                 gates_passed=gates_passed,
@@ -541,7 +541,7 @@ def evaluate_radar_candidate_lifecycle(
         return RadarLifecycleDecision(
             retained=True,
             state=RadarLifecycleState.AT_ENTRY_ZONE,
-            label="🟢 AT ENTRY ZONE",
+            label="AT ENTRY ZONE",
             reason="testing_limit_entry_shelf",
             current_price=current_price,
             pnl_from_entry_pct=pnl_pct,
@@ -552,9 +552,9 @@ def evaluate_radar_candidate_lifecycle(
         )
 
     coil_label = (
-        "⏳ ACTIVE COIL"
+        "ACTIVE COIL"
         if gates_passed == gates_total
-        else f"⚠️ COIL ({gates_passed}/{gates_total} GATES)"
+        else f"COIL ({gates_passed}/{gates_total} GATES)"
     )
     return RadarLifecycleDecision(
         retained=True,
