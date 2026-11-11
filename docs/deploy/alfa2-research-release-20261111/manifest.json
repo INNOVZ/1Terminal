@@ -1,0 +1,32 @@
+{
+  "image_tag": "atlas-research-paired:2026-11-11",
+  "image_id": "sha256:ee2f472116ef2417b30652f62f83215c99bc247278d50ac4f33bc42c977e7bc9",
+  "git_commit": "4e3bc24a65c59b914cb71d0ea05f1bcf3c43ca9d",
+  "scope": "research-only; alfa2 VM only; disabled by default",
+  "files": {
+    "DEPLOYMENT.md": {
+      "bytes": 5517,
+      "sha256": "6026528dfca52ded8c405a8dc682b49f8e53da81d91e0df9dce078051d28c7ec"
+    },
+    "compose.research-study.yaml": {
+      "bytes": 1817,
+      "sha256": "d148317598e238f6e5b9243c6ac47a37901664cd54962c183ec91b3bb63bcd57"
+    },
+    "discovery-policy.json": {
+      "bytes": 757,
+      "sha256": "cde600dbbb29e130fe0aec29c0fd66c8ccb6c605301daf708ab5824a1b834819"
+    },
+    "image.tar": {
+      "bytes": 171097600,
+      "sha256": "f83026654aac84f1bb71372a1f4d5674a9eb9a1930e55e8679fb9738b71aed76"
+    },
+    "preregistered-policy.json": {
+      "bytes": 1130,
+      "sha256": "96d76812169c0a70d7f9938753b6c5b650ce98999a012f98a8b1a353c54fef5d"
+    }
+  },
+  "deployed": true,
+  "enrolled": false,
+  "collection_enabled": false,
+  "oci_manifest_digest": "sha256:5086ea72e2c7ebe77c0b016e1c814281d4426d1a3210912d51ef902b3d37aa7e"
+}

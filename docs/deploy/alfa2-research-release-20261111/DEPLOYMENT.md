@@ -29,7 +29,7 @@ docker run --rm --platform linux/amd64 --read-only --cap-drop ALL \
   --mount type=bind,src=/absolute/new-evidence,dst=/evidence \
   "$ATLAS_PAIRED_IMAGE" python -m scripts.research_capture_evidence \
   --execute-public-capture --discovery-v2 --max-symbols 320 \
-  --max-supplemental 60 --max-attempts 3000 --deadline-seconds 600 \
+  --max-supplemental 90 --max-attempts 3000 --deadline-seconds 600 \
   --output /evidence/capture.jsonl
 
 docker run --rm --platform linux/amd64 --network none --read-only \
