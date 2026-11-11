@@ -204,11 +204,9 @@ class CryptoOpportunityScreener:
         instruments = await market.instruments()
         benchmark_exclusions = {"BTC", "ETH"} if len(instruments) > 5 else set()
         toxic_symbols = {
-            "PAXG", "XAU", "XAG", "COPPER", "SPY", "QQQ", "WLFI", "USDT", "USDC", "FDUSD", "TUSD", "USDP", "DAI", "EUR",
+            "PAXG", "XAU", "XAG", "XAUT", "XAUTUSDT", "COPPER", "SPY", "QQQ", "WLFI", "USDT", "USDC", "FDUSD", "TUSD", "USDP", "DAI", "EUR",
             "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "DAIUSDT",
         }
-        if self._feature_contract == "discovery_v2":
-            toxic_symbols = toxic_symbols | {"XAUT", "XAUTUSDT"}
         excluded = set(self._settings.excluded_base_assets) | benchmark_exclusions | toxic_symbols
         eligible_instruments = [
             inst
