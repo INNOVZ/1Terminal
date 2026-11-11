@@ -1,0 +1,12 @@
+2026-11-11 09:20:34 [info     ] screener_macro_loaded          narrative='F&G: 50/100 (Neutral) | Stablecoins 7d: +0.00% (Outflow) | BTC.D: 60.0%'
+2026-11-11 09:20:34 [info     ] universe_liquidity_filtered    core_selected=259 discovery_selected=11 eligible=320 liquid=320 mode=all total=321 total_selected=270
+2026-11-11 09:20:55 [info     ] binance_scan_weight_budget     rate_limit_ceiling=2400 stage0_weight=56 stage1_symbols=270 stage1_weight=1352 stage2_candidates=60 stage2_probes=15 stage2_weight=240 target_budget=1300 total_estimated_weight=1648
+2026-11-11 09:20:56 [info     ] screener_macro_loaded          narrative='F&G: 50/100 (Neutral) | Stablecoins 7d: +0.00% (Outflow) | BTC.D: 60.0%'
+2026-11-11 09:20:56 [info     ] universe_liquidity_filtered    core_selected=259 discovery_selected=11 eligible=320 liquid=320 mode=all total=321 total_selected=270
+2026-11-11 09:21:17 [info     ] binance_scan_weight_budget     rate_limit_ceiling=2400 stage0_weight=56 stage1_symbols=270 stage1_weight=1352 stage2_candidates=60 stage2_probes=15 stage2_weight=240 target_budget=1300 total_estimated_weight=1648
+2026-11-11 09:21:17 [info     ] screener_macro_loaded          narrative='F&G: 50/100 (Neutral) | Stablecoins 7d: +0.00% (Outflow) | BTC.D: 60.0%'
+2026-11-11 09:21:17 [info     ] universe_liquidity_filtered    core_selected=259 discovery_selected=11 eligible=320 liquid=320 mode=all total=321 total_selected=270
+2026-11-11 09:21:38 [info     ] binance_scan_weight_budget     rate_limit_ceiling=2400 stage0_weight=56 stage1_symbols=270 stage1_weight=1352 stage2_candidates=60 stage2_probes=15 stage2_weight=240 target_budget=1300 total_estimated_weight=1648
+2026-11-11 09:21:38 [info     ] screener_macro_loaded          narrative='F&G: 50/100 (Neutral) | Stablecoins 7d: +0.00% (Outflow) | BTC.D: 60.0%'
+2026-11-11 09:21:38 [info     ] universe_liquidity_filtered    core_selected=259 discovery_selected=11 eligible=320 liquid=320 mode=all total=321 total_selected=290
+2026-11-11 09:22:05 [info     ] binance_scan_weight_budget     rate_limit_ceiling=2400 stage0_weight=56 stage1_symbols=290 stage1_weight=1452 stage2_candidates=60 stage2_probes=15 stage2_weight=240 target_budget=1300 total_estimated_weight=1748

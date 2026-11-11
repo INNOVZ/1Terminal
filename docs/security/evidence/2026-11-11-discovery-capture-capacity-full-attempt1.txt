@@ -1,0 +1,48 @@
+2026-11-11 09:09:27 [info     ] screener_macro_loaded          narrative='F&G: 50/100 (Neutral) | Stablecoins 7d: +0.00% (Outflow) | BTC.D: 60.0%'
+2026-11-11 09:09:27 [info     ] universe_liquidity_filtered    core_selected=259 discovery_selected=61 eligible=320 liquid=320 mode=all total=321 total_selected=320
+2026-11-11 09:10:04 [info     ] binance_scan_weight_budget     rate_limit_ceiling=2400 stage0_weight=56 stage1_symbols=320 stage1_weight=1602 stage2_candidates=60 stage2_probes=15 stage2_weight=240 target_budget=1300 total_estimated_weight=1898
+2026-11-11 09:10:04 [info     ] screener_macro_loaded          narrative='F&G: 50/100 (Neutral) | Stablecoins 7d: +0.00% (Outflow) | BTC.D: 60.0%'
+2026-11-11 09:10:04 [info     ] universe_liquidity_filtered    core_selected=259 discovery_selected=61 eligible=320 liquid=320 mode=all total=321 total_selected=320
+2026-11-11 09:10:26 [info     ] binance_scan_weight_budget     rate_limit_ceiling=2400 stage0_weight=56 stage1_symbols=320 stage1_weight=1602 stage2_candidates=60 stage2_probes=15 stage2_weight=240 target_budget=1300 total_estimated_weight=1898
+2026-11-11 09:10:26 [info     ] screener_macro_loaded          narrative='F&G: 50/100 (Neutral) | Stablecoins 7d: +0.00% (Outflow) | BTC.D: 60.0%'
+2026-11-11 09:10:26 [info     ] universe_liquidity_filtered    core_selected=259 discovery_selected=61 eligible=320 liquid=320 mode=all total=321 total_selected=320
+2026-11-11 09:10:50 [info     ] binance_scan_weight_budget     rate_limit_ceiling=2400 stage0_weight=56 stage1_symbols=320 stage1_weight=1602 stage2_candidates=15 stage2_probes=15 stage2_weight=60 target_budget=1300 total_estimated_weight=1718
+2026-11-11 09:10:56 [info     ] screener_macro_loaded          narrative='F&G: 50/100 (Neutral) | Stablecoins 7d: +0.00% (Outflow) | BTC.D: 60.0%'
+2026-11-11 09:10:56 [info     ] universe_liquidity_filtered    core_selected=259 discovery_selected=61 eligible=320 liquid=320 mode=all total=321 total_selected=320
+2026-11-11 09:11:20 [info     ] binance_scan_weight_budget     rate_limit_ceiling=2400 stage0_weight=56 stage1_symbols=320 stage1_weight=1602 stage2_candidates=60 stage2_probes=15 stage2_weight=240 target_budget=1300 total_estimated_weight=1898
+{"phase": "captured", "variant": "full", "control_counts": {"eligible": 320, "liquid": 320, "selected": 320, "evaluated": 320, "failed": 0, "stage1_survivors": 320, "stage2_shortlist": 45, "stage2_probes": 15, "returned": 12}, "seconds": 112.8353184669977, "bytes": 225731367}
+Traceback (most recent call last):
+  File "/app/scripts/research_evidence_contract.py", line 332, in verify_bundle
+    await verify_call(
+    ...<5 lines>...
+    )
+  File "/app/scripts/research_evidence_contract.py", line 104, in verify_call
+    raise ReplayUnavailable("value_arrival_outside_call")
+scripts.replay_contract.ReplayUnavailable: value_arrival_outside_call
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/app/capacity_fixture.py", line 132, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File "/usr/local/lib/python3.13/asyncio/runners.py", line 196, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.13/asyncio/runners.py", line 119, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.13/asyncio/base_events.py", line 726, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/app/capacity_fixture.py", line 115, in main
+    comparison = await compare_bundle(restored)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/scripts/research_pipeline_comparison.py", line 186, in compare_bundle
+    record = await verify_bundle(bundle)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/scripts/research_evidence_contract.py", line 340, in verify_bundle
+    raise ReplayUnavailable(f"{call.method}:{exc}") from exc
+scripts.replay_contract.ReplayUnavailable: quotes:value_arrival_outside_call

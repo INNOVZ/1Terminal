@@ -1,0 +1,1 @@
+{'@': 'mapping', 'items': {'status': 'disabled', 'http_attempts': 0}}

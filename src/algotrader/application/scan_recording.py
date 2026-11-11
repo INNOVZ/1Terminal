@@ -126,6 +126,7 @@ class CapturedScan:
 async def capture_scan(
     market: MarketDataPort, derivatives: DerivativesDataPort | None,
     macro: MacroContextSource, settings: Settings, arguments: dict[str, Any],
+    *, feature_contract: str = "legacy",
 ) -> CapturedScan:
     from algotrader.application.crypto_screener import CryptoOpportunityScreener
 
@@ -140,7 +141,8 @@ async def capture_scan(
     tape = CallTape()
     recorded_market = RecordingMarketData(market, derivatives, tape)
     journal = ScanDecisionJournal()
-    screener = CryptoOpportunityScreener(settings, RecordingMacroProvider(macro, tape), evaluated_at=started, journal=journal)
+    screener = CryptoOpportunityScreener(settings, RecordingMacroProvider(macro, tape), evaluated_at=started, journal=journal,
+                                        feature_contract=feature_contract)
     result: list[CryptoOpportunity] = []
     failure: BaseException | None = None
     try:
@@ -149,8 +151,11 @@ async def capture_scan(
         failure = exc
     recording_error = metadata_error or tape.recording_error
     status = "failed" if failure else "incomplete" if recording_error else "complete"
+    request = {**arguments, "derivatives_enabled": derivatives is not None}
+    if feature_contract != "legacy":
+        request["feature_contract"] = feature_contract
     record = ScanRecord(scan_id, started, datetime.now(UTC), status,
-        identity, {**arguments, "derivatives_enabled": derivatives is not None}, tuple(tape.calls), journal.snapshot(),
+        identity, request, tuple(tape.calls), journal.snapshot(),
         tuple(opp.as_dict() for opp in result), dict(screener.scan_counts), journal.cohort,
         error=type(failure).__name__ if failure else recording_error)
     return CapturedScan(record, result, failure, recording_error)

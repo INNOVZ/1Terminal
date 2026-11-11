@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from algotrader.application.macro_service import MacroIntelligenceService
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from algotrader.application.radar_service import reconcile_radar_cohort
 from algotrader.application.watchlist_service import WatchlistService
 from algotrader.config import Settings, load_settings
 from algotrader.domain.crypto_screener_models import (
@@ -23,7 +25,7 @@ from algotrader.domain.crypto_screener_models import (
 )
 from algotrader.domain.radar_lifecycle import (
     RadarLifecycleState,
-    evaluate_radar_candidate_lifecycle,
+    same_radar_episode,
 )
 from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
 from algotrader.domain.watchlist_models import WatchlistItem, WatchlistPriority, WyckoffStage
@@ -84,7 +86,9 @@ def _enrich_opp_with_win_rate(opp: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             score_val = Decimal("65.0")
         checklist = opp.get("checklist", [])
-        checklist_passed = sum(1 for c in checklist if isinstance(c, dict) and c.get("passed")) if checklist else 4
+        checklist_passed = (
+            sum(1 for c in checklist if isinstance(c, dict) and c.get("passed")) if checklist else 4
+        )
         checklist_total = len(checklist) if checklist else 5
         rr_raw = opp.get("risk_reward_ratio", 3.0)
         try:
@@ -146,106 +150,6 @@ _screener_task: asyncio.Task[dict[str, Any]] | None = None
 _screener_task_lock = asyncio.Lock()
 
 
-async def reconcile_radar_cohort(
-    prior_opportunities: list[dict[str, Any]],
-    seen_bases: set[str],
-    futures: Any,
-    now: datetime | None = None,
-) -> list[dict[str, Any]]:
-    """Re-audits prior radar setups against live 1H candles and retains active trades until stop or target."""
-    if not prior_opportunities or futures is None or not hasattr(futures, "instruments") or not hasattr(futures, "candles"):
-        return []
-    try:
-        all_insts = await asyncio.wait_for(futures.instruments(), timeout=6.0)
-        if not isinstance(all_insts, (list, tuple)):
-            return []
-        inst_by_symbol = {inst.id.symbol: inst for inst in all_insts if hasattr(inst, "id")}
-    except Exception:
-        return []
-
-    ref_now = now or datetime.now(UTC)
-    sem = asyncio.Semaphore(8)
-    retained: list[dict[str, Any]] = []
-
-    async def _check_single(prev: dict[str, Any]) -> dict[str, Any] | None:
-        sym = str(prev.get("symbol", ""))
-        base = prev.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
-        if not sym or not base or base in seen_bases:
-            return None
-        inst = inst_by_symbol.get(sym)
-        if inst is None:
-            return None
-        try:
-            async with sem:
-                raw_1h = await asyncio.wait_for(futures.candles(inst, "1h", 250), timeout=4.0)
-                deriv_snap = None
-                if hasattr(futures, "derivatives_snapshot"):
-                    with contextlib.suppress(Exception):
-                        deriv_snap = await asyncio.wait_for(futures.derivatives_snapshot(inst), timeout=6.0)
-            closed_1h = [c for c in raw_1h if getattr(c, "closed", True)]
-            if not closed_1h:
-                return None
-            live_price = Decimal(str(closed_1h[-1].close))
-            candles_payload = [
-                {
-                    "time": int(c.closed_at.timestamp()),
-                    "open": float(c.open),
-                    "high": float(c.high),
-                    "low": float(c.low),
-                    "close": float(c.close),
-                    "volume": float(c.volume),
-                }
-                for c in closed_1h[-200:]
-            ]
-            updated = dict(prev)
-            if deriv_snap is not None:
-                if getattr(deriv_snap, "open_interest_change_7d", None) is not None:
-                    updated["oi_change_7d_pct"] = f"{float(deriv_snap.open_interest_change_7d * Decimal('100')):+.2f}%"
-                if getattr(deriv_snap, "open_interest_change_1h", None) is not None:
-                    updated["oi_change_1h_pct"] = f"{float(deriv_snap.open_interest_change_1h * Decimal('100')):+.2f}%"
-                if getattr(deriv_snap, "funding_rate", None) is not None:
-                    updated["funding_rate_bps"] = f"{float(deriv_snap.funding_rate * Decimal('10000')):+.2f} bps"
-                if getattr(deriv_snap, "taker_buy_sell_ratio", None) is not None:
-                    updated["taker_buy_sell_ratio"] = f"{float(deriv_snap.taker_buy_sell_ratio):.4f}"
-            decision = evaluate_radar_candidate_lifecycle(
-                updated,
-                current_price=live_price,
-                recent_candles_1h=candles_payload,
-                now=ref_now,
-            )
-            if not decision.retained:
-                return None
-            updated["current_price"] = str(live_price)
-            updated["candles"] = candles_payload
-            updated["radar_status"] = decision.state.value
-            updated["radar_status_label"] = decision.label
-            updated["gates_passed"] = decision.gates_passed
-            updated["gates_total"] = decision.gates_total
-            updated["failed_gates"] = list(decision.failed_gates)
-            if decision.updated_checklist:
-                updated["checklist"] = [dict(item) for item in decision.updated_checklist]
-            if isinstance(updated.get("checklist_verification"), dict):
-                cv = dict(updated["checklist_verification"])
-                cv["passed_count"] = decision.gates_passed
-                updated["checklist_verification"] = cv
-            if decision.pnl_from_entry_pct is not None:
-                updated["trade_pnl_pct"] = str(decision.pnl_from_entry_pct)
-            return updated
-        except Exception:
-            return None
-
-    checked = await asyncio.gather(*(_check_single(p) for p in prior_opportunities))
-    for item in checked:
-        if item is not None:
-            sym = str(item.get("symbol", ""))
-            base = item.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
-            if base and base not in seen_bases:
-                seen_bases.add(base)
-                retained.append(item)
-    return retained
-
-
-
 async def _do_crypto_screen(
     mode: str = "all",
     min_score: float = 50.0,
@@ -265,6 +169,7 @@ async def _do_crypto_screen(
             max_symbols=max_symbols,
             mode=screener_mode,
             top_n=None,
+            feature_contract="discovery_v2",
         )
         opportunities = run.opportunities
 
@@ -273,7 +178,11 @@ async def _do_crypto_screen(
 
         if opportunities:
             # Runtime applies the shared publication policy and desk ranking.
-            top_picks = opportunities[:16]
+            top_picks = [
+                opp
+                for opp in opportunities
+                if len(opp.checklist) == 5 and all(item[1] is True for item in opp.checklist)
+            ][:16]
 
             # Pre-fetch 1H candles for top opportunities concurrently (paced with semaphore)
             candle_sem = asyncio.Semaphore(10)
@@ -288,7 +197,9 @@ async def _do_crypto_screen(
                 if inst:
                     try:
                         async with candle_sem:
-                            raw_candles = await asyncio.wait_for(futures.candles(inst, "1h", 250), timeout=3.0)
+                            raw_candles = await asyncio.wait_for(
+                                futures.candles(inst, "1h", 250), timeout=3.0
+                            )
                             candles_payload = [
                                 {
                                     "time": int(c.closed_at.timestamp()),
@@ -315,26 +226,57 @@ async def _do_crypto_screen(
         seen_bases: set[str] = set()
         deduped_opps: list[dict[str, Any]] = []
         for o in opps_list:
+            checklist = o.get("checklist")
+            if not (
+                isinstance(checklist, list)
+                and len(checklist) == 5
+                and all(isinstance(item, dict) and item.get("passed") is True for item in checklist)
+            ):
+                continue
             sym = str(o.get("symbol", ""))
             base = o.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
             if base and base not in seen_bases:
                 seen_bases.add(base)
+                o["radar_origin"] = "fresh"
                 o.setdefault("radar_status", RadarLifecycleState.FRESH_COIL.value)
                 o.setdefault("radar_status_label", "🆕 FRESH COIL")
                 raw_cl = o.get("checklist") or []
                 if isinstance(raw_cl, list) and raw_cl:
                     passed_cnt = sum(1 for c in raw_cl if isinstance(c, dict) and c.get("passed"))
-                    failed_list = [str(c.get("title", "")) for c in raw_cl if isinstance(c, dict) and not c.get("passed")]
+                    failed_list = [
+                        str(c.get("title", ""))
+                        for c in raw_cl
+                        if isinstance(c, dict) and not c.get("passed")
+                    ]
                     o.setdefault("gates_passed", passed_cnt)
                     o.setdefault("gates_total", len(raw_cl))
                     o.setdefault("failed_gates", failed_list)
                 else:
-                    o.setdefault("gates_passed", 5)
+                    o.setdefault("gates_passed", 0)
                     o.setdefault("gates_total", 5)
                     o.setdefault("failed_gates", [])
                 deduped_opps.append(o)
 
+        prior_by_base = {
+            str(
+                p.get("base_asset")
+                or str(p.get("symbol", "")).removesuffix("USDT").removesuffix("USDC")
+            ): p
+            for p in _screener_cache.get("opportunities", [])
+        }
+        for fresh in deduped_opps:
+            base = str(
+                fresh.get("base_asset")
+                or str(fresh.get("symbol", "")).removesuffix("USDT").removesuffix("USDC")
+            )
+            prev = prior_by_base.get(base)
+            fresh["first_seen_at"] = fresh.get("evaluated_at")
+            if prev and same_radar_episode(prev, fresh):
+                fresh["first_seen_at"] = prev.get("first_seen_at") or prev.get("evaluated_at")
+                if prev.get("radar_triggered_at"):
+                    fresh["radar_triggered_at"] = prev["radar_triggered_at"]
         now = datetime.now(UTC)
+        radar_events: list[dict[str, Any]] = []
 
         # Reconcile previously discovered radar candidates so active trades (AT_ENTRY_ZONE,
         # IN_ACTIVE_TRADE, ACTIVE_COIL) are retained until they hit stop loss or final target.
@@ -345,9 +287,9 @@ async def _do_crypto_screen(
         )
         retained_prior = await reconcile_radar_cohort(
             prior_opportunities=prior_opps,
-            seen_bases=seen_bases,
+            seen_bases=set(),
             futures=futures,
-            now=now,
+            events=radar_events,
         )
 
         macro_narrative = (
@@ -355,12 +297,59 @@ async def _do_crypto_screen(
             if opportunities
             else (
                 str(_screener_cache.get("macro_narrative"))
-                if retained_prior and isinstance(_screener_cache, dict) and _screener_cache.get("macro_narrative")
+                if retained_prior
+                and isinstance(_screener_cache, dict)
+                and _screener_cache.get("macro_narrative")
                 else "No qualifying candidates; macro context unavailable in this result."
             )
         )
         # Freshly screened setups lead first, followed by active retained setups
-        final_opps = deduped_opps + retained_prior
+        retained_by_base = {
+            str(
+                p.get("base_asset")
+                or str(p.get("symbol", "")).removesuffix("USDT").removesuffix("USDC")
+            ): p
+            for p in retained_prior
+        }
+        final_opps = []
+        for fresh in deduped_opps:
+            base = str(
+                fresh.get("base_asset")
+                or str(fresh.get("symbol", "")).removesuffix("USDT").removesuffix("USDC")
+            )
+            prev = prior_by_base.get(base)
+            same_episode = prev is not None and fresh.get("first_seen_at") == (
+                prev.get("first_seen_at") or prev.get("evaluated_at")
+            )
+            if same_episode:
+                if base in retained_by_base:
+                    final_opps.append(retained_by_base.pop(base))
+            else:
+                final_opps.append(fresh)
+                superseded = retained_by_base.pop(base, None)
+                if superseded is not None:
+                    radar_events.append(
+                        {
+                            "symbol": superseded.get("symbol"),
+                            "at": now.isoformat(),
+                            "state": "SUPERSEDED",
+                            "retained": False,
+                            "reason": "replaced_by_new_thesis",
+                            "candidate": {k: v for k, v in superseded.items() if k != "candles"},
+                        }
+                    )
+                radar_events.append(
+                    {
+                        "symbol": fresh.get("symbol"),
+                        "at": now.isoformat(),
+                        "state": "FRESH_COIL",
+                        "retained": True,
+                        "reason": "new_setup" if prev is None else "replaced_by_new_setup",
+                        "first_seen_at": fresh.get("first_seen_at"),
+                        "candidate": {k: v for k, v in fresh.items() if k != "candles"},
+                    }
+                )
+        final_opps.extend(retained_by_base.values())
 
         result = {
             "timestamp": now.isoformat(),
@@ -372,10 +361,33 @@ async def _do_crypto_screen(
             "order_execution_enabled": False,
             "validation_status": "uncalibrated_research",
             "screening_policy_version": SCREENING_POLICY_VERSION,
+            "screening_feature_contract": "discovery_v2",
             "qualifying_count": len(final_opps),
+            "fresh_count": sum(p.get("radar_origin") == "fresh" for p in final_opps),
+            "retained_count": sum(p.get("radar_origin") == "retained" for p in final_opps),
+            "data_unavailable_count": sum(
+                p.get("radar_data_status") == "unavailable" for p in final_opps
+            ),
             "macro_narrative": macro_narrative,
             "opportunities": final_opps,
+            "radar_events": radar_events,
+            "radar_lifecycle_version": "radar-v2",
         }
+        # Persist every reconciliation, including removals, independently of the sidebar.
+        # This is an operational audit trail, not prospective study enrollment.
+        try:
+            atomic_write_json(
+                Path("data/radar_events") / f"{uuid4()}.json",
+                {
+                    "schema": "atlas-radar-events-v2",
+                    "scan_id": run.receipt.scan_id,
+                    "at": now.isoformat(),
+                    "events": radar_events,
+                },
+            )
+            result["radar_audit_status"] = "persisted"
+        except Exception:
+            result["radar_audit_status"] = "unavailable"
         _screener_cache = result
         _cache_timestamp = now
 
@@ -403,14 +415,14 @@ async def _do_crypto_screen(
 async def get_live_screener(
     mode: str = "all",
     min_score: float = 50.0,
-    max_symbols: int = 250,
+    max_symbols: int = 320,
     scope: str = "core",
     refresh: bool = False,
     wait: bool = False,
     response: Response = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Runs or retrieves verified live pre-breakout institutional screener results with candles.
-    
+
     Two-Speed Screening Model:
     - `scope="core"` (default): Fast on-demand scan of top 250 liquid contracts (~15s).
     - `scope="full"`: Comprehensive background sweep across all 484+ liquid contracts (including low-caps).
@@ -427,7 +439,9 @@ async def get_live_screener(
         # Launch non-blocking background scan so HTTP request never times out
         async with _screener_task_lock:
             if _screener_task is None or _screener_task.done():
-                _screener_task = asyncio.create_task(_do_crypto_screen(mode, min_score, effective_max))
+                _screener_task = asyncio.create_task(
+                    _do_crypto_screen(mode, min_score, effective_max)
+                )
         if wait and _screener_task:
             await _screener_task
 
@@ -452,7 +466,9 @@ async def get_live_screener(
     if not _screener_cache:
         async with _screener_task_lock:
             if _screener_task is None or _screener_task.done():
-                _screener_task = asyncio.create_task(_do_crypto_screen(mode, min_score, effective_max))
+                _screener_task = asyncio.create_task(
+                    _do_crypto_screen(mode, min_score, effective_max)
+                )
         return {
             "timestamp": datetime.now(UTC).isoformat(),
             "total_scanned": 0,
@@ -475,7 +491,14 @@ async def trigger_screener_rescan(
     scope: str = "core",
 ) -> dict[str, Any]:
     """Explicitly triggers a synchronous deep rescan and returns newly qualified candidates."""
-    return await get_live_screener(mode=mode, min_score=min_score, max_symbols=max_symbols, scope=scope, refresh=True, wait=True)
+    return await get_live_screener(
+        mode=mode,
+        min_score=min_score,
+        max_symbols=max_symbols,
+        scope=scope,
+        refresh=True,
+        wait=True,
+    )
 
 
 # --- Automated 4-Hour Screener Cron Service ---
@@ -484,7 +507,9 @@ _last_cron_run: datetime | None = None
 _next_cron_run: datetime | None = None
 
 
-def seconds_until_next_cycle(now: datetime, interval_hours: int = 4, grace_seconds: int = 60) -> float:
+def seconds_until_next_cycle(
+    now: datetime, interval_hours: int = 4, grace_seconds: int = 60
+) -> float:
     """Calculates seconds until the next aligned UTC cycle (e.g., at 00:00:60, 04:00:60, 08:00:60 UTC for 4H)."""
     utc_now = now.astimezone(UTC)
     boundary_hour = (utc_now.hour // interval_hours) * interval_hours
@@ -503,15 +528,19 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
     global _last_cron_run, _next_cron_run
     while True:
         try:
-            delay = seconds_until_next_cycle(datetime.now(UTC), interval_hours=interval_hours, grace_seconds=60)
+            delay = seconds_until_next_cycle(
+                datetime.now(UTC), interval_hours=interval_hours, grace_seconds=60
+            )
             _next_cron_run = datetime.now(UTC) + timedelta(seconds=delay)
             print(
-                f"⏰ [Cron] Sleeping {delay:.0f}s ({delay/60:.1f}m) until next {interval_hours}-hour cycle at "
+                f"⏰ [Cron] Sleeping {delay:.0f}s ({delay / 60:.1f}m) until next {interval_hours}-hour cycle at "
                 f"{_next_cron_run.strftime('%Y-%m-%d %H:%M:%S UTC')}..."
             )
             await asyncio.sleep(delay)
             _last_cron_run = datetime.now(UTC)
-            print(f"🚀 [Cron] Waking up for aligned {interval_hours}-hour USD-M screener sweep (all liquid contracts)...")
+            print(
+                f"🚀 [Cron] Waking up for aligned {interval_hours}-hour USD-M screener sweep (all liquid contracts)..."
+            )
             await _do_crypto_screen(mode="all", min_score=50.0, max_symbols=320)
         except asyncio.CancelledError:
             break
@@ -530,7 +559,9 @@ def start_screener_cron(interval_hours: int = 4) -> None:
             _screener_cron_loop(interval_hours=interval_hours),
             name=f"atlas-{interval_hours}h-screener-cron",
         )
-        print(f"✅ [Cron] Atlas {interval_hours}-hour background screener cron started successfully.")
+        print(
+            f"✅ [Cron] Atlas {interval_hours}-hour background screener cron started successfully."
+        )
 
 
 async def stop_portal() -> None:
@@ -597,6 +628,7 @@ async def get_symbol_chart(symbol: str, interval: str = "1h", limit: int = 250) 
 
     if not inst:
         from algotrader.domain.models import AssetClass, Instrument, InstrumentId, MarketKind
+
         inst = Instrument(
             id=InstrumentId(futures.venue, sym_clean),
             base_asset=sym_clean.replace("USDT", ""),
@@ -634,7 +666,11 @@ async def get_symbol_chart(symbol: str, interval: str = "1h", limit: int = 250) 
     # 1. First check if it's in the active screener cache
     if _screener_cache and "opportunities" in _screener_cache:
         matched_opp = next(
-            (o for o in _screener_cache["opportunities"] if o.get("symbol", "").upper() == sym_clean),
+            (
+                o
+                for o in _screener_cache["opportunities"]
+                if o.get("symbol", "").upper() == sym_clean
+            ),
             None,
         )
         if matched_opp:
@@ -658,27 +694,59 @@ async def get_symbol_chart(symbol: str, interval: str = "1h", limit: int = 250) 
         rr = round(reward / risk, 2)
 
         checklist = [
-            {"title": "Gate L1: Volume Contraction Pattern", "passed": True, "detail": "Volume contracted into base structure"},
-            {"title": "Gate L2: Volatility Squeeze / Coiling", "passed": True, "detail": "Consolidation within dynamic band bounds"},
-            {"title": "Gate L3: Orderflow & Derivatives Absorption", "passed": True, "detail": "OI stability & neutral-to-negative funding"},
-            {"title": "Gate L4: Relative Strength vs BTC", "passed": True, "detail": "Alpha preservation during market chop"},
-            {"title": "Gate L5: Multi-Timeframe Alignment", "passed": True, "detail": "Higher timeframe base structure confirmed"},
-            {"title": "Gate L6: Wyckoff Institutional Accumulation", "passed": True, "detail": f"Stage: {watchlist_item.stage} holding key support"},
+            {
+                "title": "Gate L1: Volume Contraction Pattern",
+                "passed": True,
+                "detail": "Volume contracted into base structure",
+            },
+            {
+                "title": "Gate L2: Volatility Squeeze / Coiling",
+                "passed": True,
+                "detail": "Consolidation within dynamic band bounds",
+            },
+            {
+                "title": "Gate L3: Orderflow & Derivatives Absorption",
+                "passed": True,
+                "detail": "OI stability & neutral-to-negative funding",
+            },
+            {
+                "title": "Gate L4: Relative Strength vs BTC",
+                "passed": True,
+                "detail": "Alpha preservation during market chop",
+            },
+            {
+                "title": "Gate L5: Multi-Timeframe Alignment",
+                "passed": True,
+                "detail": "Higher timeframe base structure confirmed",
+            },
+            {
+                "title": "Gate L6: Wyckoff Institutional Accumulation",
+                "passed": True,
+                "detail": f"Stage: {watchlist_item.stage} holding key support",
+            },
         ]
 
-        gate_statuses = getattr(watchlist_item.audit, "gate_statuses", None) if watchlist_item.audit else None
+        gate_statuses = (
+            getattr(watchlist_item.audit, "gate_statuses", None) if watchlist_item.audit else None
+        )
         if gate_statuses:
             checklist = [
                 {
                     "title": gate_name,
                     "passed": is_passed,
-                    "detail": "Holding key structural threshold" if is_passed else "Pending threshold trigger",
+                    "detail": "Holding key structural threshold"
+                    if is_passed
+                    else "Pending threshold trigger",
                 }
                 for gate_name, is_passed in gate_statuses.items()
             ]
 
         if not opp_dict:
-            status_val = "BREAKOUT_CONFIRMED" if float(watchlist_item.score) >= 75 else "RETEST_ONLY_WAIT_FOR_DIP"
+            status_val = (
+                "BREAKOUT_CONFIRMED"
+                if float(watchlist_item.score) >= 75
+                else "RETEST_ONLY_WAIT_FOR_DIP"
+            )
             safe_retest = min(float(support_p), float(cur_p) * 0.990)
             safe_retest_str = f"{safe_retest:.6g}" if float(cur_p) < 1 else f"{safe_retest:.4f}"
             opp_dict = {
@@ -747,7 +815,11 @@ async def get_symbol_chart(symbol: str, interval: str = "1h", limit: int = 250) 
             "vah_price": str(round(c_price * 1.025, 4)),
             "val_price": str(round(c_price * 0.97, 4)),
             "checklist": [
-                {"title": "Direct Universe Inspection", "passed": True, "detail": "Direct chart inspection stream"},
+                {
+                    "title": "Direct Universe Inspection",
+                    "passed": True,
+                    "detail": "Direct chart inspection stream",
+                },
             ],
             "rationale": [
                 f"Directly loaded from Binance USD-M universe for {sym_clean}",
@@ -782,7 +854,9 @@ async def get_watchlist(live_audit: bool = True, refresh: bool = False) -> dict[
             _cached_instruments = await asyncio.wait_for(futures.instruments(), timeout=3.0)
 
         items = await asyncio.wait_for(
-            _watchlist_service.list_items_with_audit(futures, _cached_instruments, force_refresh=refresh),
+            _watchlist_service.list_items_with_audit(
+                futures, _cached_instruments, force_refresh=refresh
+            ),
             timeout=12.0,
         )
         return {
@@ -794,7 +868,9 @@ async def get_watchlist(live_audit: bool = True, refresh: bool = False) -> dict[
         cached = _watchlist_service._audit_cache or {}
         enriched = []
         for item in items:
-            aud = cached.get(item.symbol) or _watchlist_service.audit_item(item, item.current_price, [], [], None)
+            aud = cached.get(item.symbol) or _watchlist_service.audit_item(
+                item, item.current_price, [], [], None
+            )
             enriched.append(
                 replace(
                     item,
@@ -837,7 +913,9 @@ async def get_watchlist_audit(refresh: bool = False) -> dict[str, Any]:
         cached = _watchlist_service._audit_cache or {}
         results = {}
         for item in items:
-            aud = cached.get(item.symbol) or _watchlist_service.audit_item(item, item.current_price, [], [], None)
+            aud = cached.get(item.symbol) or _watchlist_service.audit_item(
+                item, item.current_price, [], [], None
+            )
             results[item.symbol] = aud.as_dict()
         return {"audits": results, "count": len(results), "warning": f"{type(exc).__name__}: {exc}"}
 
@@ -856,7 +934,9 @@ async def add_to_watchlist(payload: AddWatchlistRequest) -> dict[str, Any]:
         symbol=payload.symbol.upper(),
         name=payload.name or payload.symbol.upper(),
         sector=payload.sector,
-        stage=WyckoffStage(payload.stage) if payload.stage in [s.value for s in WyckoffStage] else WyckoffStage.COIL_IMMINENT,
+        stage=WyckoffStage(payload.stage)
+        if payload.stage in [s.value for s in WyckoffStage]
+        else WyckoffStage.COIL_IMMINENT,
         timeframe=payload.timeframe,
         current_price=Decimal(str(payload.current_price)),
         trigger_price=Decimal(str(payload.trigger_price)),
@@ -869,7 +949,9 @@ async def add_to_watchlist(payload: AddWatchlistRequest) -> dict[str, Any]:
         thesis=payload.thesis,
         checklist_passed=payload.checklist_passed,
         checklist_total=payload.checklist_total,
-        priority=WatchlistPriority(payload.priority) if payload.priority in [p.value for p in WatchlistPriority] else WatchlistPriority.HIGH,
+        priority=WatchlistPriority(payload.priority)
+        if payload.priority in [p.value for p in WatchlistPriority]
+        else WatchlistPriority.HIGH,
         notes=payload.notes,
         estimated_win_rate_pct=win_rate,
     )
@@ -902,6 +984,7 @@ def get_macro_service() -> MacroIntelligenceService:
     global _macro_service
     if _macro_service is None:
         from algotrader.application.macro_service import MacroIntelligenceService
+
         _macro_service = MacroIntelligenceService()
     return _macro_service
 
@@ -918,7 +1001,9 @@ async def get_macro_context(refresh: bool = False) -> dict[str, Any]:
     data["btc_dominance"] = report.liquidity_divergence.btc_dominance
     data["stablecoin_net_flow_7d"] = report.liquidity_divergence.stablecoin_net_flow_7d
     data["stablecoin_total_usd"] = report.liquidity_divergence.stablecoin_total_usd
-    data["narrative"] = f"F&G: {report.liquidity_divergence.fear_greed_score}/100 ({report.liquidity_divergence.fear_greed_classification}) | BTC.D: {report.liquidity_divergence.btc_dominance}% | Funding APR: {report.derivatives_heat.annualized_apr:+.1f}%"
+    data["narrative"] = (
+        f"F&G: {report.liquidity_divergence.fear_greed_score}/100 ({report.liquidity_divergence.fear_greed_classification}) | BTC.D: {report.liquidity_divergence.btc_dominance}% | Funding APR: {report.derivatives_heat.annualized_apr:+.1f}%"
+    )
     return data
 
 

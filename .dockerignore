@@ -16,3 +16,8 @@ data
 scratch
 frontend
 *.pdf
+
+# Local research artifacts and release exports never belong in the build context.
+tmp
+*.tar
+*.tar.gz

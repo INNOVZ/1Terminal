@@ -49,12 +49,14 @@ class Runtime:
         max_symbols: int | None = None,
         mode: ScreenerMode = ScreenerMode.ACCUMULATION,
         coi_score: float | Decimal | None = None,
+        feature_contract: str = "legacy",
     ) -> ScreeningRun:
         self.last_scan_counts = {}
         effective = settings or self.settings
         captured = await capture_scan(self.futures_market, self.futures_market, self.macro_provider, effective,
             {"min_score": min_score, "target_direction": target_direction, "top_n": top_n,
-             "max_symbols": max_symbols, "mode": mode, "coi_score": coi_score, "enforce_quality": True})
+             "max_symbols": max_symbols, "mode": mode, "coi_score": coi_score, "enforce_quality": True},
+            feature_contract=feature_contract)
         self.last_scan_counts = dict(captured.record.counts)  # Compatibility only; callers use run.counts.
         try:
             receipt = await asyncio.to_thread(LocalScanArchive(effective.research_archive_dir).write_scan, captured.record)

@@ -1,0 +1,14 @@
+{
+  "version": "discovery-v2-full336-rvol4h-watch20",
+  "feature_contract": "hourly360-full336-rvol4h-inclusive20-v2",
+  "hourly_history_limit": 360,
+  "volume_history_closed_hours": 336,
+  "watch_limit": 20,
+  "watch_min_quote_volume": "500000",
+  "watch_max_quote_volume_exclusive": "1500000",
+  "watch_max_spread_bps": "25",
+  "watch_order": "sha256(version|four_hour_utc_bucket|symbol)",
+  "readiness": "existing_L1_to_L5_pass; activation_and_publication_recorded_separately",
+  "emerging": "positive_6h_BTC_relative_return_and_turnover_acceleration_gt1_and_ret24h_le9pct",
+  "production_publication_gates": "unchanged"
+}

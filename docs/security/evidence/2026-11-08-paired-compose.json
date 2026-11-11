@@ -1,0 +1,76 @@
+{
+  "name": "atlas-paired-study",
+  "networks": {
+    "default": {
+      "name": "atlas-paired-study_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "observation": {
+      "profiles": [
+        "observation"
+      ],
+      "cap_drop": [
+        "ALL"
+      ],
+      "cpus": 0.5,
+      "command": [
+        "python",
+        "-m",
+        "scripts.research_prospective",
+        "run",
+        "--study",
+        "/study",
+        "--execute-public-collection"
+      ],
+      "entrypoint": null,
+      "environment": {
+        "ATLAS_RESEARCH_ENABLED": "false"
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "python",
+          "-m",
+          "scripts.research_prospective",
+          "health",
+          "--study",
+          "/study"
+        ],
+        "timeout": "15s",
+        "interval": "1m0s",
+        "retries": 2,
+        "start_period": "45s"
+      },
+      "image": "sha256:435e5fe024b198ed23ca5990bf45d7be3cff662e835b4b8d531d7bb7aab2cfb5",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-file": "3",
+          "max-size": "5m"
+        }
+      },
+      "mem_limit": "536870912",
+      "memswap_limit": "536870912",
+      "networks": {
+        "default": null
+      },
+      "pids_limit": 64,
+      "pull_policy": "never",
+      "read_only": true,
+      "restart": "no",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "user": "10001:10001",
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "/private/tmp/not-an-active-study",
+          "target": "/study"
+        }
+      ]
+    }
+  }
+}

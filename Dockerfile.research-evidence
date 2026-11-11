@@ -1,0 +1,14 @@
+FROM python:3.13-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 ATLAS_RESEARCH_ENABLED=false
+RUN useradd --create-home --uid 10001 atlas
+WORKDIR /app
+COPY requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-cache-dir --no-deps .
+COPY scripts/research_immutable_capture.py scripts/research_evidence_stream.py scripts/research_capture_evidence.py scripts/research_evidence_contract.py scripts/research_pipeline_comparison.py scripts/replay_contract.py scripts/research_verified_replay.py scripts/research_prospective.py scripts/research_rank_contract.py ./scripts/
+COPY scripts/research_discovery.py ./scripts/
+RUN mkdir /evidence && chown atlas:atlas /evidence
+USER atlas
+CMD ["python", "-m", "scripts.research_capture_evidence", "--help"]

@@ -1,0 +1,124 @@
+{
+  "date": "2026-11-08",
+  "image_id": "sha256:435e5fe024b198ed23ca5990bf45d7be3cff662e835b4b8d531d7bb7aab2cfb5",
+  "image_tag": "atlas-research-paired:2026-11-08",
+  "scope": "local preparation only; user deploys to the approved alfa2 VM",
+  "full_suite": {
+    "passed": 784,
+    "warnings": 1,
+    "warning": "existing Starlette deprecation",
+    "seconds": 126.82
+  },
+  "protocol_tests": {
+    "passed": 20,
+    "seconds": 2.12
+  },
+  "lint_format_diff": "passed",
+  "capture_capacity": {
+    "memory_mib": 768,
+    "cpus": 1,
+    "selected": 320,
+    "supplemental": 60,
+    "control_counts": {
+      "eligible": 320,
+      "liquid": 320,
+      "selected": 320,
+      "evaluated": 320,
+      "failed": 0,
+      "stage1_survivors": 320,
+      "stage2_shortlist": 45,
+      "stage2_probes": 15,
+      "returned": 12
+    },
+    "capture_seconds": 50.13209148100577,
+    "write_seconds": 5.253730418975465,
+    "file_bytes": 155753844,
+    "read_seconds": 7.146020961983595,
+    "status": "complete",
+    "reason": null,
+    "challenger_reason": null,
+    "total_seconds": 183.345980668033,
+    "max_rss_kib": 595264,
+    "synthetic": true,
+    "network": "disabled",
+    "enrolled": false
+  },
+  "archive_capacity": {
+    "memory_mib": 512,
+    "cpus": 0.5,
+    "synthetic": true,
+    "network": "none",
+    "cohort": 1000,
+    "slots": 577,
+    "write_seconds": 128.10068905801745,
+    "report_seconds": 234.06754502397962,
+    "total_seconds": 362.3064094990259,
+    "max_rss_kib": 74120,
+    "bytes": 806892176,
+    "status": "complete",
+    "live_observation_started": false
+  },
+  "midpoint_report_capacity": {
+    "memory_mib": 512,
+    "cpus": 0.5,
+    "synthetic": true,
+    "network": "none",
+    "horizon": 24,
+    "slots": 289,
+    "cohort": 1000,
+    "report_seconds": 116.22689767897828,
+    "max_rss_kib": 71816,
+    "rank_schedule_margin_seconds": 138.77310232102172,
+    "live_observation_started": false
+  },
+  "runtime": {
+    "source_hash": "b182ba78f210d38b04f4206c7e18243513db8e4e07482e2c96b7d5dc707aac4a",
+    "python": "3.13.18",
+    "packages": {
+      "atlas-algotrader": "0.1.2",
+      "pydantic": "2.13.4",
+      "httpx": "0.28.1"
+    },
+    "tools": {
+      "research_pipeline_comparison.py": "b33ff09ae095e6c13f6a645f2cf76b0d16a6a8927312f03d48cadec2ad24198f",
+      "replay_contract.py": "52013f6341d740868cc5813c53a857d4ddeb3a8b4deb646798cd4b429d97ee75",
+      "research_verified_replay.py": "d79d329b23ddd66fcfd158091ba6ccf6142c04712c564d842e293571751ec099",
+      "research_evidence_contract.py": "b9c3068cab972965fb308650753edaaf5bf63236a4901bb21c04a93e14a43cce",
+      "research_capture_evidence.py": "2852a8174d492989ded9aa84616bc6c150f84d4eedbb702198917e203bbe44bd",
+      "research_evidence_stream.py": "7c982b994d4f50fd12c7e7a642c5715c4bc8048ec89148224eddb516d9cac253",
+      "research_immutable_capture.py": "7bd879129a16e9729937ac748e748c72644955edce3e8f2b246ec5601a8f574a"
+    }
+  },
+  "runner": {
+    "runner_sha256": "9ee8c397fc3d96a69dfdec16a7a4085dcde389a95815b508c1c685c51a4a348c",
+    "rank_contract_sha256": "0ce79541c4f13ae0cc4689cd8122c4cb406906c9994f606c41f5ab464a547081",
+    "collection_default": false,
+    "credentials_present": false
+  },
+  "file_sha256": {
+    "Dockerfile.research-evidence": "85eb97dae008152c22a1c15853b88923aaa3a06d070dcbf4a0f29e9a2dfa6cc6",
+    "compose.research-study.yaml": "677fe5c696f7340d02d584b964b21b563fa2886048eacbeffa5645230e37b9bc",
+    ".dockerignore": "72003bb23a82fd14c105723948905b066452de423f852b30b2d0c2feb1a1d58b",
+    "src/algotrader/application/crypto_screener.py": "fa993de9553264121494a79cfd3940c7a6826dd40593592be5019735b7cf3a88",
+    "src/algotrader/domain/scan_observations.py": "c92bd65591e65d9507ba5ce33c7604264dbb6340af45649c79133a3007d4970a",
+    "scripts/research_verified_replay.py": "d79d329b23ddd66fcfd158091ba6ccf6142c04712c564d842e293571751ec099",
+    "scripts/research_evidence_stream.py": "7c982b994d4f50fd12c7e7a642c5715c4bc8048ec89148224eddb516d9cac253",
+    "scripts/research_rank_contract.py": "0ce79541c4f13ae0cc4689cd8122c4cb406906c9994f606c41f5ab464a547081",
+    "scripts/research_evidence_contract.py": "b9c3068cab972965fb308650753edaaf5bf63236a4901bb21c04a93e14a43cce",
+    "scripts/research_immutable_capture.py": "7bd879129a16e9729937ac748e748c72644955edce3e8f2b246ec5601a8f574a",
+    "scripts/research_pipeline_comparison.py": "b33ff09ae095e6c13f6a645f2cf76b0d16a6a8927312f03d48cadec2ad24198f",
+    "scripts/research_prospective.py": "9ee8c397fc3d96a69dfdec16a7a4085dcde389a95815b508c1c685c51a4a348c",
+    "scripts/research_capture_evidence.py": "2852a8174d492989ded9aa84616bc6c150f84d4eedbb702198917e203bbe44bd",
+    "scripts/replay_contract.py": "52013f6341d740868cc5813c53a857d4ddeb3a8b4deb646798cd4b429d97ee75"
+  },
+  "source_guards_waived": false,
+  "deployed": false,
+  "live_observation_started": false,
+  "limits": [
+    "Actual VM/provider acceptance remains pending.",
+    "New study backup/restore and first anchor snapshot remain pending.",
+    "Five-minute sampled price paths are not intrabar extrema or executed trades.",
+    "No predictive advantage established; old research workers and anchors unchanged.",
+    "No new comprehensive vulnerability audit claimed."
+  ]
+}

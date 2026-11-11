@@ -1,0 +1,6 @@
+{"phase": "write", "slots": 1, "seconds": 5.583661294949707}
+{"phase": "write", "slots": 145, "seconds": 21.403828718001023}
+{"phase": "write", "slots": 289, "seconds": 37.22056943399366}
+{"phase": "write", "slots": 433, "seconds": 125.37756022496615}
+{"phase": "write", "slots": 577, "seconds": 254.07532874197932}
+{"synthetic": true, "phase": "generated", "cohort": 1000, "slots": 577, "seconds": 254.0862225339515, "max_rss_kib": 116724, "definition_bytes": 9169246}

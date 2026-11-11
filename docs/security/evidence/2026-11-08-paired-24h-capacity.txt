@@ -1,0 +1,1 @@
+{"synthetic": true, "network": "none", "horizon": 24, "slots": 289, "cohort": 1000, "report_seconds": 116.22689767897828, "max_rss_kib": 71816, "rank_schedule_margin_seconds": 138.77310232102172, "live_observation_started": false}

@@ -1,0 +1,2 @@
+/atlas-paired-capture-capacity exit=0 running=false oom=false image=sha256:435e5fe024b198ed23ca5990bf45d7be3cff662e835b4b8d531d7bb7aab2cfb5
+/atlas-paired-study-capacity exit=0 running=false oom=false image=sha256:435e5fe024b198ed23ca5990bf45d7be3cff662e835b4b8d531d7bb7aab2cfb5

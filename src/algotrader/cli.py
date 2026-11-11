@@ -28,6 +28,7 @@ async def _screen(mode: str, min_score: float, max_symbols: int) -> int:
             mode=ScreenerMode(mode),
             min_score=Decimal(str(min_score)),
             max_symbols=max_symbols,
+            feature_contract="discovery_v2",
         )
         print(
             json.dumps(
@@ -36,6 +37,7 @@ async def _screen(mode: str, min_score: float, max_symbols: int) -> int:
                     "order_execution_enabled": False,
                     "validation_status": "uncalibrated_research",
                     "screening_policy_version": SCREENING_POLICY_VERSION,
+                    "screening_feature_contract": "discovery_v2",
                     "scan_counts": run.counts,
                     "scan_id": run.receipt.scan_id,
                     "scan_archive": run.receipt.as_dict(),
@@ -197,7 +199,7 @@ def main() -> int:
     )
     screen.add_argument("--mode", choices=[mode.value for mode in ScreenerMode], default="all")
     screen.add_argument("--min-score", type=float, default=68.0)
-    screen.add_argument("--max-symbols", type=int, default=250)
+    screen.add_argument("--max-symbols", type=int, default=320)
     serve = commands.add_parser("portal", aliases=["serve"], help="Serve the screener API")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)

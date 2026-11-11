@@ -1,0 +1,3091 @@
+{
+  "original_summary_sha256": "2b787ac8c656274ffc5e07b335eac28d1aba68a32d7ab32295fdedb98b6777a1",
+  "cohort_summary_sha256": "ab3c560f9651dccb3350acbb203d52b3f529e070eb2734006ba86d662e070e11",
+  "controls_sha256": "8941918e1b85e0d1437b8016de0b3530711845fbc760caa0b022bd45087ca40d",
+  "script_sha256": "e4413665d6745b83df2fa4f0543213bdc2d62a835131305eac880a203fda67da",
+  "analysis_sha256": "38f5d735f04952b93073e96e0001f979cfd719d5bb55d8ba63d0a520a6667adb",
+  "raw_files": [
+    {
+      "symbol": "1000BONKUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/1000BONKUSDT.json",
+      "sha256": "9453d10a6ac4937f04366718f8bef81c945a962da6de8a93996cdd5c36eab0ea",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:12:52.800Z"
+    },
+    {
+      "symbol": "1000BONKUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/1000BONKUSDT.json",
+      "sha256": "fa63c2b596f44012d58385215ba49053ba941f456ecde50c6b0a491493eedad1",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:26.176Z"
+    },
+    {
+      "symbol": "1000FLOKIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/1000FLOKIUSDT.json",
+      "sha256": "57135e86a670eb1085ec29fdb0760dac3d002ff723000ec8e8989a54adee44de",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:15.323Z"
+    },
+    {
+      "symbol": "1000FLOKIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/1000FLOKIUSDT.json",
+      "sha256": "78719163e4cf4c26a25a99d897e368edb13e2a83138953532d4ea0dd76772406",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:26.043Z"
+    },
+    {
+      "symbol": "1000PEPEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/1000PEPEUSDT.json",
+      "sha256": "e3358c9a2e1fcc8185db0f5778f40cfb431683730da254f9059259397fdc4843",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:07.875Z"
+    },
+    {
+      "symbol": "1000PEPEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/1000PEPEUSDT.json",
+      "sha256": "8075b6da2bf4078be14548918b9ecd18e0b1b6ab1e5186deb95c0a0bf81f8a92",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:26.246Z"
+    },
+    {
+      "symbol": "1000RATSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/1000RATSUSDT.json",
+      "sha256": "938a0967683e093e73a3be65a0853c2c40abd62e6301e77150bcb18627a83bcc",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:06.921Z"
+    },
+    {
+      "symbol": "1000RATSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/1000RATSUSDT.json",
+      "sha256": "2999b762309920449c969ad6747b1008f5bce369ea5da17b191cf33add0ba4da",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:26.214Z"
+    },
+    {
+      "symbol": "1INCHUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/1INCHUSDT.json",
+      "sha256": "84f63507ced809929ec5366d686cfb221b6c1776d7aa32d7f8990e2f83c8c4c3",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:01.311Z"
+    },
+    {
+      "symbol": "1INCHUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/1INCHUSDT.json",
+      "sha256": "fa36b0c6af092187a9512f8773633b1f5157872f0db765689126474e92dbc2a2",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:29.694Z"
+    },
+    {
+      "symbol": "ACTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ACTUSDT.json",
+      "sha256": "a785026a398f432b833fe64aca5c396bbcca4d2381ca2015d296157a57d485c6",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:07.700Z"
+    },
+    {
+      "symbol": "ACTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ACTUSDT.json",
+      "sha256": "e5b68feeeb368473681bf43d07415ac3f592dfd091f99568b364c59dd852cf4f",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:29.657Z"
+    },
+    {
+      "symbol": "ACUUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ACUUSDT.json",
+      "sha256": "08d360e8df66368621c63054abf5b0768e49d529d635df3499598c3aa006b87a",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:10.878Z"
+    },
+    {
+      "symbol": "ACUUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ACUUSDT.json",
+      "sha256": "e0899df3459f635644a5506153867bb476d1a7520fb37b0aaa9436b1b92339d3",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:28.724Z"
+    },
+    {
+      "symbol": "AEROUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/AEROUSDT.json",
+      "sha256": "a11533b06ac3d3ca088829b38998f0895510c12baf71839d428ca5465617cd4e",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:43.378Z"
+    },
+    {
+      "symbol": "AEROUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/AEROUSDT.json",
+      "sha256": "b04536d600e43f83aadb828802d558afff8493910626ace8b3159822cc71d942",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:29.406Z"
+    },
+    {
+      "symbol": "AIAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/AIAUSDT.json",
+      "sha256": "250f1b2cef2821e40bfb86b5fa0e505b6ce633b1e747515b70717f5611ebb38b",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:12:59.973Z"
+    },
+    {
+      "symbol": "AIAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/AIAUSDT.json",
+      "sha256": "47283ceb7246f3379cfcc82b9740e569b6315a66577765b32faa6073002e6743",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:33.111Z"
+    },
+    {
+      "symbol": "AIGENSYNUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/AIGENSYNUSDT.json",
+      "sha256": "6fce59b51339e11b1ccc3147b1ea14b668e51d780c31225a7d8c504d32334fcb",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:08.384Z"
+    },
+    {
+      "symbol": "AIGENSYNUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/AIGENSYNUSDT.json",
+      "sha256": "c2c9fa06d0a9c00e9b044c27bdbb7ac3555f16ca97535dbc664e08e625bc8367",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:33.150Z"
+    },
+    {
+      "symbol": "AINUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/AINUSDT.json",
+      "sha256": "9dde64166a2a0e0ffbc7f9e8d68a847ead1aa301eabf98038982273833097c6e",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:11.033Z"
+    },
+    {
+      "symbol": "AINUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/AINUSDT.json",
+      "sha256": "c8d56556d34378f62ab50e7b1a55a0167c3e769c1aa31ef5ac411062ee6f27de",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:35.394Z"
+    },
+    {
+      "symbol": "AIOTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/AIOTUSDT.json",
+      "sha256": "77fddb578fc953c5e435a8e409cd439f88135cbf4a7a3dd004d8d4d12b346c37",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:10.990Z"
+    },
+    {
+      "symbol": "AIOTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/AIOTUSDT.json",
+      "sha256": "6a661f49fa5cddb5e3c1097a1ca79375f9731f726b093ba52468f87faf40be56",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:31.729Z"
+    },
+    {
+      "symbol": "AIOUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/AIOUSDT.json",
+      "sha256": "2741a2ffb59509b4719e8073175580892cfdfd73b933815abc31102323172cd1",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:14.337Z"
+    },
+    {
+      "symbol": "AIOUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/AIOUSDT.json",
+      "sha256": "2c9427a0e1140db86ec827ecbc276e095dedd261075d24fe88f64b7697928a7e",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:38.946Z"
+    },
+    {
+      "symbol": "ANKRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ANKRUSDT.json",
+      "sha256": "a74682c2526ff401733c724a36b24847200b64945a1c6335432db9c7c7f3e456",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:23.990Z"
+    },
+    {
+      "symbol": "ANKRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ANKRUSDT.json",
+      "sha256": "ad6e0724cf3647822daa05bc32604b053929eba893d76b23f505ceee3a1a75c3",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:38.749Z"
+    },
+    {
+      "symbol": "APRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/APRUSDT.json",
+      "sha256": "eef72caad7d6a8fd8ed021f1da73ac560b5751ae8b86ff0f1e006c58baa3cd95",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:04.094Z"
+    },
+    {
+      "symbol": "APRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/APRUSDT.json",
+      "sha256": "0aaa12eb908f207ca9d8b6bae3475d8dd311e5785dbc636aaae8ab3f8454ba58",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:37.522Z"
+    },
+    {
+      "symbol": "APTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/APTUSDT.json",
+      "sha256": "9d74f1afd41a91e47a9c5e6015a98ace3cabdbec3883dcccaab657eb4a25ddbc",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:12:56.418Z"
+    },
+    {
+      "symbol": "APTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/APTUSDT.json",
+      "sha256": "23eb84e1bcefcf2b4cd54bc3959e88efb4b97f30d34688b5c03251d896f3b6dd",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:38.704Z"
+    },
+    {
+      "symbol": "ARBUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ARBUSDT.json",
+      "sha256": "ad43d2398a663c579ce0ac019211f006c214f8428dc0541f2b52ca9be60be65f",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:14.435Z"
+    },
+    {
+      "symbol": "ARBUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ARBUSDT.json",
+      "sha256": "2795b0bdc1ccbb2f012932e7933e37a8f40f378a4655c08c81f46aacc3eb4ffe",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:42.385Z"
+    },
+    {
+      "symbol": "ARIAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ARIAUSDT.json",
+      "sha256": "0b21fafe10c43ffb9ddd83ff407d424880138935af5b516c3827dffccfbf6a04",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:14.588Z"
+    },
+    {
+      "symbol": "ARIAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ARIAUSDT.json",
+      "sha256": "dadd65aaed870d881c381bd2512aad82aee4b94947dd02d712c6725287fd6391",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:42.205Z"
+    },
+    {
+      "symbol": "ARXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ARXUSDT.json",
+      "sha256": "e3a95e39b1245b3c23181487b6d96f134e330ecf9b35655914344b62529f7334",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:18.237Z"
+    },
+    {
+      "symbol": "ARXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ARXUSDT.json",
+      "sha256": "7d1ce20f30228d001829945d581814341f48872de5fe42952117fe59c18222e7",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:42.124Z"
+    },
+    {
+      "symbol": "AVAAIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/AVAAIUSDT.json",
+      "sha256": "bec48109d6cfbf7bde6618e5a4940f21bbe4a3446cd1a3581704d2e12a5af897",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:18.260Z"
+    },
+    {
+      "symbol": "AVAAIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/AVAAIUSDT.json",
+      "sha256": "88278cebab66ce1b9e37ac23d8a24082ebf632e0ba3ed23e1d7e9941d9918484",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:42.288Z"
+    },
+    {
+      "symbol": "AVAXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/AVAXUSDT.json",
+      "sha256": "29b6cea84bca90c20c508d9c181f84e9926d9a19b3d87c368481a8453549ace0",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:18.112Z"
+    },
+    {
+      "symbol": "AVAXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/AVAXUSDT.json",
+      "sha256": "826ffdf1d7b1b5dbff8ba1e24040af5ffacbf330debacd1c32358a1d403ca9c8",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:45.522Z"
+    },
+    {
+      "symbol": "B2USDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/B2USDT.json",
+      "sha256": "571f4dbf0b924d6e47981e320affa47107357b0ad03d6d594ddc48a7c5440011",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:21.510Z"
+    },
+    {
+      "symbol": "B2USDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/B2USDT.json",
+      "sha256": "aef83fc534f25d4fdd0d7908d0ead7d7736174d64f1132ca16740c12a2ab664d",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:45.627Z"
+    },
+    {
+      "symbol": "BABYUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/BABYUSDT.json",
+      "sha256": "116c857a0e23ec832047c70da95e8615af680c6af4980dbb32dbb750df49e83f",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:18.995Z"
+    },
+    {
+      "symbol": "BABYUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/BABYUSDT.json",
+      "sha256": "c334f8ca71c3477b603d0713765bf0a2015f4e051107caffa252c974d7b8ce3c",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:45.560Z"
+    },
+    {
+      "symbol": "BEAMXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/BEAMXUSDT.json",
+      "sha256": "e631d432ceab5563f864c5ec742848781c8f407e5c48ae7d7b0e700a578f43b7",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:21.684Z"
+    },
+    {
+      "symbol": "BEAMXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/BEAMXUSDT.json",
+      "sha256": "170a0207076d1880373c817fc5c7700ab190f31dbdf46b920a0cbb76a9cae85b",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:45.838Z"
+    },
+    {
+      "symbol": "BLESSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/BLESSUSDT.json",
+      "sha256": "fe0164df0c2ff95702e06038de3ae0e5cd942b111f34fb03a8846c3f82167635",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:22.824Z"
+    },
+    {
+      "symbol": "BLESSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/BLESSUSDT.json",
+      "sha256": "d4480237de294b866f469f7f9b3875dc1ab00df92fa3fc84dce9999b16bd933f",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:49.085Z"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/BMTUSDT.json",
+      "sha256": "6dca96a9e7cb33fd2a5b3db6d3a6b10825fc82a5f51355532411d78e2e42174f",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 196,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:22.363Z"
+    },
+    {
+      "symbol": "BMTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/BMTUSDT.json",
+      "sha256": "64c4e6964d3168532b07952b76a1f08d3bab1d1f27a63eec055b578bdee4b1b0",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:49.111Z"
+    },
+    {
+      "symbol": "BRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/BRUSDT.json",
+      "sha256": "5fbfca7f6b7708218726ed6c580a0771d13e976fe620aa4e8f938bf6591b5da8",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:25.953Z"
+    },
+    {
+      "symbol": "BRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/BRUSDT.json",
+      "sha256": "2473aec969e363f0cda25f7fdcfaa3bf3f8cf6c343f708ebaa239abbae5dfa72",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:49.142Z"
+    },
+    {
+      "symbol": "BSBUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/BSBUSDT.json",
+      "sha256": "a2d5bcd1acc8afadefb2242c1140145069b744fd755f9e2596ff151739273db3",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:25.770Z"
+    },
+    {
+      "symbol": "BSBUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/BSBUSDT.json",
+      "sha256": "4ceba8fcf11524a7d1611b7155ca214a3ab285a51333adb6751d775f6028cb9d",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:48.961Z"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/BTCUSDT.json",
+      "sha256": "7095931d718b2d05f79e8f1692ba221db8570930ab9cc52db335ef399bc15300",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:26.285Z"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/BTCUSDT.json",
+      "sha256": "b4cf529526f4a5c2596102caf49939fd39615a7fb81541d2f1de5fc492625d38",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:52.338Z"
+    },
+    {
+      "symbol": "BULLAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/BULLAUSDT.json",
+      "sha256": "a11a0a3d21f3d0cd956ddf5371558b6ab25c4b048840dd289b7b45dfaf39f200",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:29.260Z"
+    },
+    {
+      "symbol": "BULLAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/BULLAUSDT.json",
+      "sha256": "b32aeb8affb40dd614ab4fce5bb109568f901fae20c573e1e251f73369427166",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:52.570Z"
+    },
+    {
+      "symbol": "CAPUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/CAPUSDT.json",
+      "sha256": "75f74689597582ba3254349a875ca7998df26677738786eb2d17246b03e1e30b",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:29.073Z"
+    },
+    {
+      "symbol": "CAPUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/CAPUSDT.json",
+      "sha256": "3b4e62940d13a64d52352d0bee95573b0747b1cb4376af9e811aa78a1b3912f1",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:52.321Z"
+    },
+    {
+      "symbol": "CTKUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/CTKUSDT.json",
+      "sha256": "6710ade1d306d96054891066b07c302a1b2cf5d285606bf4fed5411d2c8f93ce",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:19.323Z"
+    },
+    {
+      "symbol": "CTKUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/CTKUSDT.json",
+      "sha256": "e1502cb8787c74dd3ad232c4910b633f025f4f1dc3b7e508a6299b119e3aa8f9",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:51.234Z"
+    },
+    {
+      "symbol": "CTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/CTUSDT.json",
+      "sha256": "3fb32e03b6510d08897bb1347339d1b1516cf06bdd23fc5d31fd571088e77533",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:57.840Z"
+    },
+    {
+      "symbol": "CTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/CTUSDT.json",
+      "sha256": "72dcd4c72373c228e0eee01197064b77466c5a546a96888b5c3f4fce052e16b8",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:55.753Z"
+    },
+    {
+      "symbol": "CVCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/CVCUSDT.json",
+      "sha256": "831b55a7cc3b922847792e225c9cc7afaea5bd55baf3d1c84c5d9ee4047a2696",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:12:59.918Z"
+    },
+    {
+      "symbol": "CVCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/CVCUSDT.json",
+      "sha256": "b7da069a777c32784df9bd97b9b9fa815346bdb6d2b1deef5a69de149cd4ae95",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:55.809Z"
+    },
+    {
+      "symbol": "CVXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/CVXUSDT.json",
+      "sha256": "13c8a291ac15d469d0d86ec2d60b8cdeaa8e4b1903874a323bc63c51fa026c1e",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:54.387Z"
+    },
+    {
+      "symbol": "CVXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/CVXUSDT.json",
+      "sha256": "8ef13578c7fb887bde9c2a1a0ddb0da3e16d037919d8b9a33f9ea0b800700336",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:55.676Z"
+    },
+    {
+      "symbol": "CYBERUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/CYBERUSDT.json",
+      "sha256": "afec5841cfc591f28c53f159e6fa3df8c8d65489d00451f9c21ac7e54f583370",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:29.004Z"
+    },
+    {
+      "symbol": "CYBERUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/CYBERUSDT.json",
+      "sha256": "d1f72aaf81531357da11c4e24732e679f191d02267d15a31a44d6024ba848e26",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:55.783Z"
+    },
+    {
+      "symbol": "CYSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/CYSUSDT.json",
+      "sha256": "e09da1cfc58dd48657955027031d458c4169c70283f324edb896e8087c384074",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:32.443Z"
+    },
+    {
+      "symbol": "CYSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/CYSUSDT.json",
+      "sha256": "351f53c6690da16991867f744ccdac156158ea1f4237a27bf0ef3ff61026d8f9",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:58.918Z"
+    },
+    {
+      "symbol": "EDGEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/EDGEUSDT.json",
+      "sha256": "01d211cfca39c08c1fccf3ff155adfa7ac0c3aa31ba52f77c88cb2040cf033a4",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:32.440Z"
+    },
+    {
+      "symbol": "EDGEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/EDGEUSDT.json",
+      "sha256": "2b863205090a38b399c7d073ff08f12347a7a639ec353dc2c98d8f7bbf276fa9",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:59.132Z"
+    },
+    {
+      "symbol": "ENJUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ENJUSDT.json",
+      "sha256": "5507deef1fcae1ee672ee323865ebfea29aafd9726d345adf3306c4bf3698f7f",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:32.457Z"
+    },
+    {
+      "symbol": "ENJUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ENJUSDT.json",
+      "sha256": "164e6c524cfb4cae39b70ef41d7ae6017a9a0f3356a5924ee138e6a120b68d86",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:58.897Z"
+    },
+    {
+      "symbol": "ENSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ENSUSDT.json",
+      "sha256": "0241f12a68059ae5f61753982e302b1c4889ecbdfb04e081b5887af467351055",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:28.408Z"
+    },
+    {
+      "symbol": "ENSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ENSUSDT.json",
+      "sha256": "7e2a4c841cd789f1701e8730ca351e2c35796f55eeb40e3cdf6cd6c4d6366d7f",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:58.898Z"
+    },
+    {
+      "symbol": "ERAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ERAUSDT.json",
+      "sha256": "6d67bd3346c3704616a63177acb7508863b67e0629123c7eb48f78e1d1edbba1",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 204,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:35.734Z"
+    },
+    {
+      "symbol": "ERAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ERAUSDT.json",
+      "sha256": "98a74c61f6b6d04e5749a998375497df8bfbdd7db52154fbd59b77e096d968b4",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:02.650Z"
+    },
+    {
+      "symbol": "ETCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ETCUSDT.json",
+      "sha256": "4a40d6ddefe07e39451b20111cae25932bf91bc0e3f3a88e77232a1ee0a4fbd3",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:00.467Z"
+    },
+    {
+      "symbol": "ETCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ETCUSDT.json",
+      "sha256": "4711fbd10c85bc254200e8fb524f59ed96c1ebfcfbc23090281ffe291efc6c0b",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:02.579Z"
+    },
+    {
+      "symbol": "ETHFIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ETHFIUSDT.json",
+      "sha256": "717541091817ffae2edcdb3369a5532555f61a83ad8eef8c117278ed2daaf043",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:27.440Z"
+    },
+    {
+      "symbol": "ETHFIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ETHFIUSDT.json",
+      "sha256": "8b2d87f530efe70563a3d3f0a7c203ca6999e832380c4cb48cb76470955bf324",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:02.484Z"
+    },
+    {
+      "symbol": "ETHUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ETHUSDT.json",
+      "sha256": "59ed50f7f32ffa62faa38bea555bda389d892ccead15681be1dabe4544aa9c4d",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:35.888Z"
+    },
+    {
+      "symbol": "ETHUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ETHUSDT.json",
+      "sha256": "dc0c30100af32fa7d43d7a30626194385bda98492173186a29bb648ba428ba1d",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:02.252Z"
+    },
+    {
+      "symbol": "ETHWUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ETHWUSDT.json",
+      "sha256": "5869cc6653fb405fa30c95daa43af531676861f4c7a523c92c1565adccd05c13",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:39.412Z"
+    },
+    {
+      "symbol": "ETHWUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ETHWUSDT.json",
+      "sha256": "627f86db1df57bb07648b1478acedc643c831d4414b3594e1169faeef87498eb",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:05.882Z"
+    },
+    {
+      "symbol": "EVAAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/EVAAUSDT.json",
+      "sha256": "83bcb1778b41bf83df5a03694939acac13c65b8a118818894401343a12ba0533",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:35.785Z"
+    },
+    {
+      "symbol": "EVAAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/EVAAUSDT.json",
+      "sha256": "f6c34cdffdcd47a89d4c689ba3fe80902b43c47e2453ba8ba6678ae09628d5a9",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:06.077Z"
+    },
+    {
+      "symbol": "FIGHTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/FIGHTUSDT.json",
+      "sha256": "9739a8c79576533a76743cf3392751f858f386b554fa2178f8e0ba19e48bce0d",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:39.050Z"
+    },
+    {
+      "symbol": "FIGHTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/FIGHTUSDT.json",
+      "sha256": "9aea27efe4128dee299676e1caad5617709ac07731feabca6df90817a61eef40",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:06.175Z"
+    },
+    {
+      "symbol": "GPSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/GPSUSDT.json",
+      "sha256": "96df2886c5d17774aa896522eccbf2fe4251052b7f2726bdd8fc6327cc8216f2",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:39.151Z"
+    },
+    {
+      "symbol": "GPSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/GPSUSDT.json",
+      "sha256": "a71228e28aa5a1bf1c1d06ea6ddd782b0422048a69fe0294206b0bf410590e4e",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:05.098Z"
+    },
+    {
+      "symbol": "GRAMUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/GRAMUSDT.json",
+      "sha256": "991501a94afcd6b720dcf7ec710b139ebe2dda7f711f3a4117ce14dd3a5d3299",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:39.325Z"
+    },
+    {
+      "symbol": "GRAMUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/GRAMUSDT.json",
+      "sha256": "7b6bdb0282a9bb409e9192f2169d096e99eb386c775e441b6d3e25d284d6d9c2",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:08.268Z"
+    },
+    {
+      "symbol": "GTCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/GTCUSDT.json",
+      "sha256": "b5856efa9ed5fa8a6f6f6b0c8a8344f6a6ba59034f0f0fcef1872cdc511f5499",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:42.607Z"
+    },
+    {
+      "symbol": "GTCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/GTCUSDT.json",
+      "sha256": "5ad86179c2c2022ae0aa867d2354a6902f7b3099f10f369b098597e31579dd79",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:08.267Z"
+    },
+    {
+      "symbol": "GUAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/GUAUSDT.json",
+      "sha256": "c61b84e6a826f7d8eec2119fd3e3e00e9302e55329c30dc18afb5a8fe6da81f1",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:12:56.202Z"
+    },
+    {
+      "symbol": "GUAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/GUAUSDT.json",
+      "sha256": "300568e662de9f6013c8c4e355251c16c3278374023125b684d4f8aa16b0e787",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:08.369Z"
+    },
+    {
+      "symbol": "HAEDALUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/HAEDALUSDT.json",
+      "sha256": "e9a8ffb9925ec4a7e2222500c84732e1fe504ba093c5f339cbfe7cb019f38345",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:42.550Z"
+    },
+    {
+      "symbol": "HAEDALUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/HAEDALUSDT.json",
+      "sha256": "e7ae7d76456aef1d59ebfa16038404e05d09cd1fd7470efef32ca1926bcce966",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:09.346Z"
+    },
+    {
+      "symbol": "HANAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/HANAUSDT.json",
+      "sha256": "e5622a50a66d0e82d58537c45d56db89e56bb47477490363d816d7d694b083df",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:42.693Z"
+    },
+    {
+      "symbol": "HANAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/HANAUSDT.json",
+      "sha256": "fe5b365816a43f4fa0fa4e787c3704b064987b257b0b8b606e551fb29c0069bc",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:12.530Z"
+    },
+    {
+      "symbol": "HIVEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/HIVEUSDT.json",
+      "sha256": "41c0f650bf12d0b2860a9dd88562b48bd5e945aacef46c8e1cf723114747e111",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:08.166Z"
+    },
+    {
+      "symbol": "HIVEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/HIVEUSDT.json",
+      "sha256": "ab5191f292123bdb221e6573ab782bbee2c5b7f7977a58e43b1d25c7d268de63",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:12.745Z"
+    },
+    {
+      "symbol": "HOMEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/HOMEUSDT.json",
+      "sha256": "55da14407cf1f10e4a1f237bac9f9bae6364b116e7fae91bf4d79de5a8641c76",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:18.595Z"
+    },
+    {
+      "symbol": "HOMEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/HOMEUSDT.json",
+      "sha256": "da8ebd0e1a466cfaec86208cffd4ee38f372d8095ef9ab7c323acd6e0e0dbab0",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:12.606Z"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/HOTUSDT.json",
+      "sha256": "48b5900b51fe1c4d20e267c31fad71ee8c41eb375ce113cb9d5743094abd6f94",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 167,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:45.990Z"
+    },
+    {
+      "symbol": "HOTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/HOTUSDT.json",
+      "sha256": "4b8c898b8be880279d092ebaa3c215fa4b480139876f69b00adae62592b761c3",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:12.644Z"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ICNTUSDT.json",
+      "sha256": "166f34c07b2714fc5af821be35b52f5b8ad4a88f30317aef110a0ee4a92a0bbd",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:45.944Z"
+    },
+    {
+      "symbol": "ICNTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ICNTUSDT.json",
+      "sha256": "12eb683496ec8c0b27a03f25c17ae1335a1ae8b1aca8f6a1e928b0b5aeabc913",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:15.045Z"
+    },
+    {
+      "symbol": "IDOLUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/IDOLUSDT.json",
+      "sha256": "239a3ba6b7c9324ee8037e6dd04be038e84d4e24fe7055ae8c629e7751b8850f",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:45.973Z"
+    },
+    {
+      "symbol": "IDOLUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/IDOLUSDT.json",
+      "sha256": "60330aeea27c03133faf03e764b0573bf1c681f8053f7bdf240851cf19af3366",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:16.042Z"
+    },
+    {
+      "symbol": "INITUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/INITUSDT.json",
+      "sha256": "7d2bf77deb5b04caa29a3ffbec43c1a21aed0b0148951adb4dd110de45b49acd",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:07:55.859Z"
+    },
+    {
+      "symbol": "INITUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/INITUSDT.json",
+      "sha256": "f7ad1d9db47d0c87d036875270ff37d1b47228033be7b79d2c2690a65eddd19e",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:16.260Z"
+    },
+    {
+      "symbol": "INJUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/INJUSDT.json",
+      "sha256": "5eef6fe417d4e254aa174799ac9dd9674d80810e4f2bc8b3ca0a9d6edf53eb0f",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:49.235Z"
+    },
+    {
+      "symbol": "INJUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/INJUSDT.json",
+      "sha256": "9cc7689563ecebdac31d8c760a762ed0e1d89336fce846fffcf03142b82bf4cc",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:16.068Z"
+    },
+    {
+      "symbol": "IOTAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/IOTAUSDT.json",
+      "sha256": "7df9b2084be72b14cdcc5b8f3fee262331fc3b84b592cd2c34b4d41cf8abedb3",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:00.978Z"
+    },
+    {
+      "symbol": "IOTAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/IOTAUSDT.json",
+      "sha256": "6d9a59241fd8a3951ec4cbf9c5095ec3093b4198aea5ddee8ad512d1654d3cea",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:19.559Z"
+    },
+    {
+      "symbol": "JCTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/JCTUSDT.json",
+      "sha256": "5d018bfe543c676a05c7f9a0a7d4dec9c660f35888a4415931d03d8f18e01c48",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:49.457Z"
+    },
+    {
+      "symbol": "JCTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/JCTUSDT.json",
+      "sha256": "0c901b0b58947ea2f5bf2d0c23575cac2e4f147da200eb4e676c278e875b224b",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:18.416Z"
+    },
+    {
+      "symbol": "JELLYJELLYUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/JELLYJELLYUSDT.json",
+      "sha256": "50e95251b7d32aa7d529c4899c6145be865382e5ce45fb593db18a20cdebdc3b",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:03.882Z"
+    },
+    {
+      "symbol": "JELLYJELLYUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/JELLYJELLYUSDT.json",
+      "sha256": "2efcd445e081ad275def543f0a7843b4ebf6090152ac2dd861a3bc38d2e1b20f",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:19.617Z"
+    },
+    {
+      "symbol": "JOEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/JOEUSDT.json",
+      "sha256": "f63221a0faf684f8946956826821f6eefcd9dd8095574029412837f9c3c28340",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:49.334Z"
+    },
+    {
+      "symbol": "JOEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/JOEUSDT.json",
+      "sha256": "ca5d6e4ae4b317db774337df890a5ab0a4811ce76f7ffe914a9d72dc44022fa5",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:19.588Z"
+    },
+    {
+      "symbol": "JUPUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/JUPUSDT.json",
+      "sha256": "0c3f9b9ec33b92faaf7f81479b9d0008edf93f28082892c72fd907f38883eae4",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:52.193Z"
+    },
+    {
+      "symbol": "JUPUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/JUPUSDT.json",
+      "sha256": "a084aa7b2aec6dfda4b6b113703b0e04ba2658c37b6091e928cb69035c990970",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:22.901Z"
+    },
+    {
+      "symbol": "KAITOUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/KAITOUSDT.json",
+      "sha256": "b1de54d5f6a307de0881701af89ba3cf5ba91ad16a4e6debc27e6058be88a53d",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:31.736Z"
+    },
+    {
+      "symbol": "KAITOUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/KAITOUSDT.json",
+      "sha256": "62ca11e140eb9782413686be73381d09cf731544f077ada811e467a35f9c264c",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:22.952Z"
+    },
+    {
+      "symbol": "KERNELUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/KERNELUSDT.json",
+      "sha256": "0c5c2af0df0f62b69f982dac853fa5478e9b98a80220ff074f0737fa71b27e92",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:52.675Z"
+    },
+    {
+      "symbol": "KERNELUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/KERNELUSDT.json",
+      "sha256": "2b97606bb09ee2fa37fa530e532cf52d4ca14b05becb19b75b826fece89673fe",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:22.765Z"
+    },
+    {
+      "symbol": "KGENUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/KGENUSDT.json",
+      "sha256": "9609cd187d5287d45316e12b0978665ef9f5ef00fa920f8b76dd064c2255ce8a",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:57.782Z"
+    },
+    {
+      "symbol": "KGENUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/KGENUSDT.json",
+      "sha256": "8981053f421715ff5562ca1bc7b9fd679c3ccb422c262f162ae1b3d0c4fabae9",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:21.886Z"
+    },
+    {
+      "symbol": "KITEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/KITEUSDT.json",
+      "sha256": "cddf4e8b051b54272de8908b0c953620e3c387331796aeeb6cd872853cb82294",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:12:52.596Z"
+    },
+    {
+      "symbol": "KITEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/KITEUSDT.json",
+      "sha256": "5aa15528904acba422d313fcc79ee4dd1580b8abbc3483c039a51357cb18dc6d",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:26.202Z"
+    },
+    {
+      "symbol": "LABUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/LABUSDT.json",
+      "sha256": "85d869c8a85911f0f832bd20093db50cff0191d4a2fc4e0ce0ba30ba0f0f03a2",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:04.079Z"
+    },
+    {
+      "symbol": "LABUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/LABUSDT.json",
+      "sha256": "f65a64657a927f1167d6b7c4c6dcee030da19947c210e9dffc015a1f62f58950",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:26.447Z"
+    },
+    {
+      "symbol": "LDOUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/LDOUSDT.json",
+      "sha256": "ca32a876d20db7e5f2ae886ccd0c112c06fb18b3fb0400c3e0ebce064853018b",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:39.388Z"
+    },
+    {
+      "symbol": "LDOUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/LDOUSDT.json",
+      "sha256": "e17d8d838af4a84f1a6d638a2a9dc9e9c652d1023f002c3be52b4cd4ac0b202e",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:26.530Z"
+    },
+    {
+      "symbol": "LINEAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/LINEAUSDT.json",
+      "sha256": "030d33b3d01cbf5d5de9bcde1652e3454e599653f014494a75091d4a8e6a4b68",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:04.664Z"
+    },
+    {
+      "symbol": "LINEAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/LINEAUSDT.json",
+      "sha256": "8ae05008f692b1a1199f9cf780c5a1f01276cc740536afa6528f2578d9770c7a",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:26.340Z"
+    },
+    {
+      "symbol": "LUMIAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/LUMIAUSDT.json",
+      "sha256": "0a04655e60b27eefc61a4a645cdb04e398ce9a56220bc6029376a80119c0fe21",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:52.558Z"
+    },
+    {
+      "symbol": "LUMIAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/LUMIAUSDT.json",
+      "sha256": "7a1571b66fadf5749f3394c0bbfd9fe5ddb00111df81f3d952f409ac473bec16",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:30.125Z"
+    },
+    {
+      "symbol": "LYNUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/LYNUSDT.json",
+      "sha256": "b8cfa9e6f21cc616efe3e7f7f1e39ce20acfb4bb2f3da81ea394dbd081fa05d2",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:56.096Z"
+    },
+    {
+      "symbol": "LYNUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/LYNUSDT.json",
+      "sha256": "2230a47ec70aefa70084558d59405ced24774da0b396013cb9489666c6c722d2",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:29.760Z"
+    },
+    {
+      "symbol": "MAGICUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/MAGICUSDT.json",
+      "sha256": "5bff2194adc8f08aff77bbebbda7d0d4764be032b3ed8ed71f2bac395d4c3221",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:28.113Z"
+    },
+    {
+      "symbol": "MAGICUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/MAGICUSDT.json",
+      "sha256": "f973de30d3d284dd4878ef513d5125b90384bcaef5b957ed799b6a67859eb0de",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:29.899Z"
+    },
+    {
+      "symbol": "MARSCOINUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/MARSCOINUSDT.json",
+      "sha256": "12a7cc65fdc8e7fda1fadcf4e89fbaf0262b5c29cbff6ae79b90011f81bbb6be",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:50.652Z"
+    },
+    {
+      "symbol": "MARSCOINUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/MARSCOINUSDT.json",
+      "sha256": "217a533ac939b3aa0bd262c7decf9fc2e8485039ba711f316e78e37f22e20445",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:29.870Z"
+    },
+    {
+      "symbol": "MERLUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/MERLUSDT.json",
+      "sha256": "f052584a662089c562ec035402b873e78859213d01b1d3c211fb10f493c73776",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:56.394Z"
+    },
+    {
+      "symbol": "MERLUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/MERLUSDT.json",
+      "sha256": "79843b3de83f5d67403758f99018752b79dd80829340f870df5ed65fa1e222d6",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:33.650Z"
+    },
+    {
+      "symbol": "METUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/METUSDT.json",
+      "sha256": "6258ea8d341dc10e7750a9ce26fd357f9f1f4829c27801750d441c144978e35b",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:56.227Z"
+    },
+    {
+      "symbol": "METUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/METUSDT.json",
+      "sha256": "4a7c44bd2c5b2e429bb8f1e6abc026107dcf8e85bb06b15e04a44ba2e5874771",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:33.917Z"
+    },
+    {
+      "symbol": "MIRAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/MIRAUSDT.json",
+      "sha256": "9ce384420616baf660dd6a7d37c6cd989729dbb10e773b5ee4160eb23655d72c",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:04.684Z"
+    },
+    {
+      "symbol": "MIRAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/MIRAUSDT.json",
+      "sha256": "2dd4c9f0f924c6e7a431a471bc4e1a4afa60c03c9786f936a0696bfefa2d7bac",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:33.511Z"
+    },
+    {
+      "symbol": "MOVEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/MOVEUSDT.json",
+      "sha256": "7d2a967df2d8b9e856cf819cbd3c17b610766eecdb7f1ab887b9561818d949f3",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:12:56.077Z"
+    },
+    {
+      "symbol": "MOVEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/MOVEUSDT.json",
+      "sha256": "8be83218e6875c53cd8af1dad4652533a01ca7dda16c473a365c414654cb7c75",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:33.483Z"
+    },
+    {
+      "symbol": "NEIROUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/NEIROUSDT.json",
+      "sha256": "3ad79212b42d4c7042be21dc1e07a98c16e87fbcf9ada660b700acd2ccc4b488",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:59.880Z"
+    },
+    {
+      "symbol": "NEIROUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/NEIROUSDT.json",
+      "sha256": "45bb129ff83d8d10907bdb6a476a012b81de05e5cd7bd00f6c0a8beca19bdc9f",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:37.068Z"
+    },
+    {
+      "symbol": "NIGHTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/NIGHTUSDT.json",
+      "sha256": "c97f96564ada4f14a99192cad30d7778c6bd0aacb8f118106aaa013a25fcb17a",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:00.374Z"
+    },
+    {
+      "symbol": "NIGHTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/NIGHTUSDT.json",
+      "sha256": "7d6236edf64a00f05c7b08d2691eb165a3b908576e1e434c4d0b8c2a2f8c7918",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:37.453Z"
+    },
+    {
+      "symbol": "NXPCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/NXPCUSDT.json",
+      "sha256": "2016a00cef9698345ae3df49fdb2e7e41a85c7fcc50c193ae0bfca571c023a87",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:08:59.575Z"
+    },
+    {
+      "symbol": "NXPCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/NXPCUSDT.json",
+      "sha256": "c34fbd96a16ca3423fe8fc1bc2e53fead4a29e2676a8c2473628033c5b80bbea",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:37.658Z"
+    },
+    {
+      "symbol": "OGUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/OGUSDT.json",
+      "sha256": "aeb965eae5d4bb783e278ab4e696f064cdc98056d4cfbead6aa576cd51f571cb",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:46.851Z"
+    },
+    {
+      "symbol": "OGUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/OGUSDT.json",
+      "sha256": "5087b380a731dbb2b47e41273649a94e48292f8300bfb075de7be2a8c2ef56fc",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:37.237Z"
+    },
+    {
+      "symbol": "ONEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ONEUSDT.json",
+      "sha256": "801d2fe15e237f60027ad91168370c472676089e1eaf098cc3084628532413f4",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:04.106Z"
+    },
+    {
+      "symbol": "ONEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ONEUSDT.json",
+      "sha256": "c24034b2d78cef3d47370762601a4f665911e55d6a46846d3d901286aec2d5a3",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:41.015Z"
+    },
+    {
+      "symbol": "ONGUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ONGUSDT.json",
+      "sha256": "8ddbe153546b436519eaefb80a0500a0ec064b25420f0c8af6d73fa2064b5da2",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:39.674Z"
+    },
+    {
+      "symbol": "ONGUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ONGUSDT.json",
+      "sha256": "7f21ff5f8da9ff2a1b6811b8b7fa5fadcd06d7c5493ea036c6f21b3626e0ac40",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:40.913Z"
+    },
+    {
+      "symbol": "ONUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ONUSDT.json",
+      "sha256": "ff7268dfa7a2cd91ee32d5e232897e36fbf6bfaa7746c54e6ad534428e3560b5",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:03.685Z"
+    },
+    {
+      "symbol": "ONUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ONUSDT.json",
+      "sha256": "96f530f1560f5602a7cd386170c637d14d26505285a2eb8a201779ccd4fb390d",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:40.762Z"
+    },
+    {
+      "symbol": "OUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/OUSDT.json",
+      "sha256": "3c34de2673f4a2ce515ee9ae93bb31881c63f51f4b3516aceb84a1af8ffd8181",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:03.828Z"
+    },
+    {
+      "symbol": "OUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/OUSDT.json",
+      "sha256": "41e9abc8a12329ff4aae303166da79f6e2a564c16475fb7e0d8a904a0c6ca213",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:40.047Z"
+    },
+    {
+      "symbol": "PHAROSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/PHAROSUSDT.json",
+      "sha256": "bfe0073d1ce92856e94fb95f8c267a16348bd141c33eb0ba240cc84e9dfee467",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:07.339Z"
+    },
+    {
+      "symbol": "PHAROSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/PHAROSUSDT.json",
+      "sha256": "de2c2bc90054362c6f2a942c87130387bff96b29e545022adef8cbf63e124872",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:44.320Z"
+    },
+    {
+      "symbol": "PIEVERSEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/PIEVERSEUSDT.json",
+      "sha256": "da520e0a79552217920a926c0faf10f8b3842a92604219279528439275f8edd7",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:07.665Z"
+    },
+    {
+      "symbol": "PIEVERSEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/PIEVERSEUSDT.json",
+      "sha256": "d8edaf99997d29c301eb0325bc99d978a6b91eff6a20a94fd238698496f0de04",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:44.399Z"
+    },
+    {
+      "symbol": "PLAYUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/PLAYUSDT.json",
+      "sha256": "9eac10c9aa883d5a352d78f93eae6f45b5287f5c80d78d57dc1c52d619367659",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:07.804Z"
+    },
+    {
+      "symbol": "PLAYUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/PLAYUSDT.json",
+      "sha256": "c61e6426d236facf1a278450d41d1317c9ab7f0a1c1cbad593038a1a5b2f74bf",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:44.309Z"
+    },
+    {
+      "symbol": "PONSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/PONSUSDT.json",
+      "sha256": "858ce5707981ef226d2eb44a9574fa4722801787397a282cc45f996532deefa3",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:07.489Z"
+    },
+    {
+      "symbol": "PONSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/PONSUSDT.json",
+      "sha256": "2bfbd43cf7005084b3316dbe809e709cdede61866f0a83b5d04e57c14b279f94",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:43.054Z"
+    },
+    {
+      "symbol": "POPCATUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/POPCATUSDT.json",
+      "sha256": "7b08e087eb9cedb814575ae64d674824cf6351ae121a348f0fd72a06c326f187",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:01.365Z"
+    },
+    {
+      "symbol": "POPCATUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/POPCATUSDT.json",
+      "sha256": "7c292954d33801f79b4f9f4cbfc714298f032ed6d4ee9390da0ed424e8046510",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:47.596Z"
+    },
+    {
+      "symbol": "POWRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/POWRUSDT.json",
+      "sha256": "4c5619bff88517b99b71899696111cb50c4fa54ea12567380a304be9987eef18",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:36.009Z"
+    },
+    {
+      "symbol": "POWRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/POWRUSDT.json",
+      "sha256": "ed40faad2e7397515965802fec2ee7a4618bc0affb5c183f61380dbfc21c18ed",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:47.391Z"
+    },
+    {
+      "symbol": "PROMUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/PROMUSDT.json",
+      "sha256": "cf5b9631fbe3ecf7e05fe681a5eed1753a3aa0f34622e9957ba687aab310fdb7",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:07.502Z"
+    },
+    {
+      "symbol": "PROMUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/PROMUSDT.json",
+      "sha256": "601e7b2e795c3a3ea3a22c8a1e63aed99fe26c962bb125da447c24a2901a73ff",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:47.347Z"
+    },
+    {
+      "symbol": "QTUMUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/QTUMUSDT.json",
+      "sha256": "52e3a92406d42f47cf5d86775a8a9325a6acd222da6e74dc150b56a46f6c4f97",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:23.246Z"
+    },
+    {
+      "symbol": "QTUMUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/QTUMUSDT.json",
+      "sha256": "a2518e1a3954f10d5c013d55615afba6b72efc252057eee4e671edb8b603fdf9",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:47.330Z"
+    },
+    {
+      "symbol": "QUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/QUSDT.json",
+      "sha256": "06672d6f4fb0a692ad27deb937ba39890a87a2c356fabf96b9ebd6f84f0795c1",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 163,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:12.152Z"
+    },
+    {
+      "symbol": "QUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/QUSDT.json",
+      "sha256": "931f4b30c7cf18ed9e377d1d0d7594d50cdfcecc0f62d8e1dda508167a56234a",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:49.925Z"
+    },
+    {
+      "symbol": "RAREUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/RAREUSDT.json",
+      "sha256": "10f744dc2fe81ea1895306de8c80e92eb53636ca217473b965ecc58c6737ab58",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:11.862Z"
+    },
+    {
+      "symbol": "RAREUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/RAREUSDT.json",
+      "sha256": "1e308d2ae95b5206f4e8824379b9eaad28556d8140b1dc32d1cdf6c74e1f0a37",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:51.117Z"
+    },
+    {
+      "symbol": "REDUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/REDUSDT.json",
+      "sha256": "a96cff9af8bdece0df53cd497d451952031d22791188d5913a1fd75cf6a82c1c",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:12:52.476Z"
+    },
+    {
+      "symbol": "REDUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/REDUSDT.json",
+      "sha256": "85cf8120e380359a62d5b2abc44e53bde8c81795237c60922fee3393cc60e692",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:50.842Z"
+    },
+    {
+      "symbol": "RESOLVUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/RESOLVUSDT.json",
+      "sha256": "f77d98f8dee12f637e85e5b97acc4cffa446abb3ae5d2acaaa696df0773281f5",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:42.824Z"
+    },
+    {
+      "symbol": "RESOLVUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/RESOLVUSDT.json",
+      "sha256": "c287f91e3f6f7ddaf3e8781e25148483487f27de189432268102cb1b987af9de",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:51.175Z"
+    },
+    {
+      "symbol": "RSRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/RSRUSDT.json",
+      "sha256": "2bd711de7368859d96e13e5743781069abc2433a3db9517ffbaa5f11900d6c02",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:11.156Z"
+    },
+    {
+      "symbol": "RSRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/RSRUSDT.json",
+      "sha256": "6081f4e5abb6d78fc7000b2f644ae2ccdb9becd05f55a143e9e842cff0b4a0ed",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:54.681Z"
+    },
+    {
+      "symbol": "SCRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SCRUSDT.json",
+      "sha256": "85a140a63725f2ca4f3a664c95a2e6123a75cf50d7112e9e01bc8371833bcb3d",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:11.406Z"
+    },
+    {
+      "symbol": "SCRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SCRUSDT.json",
+      "sha256": "a674d0500209bbf830cecd46a1c692fad367fcca2dddd184124eeb1026513cd4",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:54.586Z"
+    },
+    {
+      "symbol": "SIGNUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SIGNUSDT.json",
+      "sha256": "b9678cf606d55a391e36b160d496506c2ba6a3beecec2def763920e355d494b0",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:15.486Z"
+    },
+    {
+      "symbol": "SIGNUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SIGNUSDT.json",
+      "sha256": "d6da0ff1489fb7c4c9722c839f49e1a8a5ae9b98eca800279eba48de518dd82e",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:53.230Z"
+    },
+    {
+      "symbol": "SKLUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SKLUSDT.json",
+      "sha256": "6ca66d4880bb55f047996dfb14604e75abc8a35f76a35a211e1b6a23dfa8e404",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:46.876Z"
+    },
+    {
+      "symbol": "SKLUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SKLUSDT.json",
+      "sha256": "9edac0daa25ee05bd458dd9658e48c42b71b2d6177f45aae385dab6c3b3cb63a",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:54.637Z"
+    },
+    {
+      "symbol": "SKRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SKRUSDT.json",
+      "sha256": "0fc266f4aebdbf3e7959185419cbaad4e2cf8fd4317b56b5e9d35bb0be20d954",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:04.746Z"
+    },
+    {
+      "symbol": "SKRUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SKRUSDT.json",
+      "sha256": "bc9786c418ebd4c930caa730a81f19f05d70c20ee7b8afa0bdd7d7c05dec666c",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:58.068Z"
+    },
+    {
+      "symbol": "SKYAIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SKYAIUSDT.json",
+      "sha256": "2a54d5de30a30954abffbfd648ca1d7d3afd6649ab286e5a373a1e230f157303",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:14.916Z"
+    },
+    {
+      "symbol": "SKYAIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SKYAIUSDT.json",
+      "sha256": "dfd980dd45b5decae130f4ebf454f1c414c8b54e2b1dcf4c8dab456106360246",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:57.231Z"
+    },
+    {
+      "symbol": "SNXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SNXUSDT.json",
+      "sha256": "05c130b96066a2e506bcf9a4fd988defec46c193c7d55b9e76c9da503d283e7d",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:11.716Z"
+    },
+    {
+      "symbol": "SNXUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SNXUSDT.json",
+      "sha256": "957575293c20865d68dcfd0b5e36dac964b4cc53cacd6e2bc876f0800e52e042",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:57.847Z"
+    },
+    {
+      "symbol": "SONICUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SONICUSDT.json",
+      "sha256": "941262e9fd60aee8eb31f2dc49704280f42d14edffc20a479ca0d3ea4a2fc763",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:50.556Z"
+    },
+    {
+      "symbol": "SONICUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SONICUSDT.json",
+      "sha256": "540a257d8c75981a1fd120f100066421ab6ca1cf033c3cd29ac32d34dc55ede5",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:15:58.340Z"
+    },
+    {
+      "symbol": "SOPHUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SOPHUSDT.json",
+      "sha256": "06e5884141d7cb999ebebdea71410b7c78e4b264e216847e95d42fae2ab47c70",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:14.897Z"
+    },
+    {
+      "symbol": "SOPHUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SOPHUSDT.json",
+      "sha256": "3b8407cd4e39fde4a4dc70646829cb7d52b42d25073a37223e9cc2917c58b8ec",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:01.912Z"
+    },
+    {
+      "symbol": "SQDUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SQDUSDT.json",
+      "sha256": "df2f7a8de5094cab4d61ae02fb125dc714425eed8d399efcb4395960745d697c",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:19.065Z"
+    },
+    {
+      "symbol": "SQDUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SQDUSDT.json",
+      "sha256": "15480cc323cb71e4511c62cc34606435327ec4cfe693eafa88b8fe2fe2b91b21",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:01.807Z"
+    },
+    {
+      "symbol": "STARUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/STARUSDT.json",
+      "sha256": "358571a1aacfaa51f58145a4c5a2b4199b2626d3b8ba209b95951130139ecafc",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:50.714Z"
+    },
+    {
+      "symbol": "STARUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/STARUSDT.json",
+      "sha256": "0e18211563ae37120b2ab16835b978c002850d80c959b27f92395f656a36ef77",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:01.666Z"
+    },
+    {
+      "symbol": "STEEMUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/STEEMUSDT.json",
+      "sha256": "8707494cd120906c21c191372f53100ffe19cafbf6ce4bf8b225d1c32b08d710",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:15.088Z"
+    },
+    {
+      "symbol": "STEEMUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/STEEMUSDT.json",
+      "sha256": "f3eb850d38ee026a769ae44322adfc6fd513dfd7ecff10c805c6f80161b76763",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:01.678Z"
+    },
+    {
+      "symbol": "SUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SUSDT.json",
+      "sha256": "ce41a63e57ac1515cbf822e5c0f9b3792e7254768d721b815c06d75932c6cc7a",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:47.069Z"
+    },
+    {
+      "symbol": "SUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SUSDT.json",
+      "sha256": "70b314a64d413d42aef17d971a9e5e7b116f210068fd1d76d7000a3d3b6182e2",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:05.659Z"
+    },
+    {
+      "symbol": "SWARMSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SWARMSUSDT.json",
+      "sha256": "031e420cf89e7fdec2a132766b45645517b1a73e8e8aae81b6b06962c2cc19f4",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:35.420Z"
+    },
+    {
+      "symbol": "SWARMSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SWARMSUSDT.json",
+      "sha256": "4168bf7b693e84d45e661c4e295555e9d5506dc90919ee1535db3dcc02438317",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:05.105Z"
+    },
+    {
+      "symbol": "SXTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/SXTUSDT.json",
+      "sha256": "abe4c2f092eaa6965af9b41986402eda7a1f19de62d4e4da15eadbc2d716467d",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:14:07.166Z"
+    },
+    {
+      "symbol": "SXTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/SXTUSDT.json",
+      "sha256": "55b3ad60a0fa6ef501175eea99d4927167bb00559915a936721693d8b54dbf35",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:05.022Z"
+    },
+    {
+      "symbol": "TAGUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/TAGUSDT.json",
+      "sha256": "4379b591972d4b3eeecc1adb12b9e24630cdc2ed5a9753f92cfc9fe60250fe66",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:19.006Z"
+    },
+    {
+      "symbol": "TAGUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/TAGUSDT.json",
+      "sha256": "fd740498d8380ea9514b2a88b7e8f58cb54cc75d88ec291973103dffa4bd173b",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:05.167Z"
+    },
+    {
+      "symbol": "TAKEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/TAKEUSDT.json",
+      "sha256": "a50a642956f9694211bb44604858fce06771ec8999fe238f72b06edbb1678a85",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:54.263Z"
+    },
+    {
+      "symbol": "TAKEUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/TAKEUSDT.json",
+      "sha256": "623e8ad389bb0f653c75c0bf545f05390d7842f4eb10c8c15cce421562e1652d",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:09.400Z"
+    },
+    {
+      "symbol": "TAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/TAUSDT.json",
+      "sha256": "27552c4c3801fa51766d619de832439a9012cfac6bbff07984326136b921ce69",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:19.033Z"
+    },
+    {
+      "symbol": "TAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/TAUSDT.json",
+      "sha256": "517bb078b57d22eaa9da3170ba7981aabb5ae913e6863b78ef22a84d2cd08472",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:09.163Z"
+    },
+    {
+      "symbol": "TRADOORUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/TRADOORUSDT.json",
+      "sha256": "0e87082f2fe0b1920713cc003b0cb8146c6fc0a6507242ba9bedcc5f595c9f06",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:22.705Z"
+    },
+    {
+      "symbol": "TRADOORUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/TRADOORUSDT.json",
+      "sha256": "dfcb997b6e441c4024b9bf860670b9a6a184c0aa10cd068c93357dc365088721",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:08.816Z"
+    },
+    {
+      "symbol": "TRIAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/TRIAUSDT.json",
+      "sha256": "c6dbabe046789311d923052dc057eba800e1e2192aed072515ac474cac7face5",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:35.417Z"
+    },
+    {
+      "symbol": "TRIAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/TRIAUSDT.json",
+      "sha256": "c3fd5837fc55658372800c4437083ebfe79c01eba135ba384e445b0dc65f9685",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:08.010Z"
+    },
+    {
+      "symbol": "TSTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/TSTUSDT.json",
+      "sha256": "12da3186cb7db8f277cb8a02592087e8a8010b667e8c4eb0c16308023b806462",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:22.601Z"
+    },
+    {
+      "symbol": "TSTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/TSTUSDT.json",
+      "sha256": "a55387f997a68cd492b4ba5a4f0939324ecec3f1b0ad8c3368abf23104e06d7c",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:12.527Z"
+    },
+    {
+      "symbol": "USELESSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/USELESSUSDT.json",
+      "sha256": "ecf7379e7f9876c7a092221cac420505e29ce9b2fdba0f45f2c8021de569f1af",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:22.287Z"
+    },
+    {
+      "symbol": "USELESSUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/USELESSUSDT.json",
+      "sha256": "7cdb041df4fd9c0848fa028af532aae49044735432fe243046bf0d3789712129",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:12.828Z"
+    },
+    {
+      "symbol": "USTCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/USTCUSDT.json",
+      "sha256": "84e6028d1e8c8d997f51fdd07529c3e81c95ed8b2c4beba1965f44193ddfcbd7",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:15.229Z"
+    },
+    {
+      "symbol": "USTCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/USTCUSDT.json",
+      "sha256": "7c890dd981b97b405b37c3267cb4198d28a105a4967f1ba9eaeb25be771b0b85",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:12.542Z"
+    },
+    {
+      "symbol": "USUALUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/USUALUSDT.json",
+      "sha256": "442afe0a14b025ffb5a048a49c38690045c2398822e642f6b976bc469730a364",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:26.124Z"
+    },
+    {
+      "symbol": "USUALUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/USUALUSDT.json",
+      "sha256": "a0c8b96b707507070ebad242da434fd6205e333fe1387f06c038b391efd829b3",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:12.619Z"
+    },
+    {
+      "symbol": "WUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/WUSDT.json",
+      "sha256": "b106cde9e9e078911a1737b3b407819726e40baf2026976d8ef8722c3110e59e",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:11.054Z"
+    },
+    {
+      "symbol": "WUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/WUSDT.json",
+      "sha256": "6d6bee338af3cb42b262c19317533affce07db43fc07573c7e642199b293dc2c",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:16.492Z"
+    },
+    {
+      "symbol": "XAUTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/XAUTUSDT.json",
+      "sha256": "7f9a40ec4f21d19c5b67856dd83b46a96079a5571dde4ea07045b2e76bd7a9ef",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:54.173Z"
+    },
+    {
+      "symbol": "XAUTUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/XAUTUSDT.json",
+      "sha256": "d3eac06cfca7ec120f4586f4e293f45989814983b5fd6c68f5bdce8e27696b66",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:16.150Z"
+    },
+    {
+      "symbol": "XNYUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/XNYUSDT.json",
+      "sha256": "75d72920f378e50b665c2e2f468688e327ad2c1d75e4d7d58480549e86dc0bd7",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:57.764Z"
+    },
+    {
+      "symbol": "XNYUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/XNYUSDT.json",
+      "sha256": "14214ea27b5936b5ecbb588207d0d32b5488c5e3b711bd34372738527061ab58",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:16.123Z"
+    },
+    {
+      "symbol": "XPINUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/XPINUSDT.json",
+      "sha256": "58c0767012938c447e4fc7e4118a2d07986ad045858d119de991e23468a22528",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:43.584Z"
+    },
+    {
+      "symbol": "XPINUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/XPINUSDT.json",
+      "sha256": "cf40d1f9e510ecb476a5a9a90c30f44b9d112ca849bf116598e586f4e57de4f4",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:16.451Z"
+    },
+    {
+      "symbol": "YFIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/YFIUSDT.json",
+      "sha256": "36e1e416f708a0e51524a43cbafbe98043f9237c4e90988689a9f811511a178d",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:07.885Z"
+    },
+    {
+      "symbol": "YFIUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/YFIUSDT.json",
+      "sha256": "0416ecaacdc0ed2b2e7603d27a6c20f9a1e533b637accbc486f5bdbce9f2962f",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:19.783Z"
+    },
+    {
+      "symbol": "ZAMAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ZAMAUSDT.json",
+      "sha256": "c9b4c884c3ed4af9d251d70b2cdfa9d59432593a21a83d9ceb4aa4226eb4de24",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:32.022Z"
+    },
+    {
+      "symbol": "ZAMAUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ZAMAUSDT.json",
+      "sha256": "7745bec50c5d21649e4c9dc235d0f85fd1268c547419928edb35bbdf3f06b97b",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:20.242Z"
+    },
+    {
+      "symbol": "ZECUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ZECUSDT.json",
+      "sha256": "3e3709a2aeb9e336e8d0e96c7d47ebf3337bae3806c7609a16ec7c598bb9bd8b",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 50,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:26.117Z"
+    },
+    {
+      "symbol": "ZECUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ZECUSDT.json",
+      "sha256": "fce8a2a44504fe71bdc92e6c224b5ae3d21b68664a4c61c6c719064a18635ffb",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:18.713Z"
+    },
+    {
+      "symbol": "ZEREBROUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ZEREBROUSDT.json",
+      "sha256": "0f9931a5307fee9db20cd2e47c5c73c9854b6bb35abb637c38d2429c6b3e158c",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:11.226Z"
+    },
+    {
+      "symbol": "ZEREBROUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ZEREBROUSDT.json",
+      "sha256": "c74cc680f1caa4965fc225aca1d03e8eb194bfcdf3c20f36ce774203d95ee27c",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:18.959Z"
+    },
+    {
+      "symbol": "ZILUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ZILUSDT.json",
+      "sha256": "4716527b65844b2883a18eed9f726dcd1922f7e8f65c9567af9dd0e53787854a",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:09:25.816Z"
+    },
+    {
+      "symbol": "ZILUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ZILUSDT.json",
+      "sha256": "57f94b55f400c6b3035c99319fbf56416aea36d7b304d91b471431260822f2ae",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:23.527Z"
+    },
+    {
+      "symbol": "ZKCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw/ZKCUSDT.json",
+      "sha256": "e8d99a90637b0f4831d7894060b5d74ae24a33a08686d9236e1037b301aa081c",
+      "rows": {
+        "klines": 398,
+        "oi": 398,
+        "funding": 100,
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:13:31.832Z"
+    },
+    {
+      "symbol": "ZKCUSDT",
+      "path": "docs/security/evidence/2026-11-11-pre-gainer-raw-4h/ZKCUSDT.json",
+      "sha256": "7fe2354f1c19ced7d3d0d34254a29aaaea48a6b37e91cf2a05b7d175aa254675",
+      "rows": {
+        "klines_4h": 202
+      },
+      "problems": [],
+      "retrieved_at": "2026-11-11T04:16:23.331Z"
+    }
+  ]
+}

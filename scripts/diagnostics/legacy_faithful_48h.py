@@ -1,0 +1,833 @@
+# Archived diagnostic model only. Network fetch and automatic entry points removed.
+# Use research_verified_replay.py; this is never used by strict replay.
+"""Archived six-token diagnostic model supplied November 4, 2026.
+
+This model uses synthetic spreads, neutral macro, assumed basis/depth, a selected universe,
+and first-created-opportunity hypothesis fallback. It is NOT a strict historical replay.
+Research_verified_replay performs preflight, freezes inputs/configuration and labels outputs.
+Network fetchers and automatic main/fetch fallback were removed from this archived copy.
+The canonical production scoring/classification functions remain unchanged.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Sequence
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+import algotrader.application.crypto_screener as cs_mod
+from algotrader.adapters.external.models import MacroSentimentContext
+from algotrader.application.crypto_screener import CryptoOpportunityScreener
+from algotrader.config import load_settings
+from algotrader.domain.archetypes import LongArchetypeFeatures
+from algotrader.domain.crypto_screener_models import (
+    CryptoOpportunity,
+    ScreenerMode,
+    SetupLabel,
+)
+from algotrader.domain.indicators import taker_buy_ratio_from_candles
+from algotrader.domain.models import (
+    Candle,
+    DerivativesSnapshot,
+    Direction,
+    Instrument,
+    InstrumentId,
+    Quote,
+    Venue,
+)
+from algotrader.domain.scan_observations import ScanDecisionJournal
+from algotrader.domain.screener_policy import publication_rejection_reasons
+from algotrader.domain.screening_gates import LongGateInputs
+
+SCRATCH_DIR = Path(__file__).resolve().parent
+FAITHFUL_RAW_PATH = SCRATCH_DIR / "faithful_inputs_20261103T1200Z.json"
+FAITHFUL_RESULTS_PATH = SCRATCH_DIR / "faithful_replay_results_20261103T1200Z.json"
+
+ANCHOR_END_UTC = datetime(2026, 11, 3, 11, 59, 59, 999000, tzinfo=UTC)
+ANCHOR_END_MS = int(ANCHOR_END_UTC.timestamp() * 1000)
+
+EVAL_SYMBOLS = ("HOTUSDT", "ICNTUSDT", "BMTUSDT", "MEGAUSDT", "TRUSTUSDT", "BEATUSDT")
+ALL_FETCH_SYMBOLS = ("BTCUSDT", *EVAL_SYMBOLS)
+HORIZONS_HOURS = (44, 40, 36, 32, 28, 24, 20, 16, 12, 8, 4, 0)
+
+
+def _serialize_candle(c: Candle) -> dict[str, Any]:
+    return {
+        "opened_at": c.opened_at.isoformat(),
+        "closed_at": c.closed_at.isoformat(),
+        "open": str(c.open),
+        "high": str(c.high),
+        "low": str(c.low),
+        "close": str(c.close),
+        "volume": str(c.volume),
+        "quote_volume": str(c.quote_volume),
+        "closed": c.closed,
+        "taker_buy_volume": str(c.taker_buy_volume),
+        "taker_buy_quote_volume": str(c.taker_buy_quote_volume),
+    }
+
+
+def _deserialize_candle(d: dict[str, Any]) -> Candle:
+    return Candle(
+        opened_at=datetime.fromisoformat(d["opened_at"]),
+        closed_at=datetime.fromisoformat(d["closed_at"]),
+        open=Decimal(d["open"]),
+        high=Decimal(d["high"]),
+        low=Decimal(d["low"]),
+        close=Decimal(d["close"]),
+        volume=Decimal(d["volume"]),
+        quote_volume=Decimal(d["quote_volume"]),
+        closed=bool(d["closed"]),
+        taker_buy_volume=Decimal(d["taker_buy_volume"]),
+        taker_buy_quote_volume=Decimal(d["taker_buy_quote_volume"]),
+    )
+
+
+def _serialize_instrument(inst: Instrument) -> dict[str, Any]:
+    return {
+        "symbol": inst.id.symbol,
+        "base_asset": inst.base_asset,
+        "quote_asset": inst.quote_asset,
+        "asset_class": inst.asset_class.value,
+        "market_kind": inst.market_kind.value,
+        "trading": inst.trading,
+        "price_tick": str(inst.price_tick),
+        "quantity_step": str(inst.quantity_step),
+        "min_quantity": str(inst.min_quantity),
+        "min_notional": str(inst.min_notional),
+        "max_leverage": inst.max_leverage,
+    }
+
+
+def _deserialize_instrument(d: dict[str, Any]) -> Instrument:
+    from algotrader.domain.models import AssetClass, MarketKind
+
+    return Instrument(
+        id=InstrumentId(Venue.BINANCE_USDM, d["symbol"]),
+        base_asset=d["base_asset"],
+        quote_asset=d["quote_asset"],
+        asset_class=AssetClass(d["asset_class"]),
+        market_kind=MarketKind(d["market_kind"]),
+        trading=bool(d["trading"]),
+        price_tick=Decimal(d["price_tick"]),
+        quantity_step=Decimal(d["quantity_step"]),
+        min_quantity=Decimal(d["min_quantity"]),
+        min_notional=Decimal(d["min_notional"]),
+        max_leverage=int(d["max_leverage"]),
+    )
+
+
+class NeutralMacroSource:
+    async def get_context(self) -> MacroSentimentContext:
+        return MacroSentimentContext()
+
+
+class PointInTimeReplayMarket:
+    """Point-in-time MarketDataPort + DerivativesDataPort strictly bounded at cutoff_dt."""
+
+    venue = Venue.BINANCE_USDM
+
+    def __init__(self, raw: dict[str, Any], cutoff_dt: datetime) -> None:
+        self.raw = raw
+        self.cutoff_dt = cutoff_dt
+        self.cutoff_ms = int(cutoff_dt.timestamp() * 1000)
+        self._instruments = [_deserialize_instrument(d) for d in raw["instruments"].values()]
+
+    async def instruments(self) -> Sequence[Instrument]:
+        return self._instruments
+
+    def _funding_at_cutoff(self, symbol: str) -> Decimal | None:
+        rows = self.raw["symbols"][symbol]["funding_rate_hist"]
+        valid = [r for r in rows if int(r["fundingTime"]) <= self.cutoff_ms + 1000]
+        if not valid:
+            return None
+        latest = max(valid, key=lambda r: int(r["fundingTime"]))
+        val = Decimal(str(latest["fundingRate"]))
+        return val if val.is_finite() else None
+
+    async def quotes(self, instruments: Sequence[Instrument]) -> Sequence[Quote]:
+        out: list[Quote] = []
+        for inst in instruments:
+            sym = inst.id.symbol
+            if sym not in self.raw["symbols"]:
+                continue
+            c1h = [
+                _deserialize_candle(d)
+                for d in self.raw["symbols"][sym]["candles_1h"]
+                if datetime.fromisoformat(d["closed_at"]) <= self.cutoff_dt
+            ]
+            if len(c1h) < 25:
+                continue
+            win_24h = c1h[-24:]
+            close = win_24h[-1].close
+            open_24h = win_24h[0].open
+            high_24h = max(c.high for c in win_24h)
+            low_24h = min(c.low for c in win_24h)
+            qvol_24h = sum((c.quote_volume for c in win_24h), Decimal("0"))
+            chg_pct_24h = (
+                ((close - open_24h) / open_24h) * Decimal("100") if open_24h > 0 else Decimal("0")
+            )
+            funding = self._funding_at_cutoff(sym) if sym != "BTCUSDT" else Decimal("0.0001")
+            # Minimal 1-tick synthetic bid/ask around closed candle price (spread < 5 bps);
+            # basis_pct is explicitly None because historical intrawindow premiumIndex is not in public klines.
+            half_tick = inst.price_tick / Decimal("2")
+            bid = max(inst.price_tick, close - half_tick)
+            ask = close + half_tick
+            out.append(
+                Quote(
+                    instrument_id=inst.id,
+                    bid=bid,
+                    ask=ask,
+                    last=close,
+                    quote_volume_24h=qvol_24h,
+                    high_24h=high_24h,
+                    low_24h=low_24h,
+                    price_change_pct_24h=chg_pct_24h,
+                    funding_rate=funding,
+                    basis_pct=None,
+                )
+            )
+        return out
+
+    async def candles(self, instrument: Instrument, interval: str, limit: int) -> Sequence[Candle]:
+        sym = instrument.id.symbol
+        key = f"candles_{interval}"
+        all_bars = [
+            _deserialize_candle(d)
+            for d in self.raw["symbols"][sym].get(key, [])
+            if datetime.fromisoformat(d["closed_at"]) <= self.cutoff_dt
+        ]
+        return all_bars[-limit:]
+
+    async def derivatives_snapshot(self, instrument: Instrument) -> DerivativesSnapshot:
+        sym = instrument.id.symbol
+        sym_data = self.raw["symbols"][sym]
+        has_degraded = False
+
+        funding = self._funding_at_cutoff(sym)
+        if funding is None:
+            has_degraded = True
+
+        # Exact timestamp-matched OI horizons (1h, 4h, 24h, 168h) at cutoff_ms
+        # Notice: Binance hourly OI timestamps are on the hour (e.g. 12:00:00.000) while 1h candle closed_at is 11:59:59.999.
+        reference_at = self.cutoff_ms + 1
+        oi_samples: dict[int, Decimal] = {}
+        for row in sym_data["open_interest_hist_1h"]:
+            ts = int(row["timestamp"])
+            qty = Decimal(str(row["sumOpenInterest"]))
+            if 0 < ts <= reference_at + 60_000 and qty.is_finite() and qty > 0:
+                oi_samples[ts] = qty
+
+        oi_1h = oi_4h = oi_24h = oi_7d = None
+        latest_qty = Decimal("0")
+        if oi_samples:
+            latest_at = max(oi_samples)
+            if -300_000 <= reference_at - latest_at <= 3_900_000:
+                latest_qty = oi_samples[latest_at]
+
+                def change_over(hours: int) -> Decimal | None:
+                    target_at = latest_at - hours * 3_600_000
+                    baseline_at = min(oi_samples, key=lambda at: abs(at - target_at))
+                    if abs(baseline_at - target_at) > 300_000:
+                        return None
+                    baseline = oi_samples[baseline_at]
+                    return (latest_qty - baseline) / baseline
+
+                oi_1h = change_over(1)
+                oi_4h = change_over(4)
+                oi_24h = change_over(24)
+                oi_7d = change_over(168)
+                if any(x is None for x in (oi_1h, oi_4h, oi_24h, oi_7d)):
+                    has_degraded = True
+            else:
+                has_degraded = True
+        else:
+            has_degraded = True
+
+        # Point-in-time taker buy/sell ratios from consecutive closed 1h candles up to cutoff_dt
+        c1h = [
+            _deserialize_candle(d)
+            for d in sym_data["candles_1h"]
+            if datetime.fromisoformat(d["closed_at"]) <= self.cutoff_dt
+        ]
+        taker_1h = taker_buy_ratio_from_candles(c1h, hours=1)
+        taker_4h = taker_buy_ratio_from_candles(c1h, hours=4)
+        taker_24h = taker_buy_ratio_from_candles(c1h, hours=24)
+        if taker_1h is None or taker_4h is None:
+            has_degraded = True
+
+        return DerivativesSnapshot(
+            funding_rate=funding,
+            basis_rate=Decimal("0"),
+            open_interest=latest_qty,
+            open_interest_change_1h=oi_1h,
+            taker_buy_sell_ratio=taker_1h,
+            bid_depth_notional=Decimal("0"),
+            ask_depth_notional=Decimal("0"),
+            open_interest_change_4h=oi_4h,
+            open_interest_change_24h=oi_24h,
+            open_interest_change_7d=oi_7d,
+            taker_buy_sell_ratio_4h=taker_4h,
+            taker_buy_sell_ratio_24h=taker_24h,
+            degraded_telemetry=has_degraded,
+        )
+
+
+def candidate_long_archetypes(features: LongArchetypeFeatures) -> list[SetupLabel]:
+    """Step 2 Targeted Challenger helper: evaluate every branch of classify_long_archetype
+    in exact priority order without the first return masking subsequent matching hypotheses.
+    """
+    candidates: list[SetupLabel] = []
+
+    def _add(label: SetupLabel) -> None:
+        if label not in candidates:
+            candidates.append(label)
+
+    atr = max(features.atr14_4h, Decimal("1e-8"))
+    funding_8h = features.funding_rate_8h
+    oi_7d = features.oi_delta_7d or Decimal("0")
+    oi_4h = features.oi_delta_4h or Decimal("0")
+    taker_4h = features.taker_buy_ratio_4h
+
+    # 0a. FUNDING_SQUEEZE_SPRING_LONG
+    is_funding_fuel = (
+        funding_8h is not None
+        and funding_8h <= Decimal("-0.00015")
+        and features.oi_delta_24h is not None
+        and features.oi_delta_24h >= Decimal("0.06")
+        and (
+            (
+                features.taker_buy_ratio_1h is not None
+                and features.taker_buy_ratio_1h >= Decimal("1.18")
+            )
+            or (taker_4h is not None and taker_4h >= Decimal("1.18"))
+        )
+    )
+    low_4h = features.low_4h or features.low_24h
+    holds_higher_low = (features.low_30d > Decimal("0")) and (
+        low_4h >= features.low_30d * Decimal("1.03")
+    )
+    inside_value_area = (features.close >= features.val_30d) and (
+        features.pos_in_range_30d >= Decimal("0.15")
+    )
+    ema20_4h_val = features.ema20_4h or features.ema50_4h
+    reclaims_emas = (
+        features.close >= ema20_4h_val
+        and features.close >= features.ema50_4h * Decimal("0.965")
+        and (
+            (features.rvol_1h is not None and features.rvol_1h >= Decimal("1.35"))
+            or features.rvol_4h >= Decimal("1.35")
+        )
+    )
+    if is_funding_fuel and holds_higher_low and inside_value_area and reclaims_emas:
+        _add(SetupLabel.FUNDING_SQUEEZE_SPRING_LONG)
+
+    # 0b. SHORT_SQUEEZE_ABSORPTION_LONG
+    is_funding_crowded_short = funding_8h is not None and funding_8h <= Decimal("-0.00005")
+    is_oi_expanding = oi_7d >= Decimal("0.15") or oi_4h >= Decimal("0.035")
+    has_buyer_absorption = features.cvd_24h > Decimal("0") or (
+        taker_4h is not None and taker_4h >= Decimal("1.00")
+    )
+    holding_structure_0b = features.close >= features.ema50_4h * Decimal(
+        "0.975"
+    ) or features.close >= features.poc_30d * Decimal("0.975")
+    if (
+        is_funding_crowded_short
+        and is_oi_expanding
+        and has_buyer_absorption
+        and holding_structure_0b
+    ):
+        _add(SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG)
+
+    # 1. COIL_SPRING_LONG
+    spring_threshold = min(features.ema50_4h, features.poc_30d) - Decimal("0.10") * atr
+    reclaim_threshold = max(features.ema50_4h, features.poc_30d * Decimal("0.99"))
+    if (
+        features.low_24h < spring_threshold
+        and features.close >= reclaim_threshold
+        and features.vcr_4h <= Decimal("0.90")
+    ):
+        _add(SetupLabel.COIL_SPRING_LONG)
+
+    is_mom_up = (features.macd_hist_4h >= features.macd_hist_4h_prev) or (
+        features.macd_hist_4h > Decimal("0")
+    )
+
+    # 2. VCP_COMPRESSION_LONG
+    is_vcp_compressed = features.bb_inside_kc_4h or (features.bb_bandwidth_4h <= Decimal("0.18"))
+    has_supply_exhaustion = (features.vcr_4h <= Decimal("1.10")) or (
+        features.rvol_4h <= Decimal("1.15")
+    )
+    if (
+        features.range_height_30d <= Decimal("0.45")
+        and is_vcp_compressed
+        and has_supply_exhaustion
+        and is_mom_up
+        and features.close >= features.ema50_4h * Decimal("0.980")
+        and features.dist_to_ceiling <= Decimal("0.12")
+        and features.pos_in_range_30d > Decimal("0.60")
+    ):
+        _add(SetupLabel.VCP_COMPRESSION_LONG)
+
+    # 3. OI_ACCUMULATION_LONG
+    is_compressed = features.bb_inside_kc_4h or (features.bb_bandwidth_4h <= Decimal("0.22"))
+    holding_structure = (
+        features.close >= features.ema50_4h * Decimal("0.975")
+        or features.close >= features.poc_30d * Decimal("0.975")
+    ) and (features.val_30d <= Decimal("0") or features.close >= features.val_30d)
+    is_stealth_compressed = Decimal("-0.04") <= features.ret_24h <= Decimal(
+        "0.09"
+    ) and features.bb_bandwidth_4h <= Decimal("0.20")
+    has_acute_derivative_loading = (
+        (features.oi_delta_4h is not None and features.oi_delta_4h >= Decimal("0.05"))
+        or (features.oi_delta_24h is not None and features.oi_delta_24h >= Decimal("0.12"))
+    ) and (
+        (features.taker_buy_ratio_1h is not None and features.taker_buy_ratio_1h >= Decimal("1.15"))
+        or (taker_4h is not None and taker_4h >= Decimal("1.15"))
+    )
+    if is_stealth_compressed and has_acute_derivative_loading and holding_structure:
+        _add(SetupLabel.OI_ACCUMULATION_LONG)
+    if (
+        Decimal("0.08") <= oi_7d <= Decimal("0.60")
+        and is_compressed
+        and abs(features.ret_7d) <= Decimal("0.12")
+        and is_mom_up
+        and holding_structure
+    ):
+        _add(SetupLabel.OI_ACCUMULATION_LONG)
+
+    # 4. RANGE_BOTTOM_ACCUMULATION_LONG
+    if (
+        features.close >= features.val_30d
+        and features.range_height_30d <= Decimal("0.55")
+        and (is_compressed or features.bb_bandwidth_4h <= Decimal("0.24"))
+        and is_mom_up
+        and features.close >= features.ema50_4h * Decimal("0.975")
+        and features.pos_in_range_30d <= Decimal("0.60")
+        and features.vcr_4h <= Decimal("1.20")
+        and taker_4h is not None
+        and taker_4h >= Decimal("0.95")
+    ):
+        _add(SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG)
+
+    # 5. BREAKOUT_LONG
+    at_or_above_resistance = (features.close >= features.local_swing_high_4h) or (
+        features.close >= features.vah_30d
+    )
+    has_breakout_volume = (
+        features.rvol_4h >= Decimal("1.25")
+        and features.oi_delta_4h is not None
+        and oi_4h >= Decimal("0.0")
+    ) or (features.rvol_4h >= Decimal("2.0"))
+    if at_or_above_resistance and has_breakout_volume and features.norm_momentum_1h > Decimal("0"):
+        _add(SetupLabel.BREAKOUT_LONG)
+
+    # 6. MOMENTUM_EMERGING_LONG
+    if (
+        features.btc_residual_alpha_24h >= Decimal("0.03")
+        and features.macd_hist_4h > features.macd_hist_4h_prev
+        and features.macd_hist_1h > Decimal("0")
+        and taker_4h is not None
+        and taker_4h >= Decimal("1.15")
+    ):
+        _add(SetupLabel.MOMENTUM_EMERGING_LONG)
+
+    # 7. Structural Market-Profile Affinity Fallback
+    if at_or_above_resistance and has_breakout_volume:
+        _add(SetupLabel.BREAKOUT_LONG)
+    if oi_7d >= Decimal("0.05") and is_compressed and is_mom_up and holding_structure:
+        _add(SetupLabel.OI_ACCUMULATION_LONG)
+    if is_compressed or features.bb_bandwidth_4h <= Decimal("0.22"):
+        if features.pos_in_range_30d > Decimal("0.60") and has_supply_exhaustion and is_mom_up:
+            _add(SetupLabel.VCP_COMPRESSION_LONG)
+        is_val_support_holding = (
+            features.close >= features.val_30d
+            and features.close >= features.ema50_4h * Decimal("0.975")
+        )
+        if (
+            features.pos_in_range_30d <= Decimal("0.60")
+            and is_val_support_holding
+            and is_mom_up
+            and taker_4h is not None
+            and taker_4h >= Decimal("0.95")
+        ):
+            _add(SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG)
+        if (
+            features.bb_bandwidth_4h <= Decimal("0.15")
+            and is_val_support_holding
+            and features.close >= features.poc_30d * Decimal("0.985")
+            and taker_4h is not None
+            and taker_4h >= Decimal("0.95")
+            and has_supply_exhaustion
+        ):
+            if features.pos_in_range_30d > Decimal("0.55"):
+                _add(SetupLabel.VCP_COMPRESSION_LONG)
+            else:
+                _add(SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG)
+
+    return candidates
+
+
+@contextmanager
+def trace_and_challenger_context(
+    enable_multi_hypothesis: bool, trace_out: dict[str, Any] | None = None
+):
+    """Wraps CryptoOpportunityScreener._score_accumulation_setup so that:
+    - Control (enable_multi_hypothesis=False) runs the exact unmodified production classification & pipeline,
+      while recording matched hypotheses, gate pass/fail details, and resistance absorption score.
+    - Challenger (enable_multi_hypothesis=True) evaluates candidate_long_archetypes(features) in priority order
+      through the full _score_accumulation_setup pipeline (vetoes -> L1..L6 gates -> resistance absorption ->
+      ADX/scoring/conviction -> CryptoOpportunity) so the winning hypothesis is used consistently everywhere.
+    """
+    orig_classify = cs_mod.classify_long_archetype
+    orig_eval_gates = cs_mod.evaluate_long_gates
+    orig_absorption = cs_mod.compute_resistance_absorption
+    orig_score_acc = CryptoOpportunityScreener._score_accumulation_setup
+
+    forced_archetype: dict[str, SetupLabel | None] = {"value": None}
+    captured_candidates: dict[str, list[SetupLabel]] = {"list": []}
+    attempt_trace: dict[str, Any] = {}
+
+    def wrapped_classify(features: LongArchetypeFeatures) -> SetupLabel | None:
+        cands = candidate_long_archetypes(features)
+        captured_candidates["list"] = cands
+        arch = (
+            forced_archetype["value"]
+            if forced_archetype["value"] is not None
+            else orig_classify(features)
+        )
+        attempt_trace["archetype"] = arch.value if arch else None
+        return arch
+
+    def wrapped_eval_gates(
+        gate_inputs: LongGateInputs, archetype: SetupLabel | str | None = None
+    ) -> tuple[bool, dict[str, bool]]:
+        passed, details = orig_eval_gates(gate_inputs, archetype)
+        attempt_trace["gates_passed"] = passed
+        attempt_trace["gate_details"] = dict(details)
+        attempt_trace["failed_gates"] = [k for k, v in details.items() if not v]
+        return passed, details
+
+    def wrapped_absorption(*args: Any, **kwargs: Any) -> tuple[float, str, list[str]]:
+        score, status, flags = orig_absorption(*args, **kwargs)
+        attempt_trace["absorption_score"] = round(float(score), 2)
+        attempt_trace["breakout_status"] = status
+        attempt_trace["absorption_flags"] = list(flags)
+        return score, status, flags
+
+    def wrapped_score_acc(
+        self: CryptoOpportunityScreener, *args: Any, **kwargs: Any
+    ) -> CryptoOpportunity | None:
+        forced_archetype["value"] = None
+        captured_candidates["list"] = []
+        attempt_trace.clear()
+        first_opp = orig_score_acc(self, *args, **kwargs)
+        cands = list(captured_candidates["list"])
+        attempts = [dict(attempt_trace, opportunity_created=first_opp is not None)]
+
+        if not enable_multi_hypothesis or first_opp is not None or len(cands) <= 1:
+            if trace_out is not None:
+                trace_out["candidate_archetypes"] = [c.value for c in cands]
+                trace_out["attempts"] = attempts
+            return first_opp
+
+        winning_opp: CryptoOpportunity | None = None
+        for alt_arch in cands[1:]:
+            forced_archetype["value"] = alt_arch
+            attempt_trace.clear()
+            alt_opp = orig_score_acc(self, *args, **kwargs)
+            attempts.append(dict(attempt_trace, opportunity_created=alt_opp is not None))
+            if alt_opp is not None and winning_opp is None:
+                winning_opp = alt_opp
+                break
+        forced_archetype["value"] = None
+        if trace_out is not None:
+            trace_out["candidate_archetypes"] = [c.value for c in cands]
+            trace_out["attempts"] = attempts
+        return winning_opp
+
+    cs_mod.classify_long_archetype = wrapped_classify
+    cs_mod.evaluate_long_gates = wrapped_eval_gates
+    cs_mod.compute_resistance_absorption = wrapped_absorption
+    CryptoOpportunityScreener._score_accumulation_setup = wrapped_score_acc  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        cs_mod.classify_long_archetype = orig_classify
+        cs_mod.evaluate_long_gates = orig_eval_gates
+        cs_mod.compute_resistance_absorption = orig_absorption
+        CryptoOpportunityScreener._score_accumulation_setup = orig_score_acc  # type: ignore[method-assign]
+
+
+def _forward_return_24h_pct(raw: dict[str, Any], symbol: str, cutoff_dt: datetime) -> float | None:
+    """Compute exact 24h forward return from cutoff_dt using historical + post-anchor 1h candles if 24h has elapsed."""
+    sym_data = raw["symbols"][symbol]
+    all_1h = [
+        _deserialize_candle(d)
+        for d in (*sym_data["candles_1h"], *sym_data.get("forward_candles_1h", []))
+    ]
+    by_close = {int(c.closed_at.timestamp() * 1000): c for c in all_1h}
+    base_ms = int(cutoff_dt.timestamp() * 1000)
+    target_24h_ms = base_ms + 24 * 3_600_000
+    if base_ms in by_close and target_24h_ms in by_close:
+        c0 = by_close[base_ms].close
+        c24 = by_close[target_24h_ms].close
+        return round(float((c24 - c0) / c0 * Decimal("100")), 2)
+    return None
+
+
+async def run_faithful_replay() -> dict[str, Any]:
+    raw = json.loads(FAITHFUL_RAW_PATH.read_text())
+    settings = load_settings()
+    macro_source = NeutralMacroSource()
+    macro_ctx = await macro_source.get_context()
+
+    btc_all_1h = [_deserialize_candle(d) for d in raw["symbols"]["BTCUSDT"]["candles_1h"]]
+    anchor_c1h_hot = [_deserialize_candle(d) for d in raw["symbols"]["HOTUSDT"]["candles_1h"]]
+
+    report: dict[str, Any] = {
+        "metadata": raw["metadata"],
+        "summary_by_symbol": {},
+        "scans_by_symbol": {sym: [] for sym in EVAL_SYMBOLS},
+    }
+
+    for sym in EVAL_SYMBOLS:
+        report["summary_by_symbol"][sym] = {
+            "total_scans": len(HORIZONS_HOURS),
+            "control_gate_pass_count": 0,
+            "control_stage2_opportunity_count": 0,
+            "control_published_count": 0,
+            "control_full_pipeline_published_count": 0,
+            "challenger_gate_pass_count": 0,
+            "challenger_stage2_opportunity_count": 0,
+            "challenger_published_count": 0,
+            "challenger_full_pipeline_published_count": 0,
+        }
+
+    for h in HORIZONS_HOURS:
+        cutoff_dt = anchor_c1h_hot[-1 - h].closed_at
+        market = PointInTimeReplayMarket(raw, cutoff_dt)
+        quotes = await market.quotes(await market.instruments())
+        q_by_sym = {q.instrument_id.symbol: q for q in quotes}
+        inst_by_sym = {i.id.symbol: i for i in await market.instruments()}
+        btc_1h = [c for c in btc_all_1h if c.closed_at <= cutoff_dt][-240:]
+
+        # 1. Run Full Production Pipeline (Control)
+        ctrl_journal = ScanDecisionJournal()
+        ctrl_screener = CryptoOpportunityScreener(
+            settings, macro_source, evaluated_at=cutoff_dt, journal=ctrl_journal
+        )
+        ctrl_published_opps = await ctrl_screener.screen(
+            market,
+            derivatives_port=market,
+            target_direction=Direction.LONG,
+            mode=ScreenerMode.ACCUMULATION,
+            enforce_quality=True,
+        )
+        ctrl_pub_syms = {o.instrument.id.symbol for o in ctrl_published_opps}
+
+        # 2. Run Full Production Pipeline (Step 2 Multi-Hypothesis Challenger)
+        chal_journal = ScanDecisionJournal()
+        chal_screener = CryptoOpportunityScreener(
+            settings, macro_source, evaluated_at=cutoff_dt, journal=chal_journal
+        )
+        with trace_and_challenger_context(enable_multi_hypothesis=True):
+            chal_published_opps = await chal_screener.screen(
+                market,
+                derivatives_port=market,
+                target_direction=Direction.LONG,
+                mode=ScreenerMode.ACCUMULATION,
+                enforce_quality=True,
+            )
+        chal_pub_syms = {o.instrument.id.symbol for o in chal_published_opps}
+
+        # 3. Direct Stage 2 enriched evaluation per symbol (to separate Stage 1 admission from Stage 2 / Publication)
+        for sym in EVAL_SYMBOLS:
+            inst = inst_by_sym[sym]
+            q = q_by_sym[sym]
+            c1h = await market.candles(inst, "1h", 240)
+            c4h = await market.candles(inst, "4h", 480)
+            c1w = await market.candles(inst, "1w", 40)
+            deriv = await market.derivatives_snapshot(inst)
+
+            btc_ret_1h = (
+                (btc_1h[-1].close - btc_1h[-2].close) / btc_1h[-2].close
+                if len(btc_1h) >= 2
+                else Decimal("0")
+            )
+            btc_ret_4h = (
+                (btc_1h[-1].close - btc_1h[-5].close) / btc_1h[-5].close
+                if len(btc_1h) >= 5
+                else Decimal("0")
+            )
+            is_btc_cascade = btc_ret_1h <= Decimal("-0.025") or btc_ret_4h <= Decimal("-0.045")
+
+            ctrl_trace: dict[str, Any] = {}
+            with trace_and_challenger_context(enable_multi_hypothesis=False, trace_out=ctrl_trace):
+                ctrl_s2_opps = await ctrl_screener._evaluate_single(
+                    inst=inst,
+                    quote=q,
+                    market=market,
+                    derivatives_port=None,
+                    btc_candles=btc_1h,
+                    macro_context=macro_ctx,
+                    mode=ScreenerMode.ACCUMULATION,
+                    target_direction=Direction.LONG,
+                    is_btc_cascade=is_btc_cascade,
+                    btc_ret_1h=btc_ret_1h,
+                    preloaded_candles=(c1h, c4h, c1w),
+                    explicit_derivatives=deriv,
+                )
+            ctrl_opp: CryptoOpportunity | None = ctrl_s2_opps[0] if ctrl_s2_opps else None
+            ctrl_pub_reasons = (
+                publication_rejection_reasons(ctrl_opp, coi_score=50.0)
+                if ctrl_opp is not None
+                else ("no_stage2_opportunity",)
+            )
+
+            chal_trace: dict[str, Any] = {}
+            with trace_and_challenger_context(enable_multi_hypothesis=True, trace_out=chal_trace):
+                chal_s2_opps = await chal_screener._evaluate_single(
+                    inst=inst,
+                    quote=q,
+                    market=market,
+                    derivatives_port=None,
+                    btc_candles=btc_1h,
+                    macro_context=macro_ctx,
+                    mode=ScreenerMode.ACCUMULATION,
+                    target_direction=Direction.LONG,
+                    is_btc_cascade=is_btc_cascade,
+                    btc_ret_1h=btc_ret_1h,
+                    preloaded_candles=(c1h, c4h, c1w),
+                    explicit_derivatives=deriv,
+                )
+            chal_opp: CryptoOpportunity | None = chal_s2_opps[0] if chal_s2_opps else None
+            chal_pub_reasons = (
+                publication_rejection_reasons(chal_opp, coi_score=50.0)
+                if chal_opp is not None
+                else ("no_stage2_opportunity",)
+            )
+
+            fwd_24h = _forward_return_24h_pct(raw, sym, cutoff_dt)
+
+            summary = report["summary_by_symbol"][sym]
+            ctrl_attempts = ctrl_trace.get("attempts", [])
+            if any(a.get("gates_passed") for a in ctrl_attempts):
+                summary["control_gate_pass_count"] += 1
+            if ctrl_opp is not None:
+                summary["control_stage2_opportunity_count"] += 1
+                if not ctrl_pub_reasons:
+                    summary["control_published_count"] += 1
+            if sym in ctrl_pub_syms:
+                summary["control_full_pipeline_published_count"] += 1
+
+            chal_attempts = chal_trace.get("attempts", [])
+            if any(a.get("gates_passed") for a in chal_attempts):
+                summary["challenger_gate_pass_count"] += 1
+            if chal_opp is not None:
+                summary["challenger_stage2_opportunity_count"] += 1
+                if not chal_pub_reasons:
+                    summary["challenger_published_count"] += 1
+            if sym in chal_pub_syms:
+                summary["challenger_full_pipeline_published_count"] += 1
+
+            report["scans_by_symbol"][sym].append(
+                {
+                    "horizon_hours_ago": h,
+                    "cutoff_utc": cutoff_dt.isoformat(),
+                    "close": str(q.last),
+                    "fixed_24h_fwd_return_pct": fwd_24h,
+                    "point_in_time_funding_rate": str(deriv.funding_rate)
+                    if deriv.funding_rate is not None
+                    else None,
+                    "oi_change_1h": round(float(deriv.open_interest_change_1h) * 100, 2)
+                    if deriv.open_interest_change_1h is not None
+                    else None,
+                    "oi_change_4h": round(float(deriv.open_interest_change_4h) * 100, 2)
+                    if deriv.open_interest_change_4h is not None
+                    else None,
+                    "oi_change_24h": round(float(deriv.open_interest_change_24h) * 100, 2)
+                    if deriv.open_interest_change_24h is not None
+                    else None,
+                    "oi_change_7d": round(float(deriv.open_interest_change_7d) * 100, 2)
+                    if deriv.open_interest_change_7d is not None
+                    else None,
+                    "degraded_telemetry": deriv.degraded_telemetry,
+                    "warmup_bars": {"1h": len(c1h), "4h": len(c4h), "1w": len(c1w)},
+                    "candidate_archetypes": ctrl_trace.get("candidate_archetypes", []),
+                    "control": {
+                        "trace_attempts": ctrl_attempts,
+                        "stage2_opportunity": ctrl_opp is not None,
+                        "setup_label": ctrl_opp.setup_label.value if ctrl_opp else None,
+                        "score": float(ctrl_opp.score) if ctrl_opp else None,
+                        "conviction": float(ctrl_opp.conviction)
+                        if (ctrl_opp and ctrl_opp.conviction is not None)
+                        else None,
+                        "grade": str(ctrl_opp.grade) if ctrl_opp else None,
+                        "rr": float(ctrl_opp.risk_reward_ratio) if ctrl_opp else None,
+                        "ev_r": float(ctrl_opp.expected_value_r) if ctrl_opp else None,
+                        "publication_reasons": list(ctrl_pub_reasons),
+                        "published_in_stage2": bool(ctrl_opp is not None and not ctrl_pub_reasons),
+                        "published_in_full_pipeline": sym in ctrl_pub_syms,
+                    },
+                    "challenger_multi_hypothesis": {
+                        "trace_attempts": chal_attempts,
+                        "stage2_opportunity": chal_opp is not None,
+                        "setup_label": chal_opp.setup_label.value if chal_opp else None,
+                        "score": float(chal_opp.score) if chal_opp else None,
+                        "conviction": float(chal_opp.conviction)
+                        if (chal_opp and chal_opp.conviction is not None)
+                        else None,
+                        "grade": str(chal_opp.grade) if chal_opp else None,
+                        "rr": float(chal_opp.risk_reward_ratio) if chal_opp else None,
+                        "ev_r": float(chal_opp.expected_value_r) if chal_opp else None,
+                        "publication_reasons": list(chal_pub_reasons),
+                        "published_in_stage2": bool(chal_opp is not None and not chal_pub_reasons),
+                        "published_in_full_pipeline": sym in chal_pub_syms,
+                    },
+                }
+            )
+
+    FAITHFUL_RESULTS_PATH.write_text(json.dumps(report, indent=2))
+    print("\n=== STEP 1 FAITHFUL POINT-IN-TIME REPLAY SUMMARY (12 Scans: T-44h to T-0h) ===")
+    for sym in EVAL_SYMBOLS:
+        s = report["summary_by_symbol"][sym]
+        print(
+            f"{sym:<10} | Control: GatePass={s['control_gate_pass_count']:2d}/12, "
+            f"Stage2_Opp={s['control_stage2_opportunity_count']:2d}/12, "
+            f"Pub_Stage2={s['control_published_count']:2d}/12, "
+            f"FullPipe_Pub={s['control_full_pipeline_published_count']:2d}/12 || "
+            f"Challenger: GatePass={s['challenger_gate_pass_count']:2d}/12, "
+            f"Stage2_Opp={s['challenger_stage2_opportunity_count']:2d}/12, "
+            f"Pub_Stage2={s['challenger_published_count']:2d}/12, "
+            f"FullPipe_Pub={s['challenger_full_pipeline_published_count']:2d}/12"
+        )
+        for row in report["scans_by_symbol"][sym]:
+            c_info = row["control"]
+            m_info = row["challenger_multi_hypothesis"]
+            c_gate = any(a.get("gates_passed") for a in c_info["trace_attempts"])
+            m_gate = any(a.get("gates_passed") for a in m_info["trace_attempts"])
+            if c_gate or m_gate or len(row["candidate_archetypes"]) > 1:
+                print(
+                    f"  T-{row['horizon_hours_ago']:2d}h ({row['cutoff_utc'][:16]}) | Price={row['close']} | "
+                    f"24hFwd={str(row['fixed_24h_fwd_return_pct']) + '%' if row['fixed_24h_fwd_return_pct'] is not None else 'N/A'} | "
+                    f"Fund={row['point_in_time_funding_rate']} | OI7d={row['oi_change_7d']}% | "
+                    f"Cands={row['candidate_archetypes']}"
+                )
+                print(
+                    f"    Control   : GatePass={c_gate}, Opp={c_info['stage2_opportunity']}, "
+                    f"PubStage2={c_info['published_in_stage2']}, FullPipePub={c_info['published_in_full_pipeline']}, "
+                    f"Label={c_info['setup_label']}, Sc={c_info['score']}, Conv={c_info['conviction']}, "
+                    f"RR={c_info['rr']}, Reasons={c_info['publication_reasons']}, Trace={c_info['trace_attempts']}"
+                )
+                print(
+                    f"    Challenger: GatePass={m_gate}, Opp={m_info['stage2_opportunity']}, "
+                    f"PubStage2={m_info['published_in_stage2']}, FullPipePub={m_info['published_in_full_pipeline']}, "
+                    f"Label={m_info['setup_label']}, Sc={m_info['score']}, Conv={m_info['conviction']}, "
+                    f"RR={m_info['rr']}, Reasons={m_info['publication_reasons']}, Trace={m_info['trace_attempts']}"
+                )
+    return report

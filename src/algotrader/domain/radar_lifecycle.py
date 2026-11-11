@@ -1,26 +1,17 @@
-"""Stateful Candidate Radar Lifecycle & Live System Gate Re-Verification Engine.
+"""Research-only radar lifecycle policy (v2).
 
-Maintains institutional continuity across 4-hour screener sweeps while enforcing
-strict live gate transparency:
-- Newly discovered setups enter as `FRESH_COIL`.
-- Previously qualified setups that pull back into their Limit Retest Entry / 30d POC
-  shelf transition to `AT_ENTRY_ZONE` instead of vanishing during the pullback.
-- Setups that trigger their breakout or bounce into profit transition to `IN_ACTIVE_TRADE`.
-- Every retained setup is re-audited against the 5/5 (L1–L6) institutional screening gates
-  on live candles. If any gate drifts (e.g. price slips below 4H EMA50 or 30d POC while still
-  above Stop Loss), the live checklist and `failed_gates` are updated so the dashboard
-  prominently displays the exact gate warning (`⚠️ 4/5 GATES`, `⚠️ 3/5 GATES`).
-- Setups that breach their `suggested_stop`, suffer a structural breakdown below Value Area
-  Low + EMA50, complete their final target, or exceed the 72-hour TTL are automatically
-  eliminated (`INVALIDATED` / `COMPLETED_TARGET` / `EXPIRED`).
+Keep immutable discovery references separate from fresh verification inputs. Unknown
+telemetry never certifies a gate. Trigger observations do not assert executed fills.
+Stops take conservative priority when a candle touches both stop and target. Untriggered
+setups expire at 72 hours, including entry shelves; observed triggers persist until
+invalidation/completion. Historical OHLC cannot order events within a discovery bar.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
@@ -48,13 +39,16 @@ class RadarLifecycleDecision:
     gates_total: int = 5
     failed_gates: tuple[str, ...] = ()
     updated_checklist: tuple[dict[str, Any], ...] = ()
+    triggered_at: str | None = None
 
 
 def _to_dec(value: Any) -> Decimal | None:
     if value is None or value == "":
         return None
     try:
-        cleaned = str(value).replace("%", "").replace("bps", "").replace("$", "").replace("+", "").strip()
+        cleaned = (
+            str(value).replace("%", "").replace("bps", "").replace("$", "").replace("+", "").strip()
+        )
         d = Decimal(cleaned)
         return d if d.is_finite() else None
     except (InvalidOperation, ValueError, TypeError):
@@ -66,7 +60,7 @@ def _parse_iso(ts: Any) -> datetime | None:
         return None
     try:
         dt = datetime.fromisoformat(ts)
-        return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+        return dt if dt.tzinfo is not None else None
     except ValueError:
         return None
 
@@ -79,43 +73,6 @@ def _extract_decimals_from_candles(candles: Sequence[Mapping[str, Any]], key: st
             if val is not None and val > Decimal("0"):
                 out.append(val)
     return out
-
-
-def _compute_ema_from_1h(closes_1h: Sequence[Decimal], span_1h: int = 200) -> Decimal | None:
-    """Approximates 4H EMA50 (200 hours) from 1H closes when explicit 4H EMA50 is not passed."""
-    if not closes_1h:
-        return None
-    period = min(len(closes_1h), span_1h)
-    if period < 10:
-        return closes_1h[-1]
-    k = Decimal("2") / Decimal(str(period + 1))
-    ema_val = sum(closes_1h[:period], Decimal("0")) / Decimal(str(period))
-    for price in closes_1h[period:]:
-        ema_val = (price - ema_val) * k + ema_val
-    return ema_val
-
-
-def _compute_rsi_4h_from_1h(closes_1h: Sequence[Decimal], period: int = 14) -> Decimal | None:
-    """Computes live 4H Wilder RSI(14) from 1H closes sampled every 4 hours anchored to the latest bar."""
-    if len(closes_1h) < (period + 1) * 4:
-        return None
-    closes_4h = list(reversed(closes_1h[::-4]))
-    if len(closes_4h) <= period:
-        return None
-    deltas = [closes_4h[i] - closes_4h[i - 1] for i in range(1, len(closes_4h))]
-    gains = [d if d > Decimal("0") else Decimal("0") for d in deltas]
-    losses = [-d if d < Decimal("0") else Decimal("0") for d in deltas]
-    avg_gain = sum(gains[:period], Decimal("0")) / Decimal(str(period))
-    avg_loss = sum(losses[:period], Decimal("0")) / Decimal(str(period))
-    p_dec = Decimal(str(period))
-    p_minus_1 = Decimal(str(period - 1))
-    for g, l_val in zip(gains[period:], losses[period:], strict=False):
-        avg_gain = (avg_gain * p_minus_1 + g) / p_dec
-        avg_loss = (avg_loss * p_minus_1 + l_val) / p_dec
-    if avg_loss == Decimal("0"):
-        return Decimal("100.0")
-    rs = avg_gain / avg_loss
-    return Decimal("100") - (Decimal("100") / (Decimal("1") + rs))
 
 
 def _fmt_price(val: Decimal) -> str:
@@ -145,21 +102,12 @@ def reverify_candidate_gates(
     direction = str(candidate.get("direction", "long")).lower()
     is_short = direction == "short"
 
-    candle_source = recent_candles_1h if recent_candles_1h else (candidate.get("candles") or ())
+    candle_source = recent_candles_1h
     closes_1h = _extract_decimals_from_candles(candle_source, "close")
 
-    # Resolve live 4H EMA50: explicit argument -> candidate field -> parsed from checklist -> 1H EMA200
-    eff_ema50 = ema50_4h or _to_dec(candidate.get("ema50_4h"))
-    if eff_ema50 is None:
-        for item in candidate.get("checklist") or ():
-            if isinstance(item, Mapping) and "EMA50" in str(item.get("title", "")) + str(item.get("detail", "")):
-                m = re.search(r"\$([0-9.]+)", str(item.get("detail", "")))
-                if m:
-                    eff_ema50 = _to_dec(m.group(1))
-                    break
-    if eff_ema50 is None and len(closes_1h) >= 40:
-        eff_ema50 = _compute_ema_from_1h(closes_1h, span_1h=200)
-
+    # Only explicit, freshly computed telemetry is eligible for re-verification.
+    # Frozen value-area levels remain the original setup's structural references.
+    eff_ema50 = ema50_4h
     poc = _to_dec(candidate.get("poc_price")) or _to_dec(candidate.get("poc_30d"))
     vah = _to_dec(candidate.get("vah_price")) or _to_dec(candidate.get("vah_30d"))
     val = _to_dec(candidate.get("val_price")) or _to_dec(candidate.get("val_30d"))
@@ -167,7 +115,11 @@ def reverify_candidate_gates(
 
     # 1. Gate L1: Trend Baseline (4H EMA50)
     trend_passed = True
-    trend_detail = f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)})" if eff_ema50 else "Holding above 4H EMA50"
+    trend_detail = (
+        f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)})"
+        if eff_ema50
+        else "Holding above 4H EMA50"
+    )
     if eff_ema50 is not None and eff_ema50 > Decimal("0"):
         diff_ema_pct = (current_price - eff_ema50) / eff_ema50 * Decimal("100")
         if not is_short:
@@ -178,11 +130,15 @@ def reverify_candidate_gates(
             elif trend_passed:
                 trend_detail = f"Testing 4H EMA50 support (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
             else:
-                trend_detail = f"Slipped {float(diff_ema_pct):.1f}% below 4H EMA50 (${_fmt_price(eff_ema50)})"
+                trend_detail = (
+                    f"Slipped {float(diff_ema_pct):.1f}% below 4H EMA50 (${_fmt_price(eff_ema50)})"
+                )
         else:
             trend_passed = current_price <= eff_ema50 * Decimal("1.008")
             if current_price <= eff_ema50:
-                trend_detail = f"Capped below 4H EMA50 (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
+                trend_detail = (
+                    f"Capped below 4H EMA50 (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
+                )
             elif trend_passed:
                 trend_detail = f"Testing 4H EMA50 resistance (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
             else:
@@ -204,9 +160,7 @@ def reverify_candidate_gates(
         if r1d is not None and r1w is not None:
             rsi_suffix = f" | 1D RSI {float(r1d):.1f} | 1W RSI {float(r1w):.1f}"
         else:
-            r4h = _compute_rsi_4h_from_1h(closes_1h)
-            if r4h is not None:
-                rsi_suffix = f" | 4H RSI {float(r4h):.1f}"
+            rsi_suffix = " | discovery RSI unavailable"
 
     anti_chase_passed = True
     anti_chase_detail = f"72h range controlled{rsi_suffix}"
@@ -214,13 +168,19 @@ def reverify_candidate_gates(
         h72 = max(highs_72h)
         l72 = min(lows_72h)
         rng_72_pct = (h72 - l72) / max(l72, Decimal("1e-8")) * Decimal("100")
-        in_profit = entry is not None and entry > Decimal("0") and (
-            (not is_short and current_price > entry * Decimal("1.02"))
-            or (is_short and current_price < entry * Decimal("0.98"))
+        in_profit = (
+            entry is not None
+            and entry > Decimal("0")
+            and (
+                (not is_short and current_price > entry * Decimal("1.02"))
+                or (is_short and current_price < entry * Decimal("0.98"))
+            )
         )
         anti_chase_passed = rng_72_pct <= Decimal("28.0") or bool(in_profit)
         if anti_chase_passed:
-            state_word = "expanding in profit" if (in_profit and rng_72_pct > Decimal("20.0")) else "tight"
+            state_word = (
+                "expanding in profit" if (in_profit and rng_72_pct > Decimal("20.0")) else "tight"
+            )
             anti_chase_detail = f"72h range {state_word} ({float(rng_72_pct):.1f}%){rsi_suffix}"
         else:
             anti_chase_detail = f"72h excursion wide ({float(rng_72_pct):.1f}%){rsi_suffix}"
@@ -237,37 +197,36 @@ def reverify_candidate_gates(
             if current_price >= poc:
                 value_detail = f"Accepted above 30d POC (${_fmt_price(poc)}){vah_str}"
             elif value_passed:
-                value_detail = f"Testing 30d POC shelf (${_fmt_price(poc)}, {float(diff_poc):+.1f}%){vah_str}"
+                value_detail = (
+                    f"Testing 30d POC shelf (${_fmt_price(poc)}, {float(diff_poc):+.1f}%){vah_str}"
+                )
             else:
                 val_str = f" | Testing VAL (${_fmt_price(val)})" if val is not None else ""
-                value_detail = f"Below 30d POC (${_fmt_price(poc)}, {float(diff_poc):.1f}%){val_str}"
+                value_detail = (
+                    f"Below 30d POC (${_fmt_price(poc)}, {float(diff_poc):.1f}%){val_str}"
+                )
         else:
             value_passed = current_price <= poc * Decimal("1.010")
             if current_price <= poc:
                 value_detail = f"Rejected below 30d POC (${_fmt_price(poc)})"
             elif value_passed:
-                value_detail = f"Testing 30d POC resistance (${_fmt_price(poc)}, {float(diff_poc):+.1f}%)"
+                value_detail = (
+                    f"Testing 30d POC resistance (${_fmt_price(poc)}, {float(diff_poc):+.1f}%)"
+                )
             else:
-                value_detail = f"Trading above 30d POC (${_fmt_price(poc)}, {float(diff_poc):+.1f}%)"
+                value_detail = (
+                    f"Trading above 30d POC (${_fmt_price(poc)}, {float(diff_poc):+.1f}%)"
+                )
 
     # 4. Gate L4: Volatility Compression / Breakout Structure
     vol_passed = True
     vol_detail = "Volatility compression intact"
-    bbw = _to_dec(candidate.get("bb_bandwidth_4h"))
-    kc_sq = candidate.get("kc_squeeze_4h")
-    if bbw is None:
-        for item in candidate.get("checklist") or ():
-            if isinstance(item, Mapping) and "Bandwidth" in str(item.get("detail", "")):
-                m = re.search(r"Bandwidth\s+([0-9.]+)", str(item.get("detail", "")))
-                if m:
-                    bbw = _to_dec(m.group(1))
-                if "KC Squeeze" in str(item.get("detail", "")) and kc_sq is None:
-                    kc_sq = True
-                break
+    metrics = candidate.get("radar_metrics") or {}
+    bbw = _to_dec(metrics.get("bb_bandwidth_4h"))
+    kc_sq = metrics.get("kc_squeeze_4h")
     if bbw is not None:
-        in_favorable_expansion = (
-            (not is_short and vah is not None and current_price >= vah)
-            or (not is_short and entry is not None and current_price >= entry * Decimal("1.02"))
+        in_favorable_expansion = (not is_short and vah is not None and current_price >= vah) or (
+            not is_short and entry is not None and current_price >= entry * Decimal("1.02")
         )
         vol_passed = bbw <= Decimal("0.24") or in_favorable_expansion
         if bbw <= Decimal("0.13") or kc_sq is True and bbw <= Decimal("0.15"):
@@ -280,31 +239,61 @@ def reverify_candidate_gates(
             vol_detail = f"Bandwidth loosened ({float(bbw):.2f}) without upside breakout"
 
     # 5. Gate L5/L6: Smart Money & Derivatives Absorption
-    oi_7d = _to_dec(candidate.get("oi_change_7d_pct"))
-    funding_bps = _to_dec(candidate.get("funding_rate_bps"))
-    taker_r = _to_dec(candidate.get("taker_buy_sell_ratio"))
-    vcr = _to_dec(candidate.get("volume_contraction_ratio")) or _to_dec(candidate.get("vcr_4h"))
+    oi_7d = _to_dec(metrics.get("oi_change_7d_pct"))
+    funding_bps = _to_dec(metrics.get("funding_rate_bps"))
+    taker_r = _to_dec(metrics.get("taker_buy_sell_ratio"))
+    vcr = _to_dec(metrics.get("volume_contraction_ratio"))
     sm_passed = True
     if oi_7d is not None and not is_short and oi_7d < Decimal("-8.0"):
         sm_passed = False
-    if vcr is not None and vcr > Decimal("1.45") and not (entry is not None and current_price > entry * Decimal("1.02")):
+    if (
+        vcr is not None
+        and vcr > Decimal("1.45")
+        and not (
+            entry is not None
+            and (
+                (not is_short and current_price > entry * Decimal("1.02"))
+                or (is_short and current_price < entry * Decimal("0.98"))
+            )
+        )
+    ):
         sm_passed = False
-    oi_str = f"7d OI {float(oi_7d):+.1f}%" if oi_7d is not None else "7d OI 0.0%"
+    oi_str = f"7d OI {float(oi_7d):+.1f}%" if oi_7d is not None else "7d OI unavailable"
     fund_str = f", funding {float(funding_bps):+.2f} bps" if funding_bps is not None else ""
     taker_str = f", taker {float(taker_r):.2f}" if taker_r is not None else ""
-    sm_detail = f"{oi_str}{fund_str}{taker_str}" if sm_passed else f"Orderflow weakened ({oi_str}{fund_str}{taker_str})"
+    sm_detail = (
+        f"{oi_str}{fund_str}{taker_str}"
+        if sm_passed
+        else f"Orderflow weakened ({oi_str}{fund_str}{taker_str})"
+    )
 
-    updated_checklist: tuple[dict[str, Any], ...] = (
-        {"title": "Trend Baseline", "passed": trend_passed, "detail": trend_detail},
-        {"title": "Anti-Chasing Validated", "passed": anti_chase_passed, "detail": anti_chase_detail},
-        {"title": "Value Acceptance", "passed": value_passed, "detail": value_detail},
-        {"title": "Volatility Compression", "passed": vol_passed, "detail": vol_detail},
-        {"title": "Smart Money Absorption", "passed": sm_passed, "detail": sm_detail},
+    availability = (
+        eff_ema50 is not None and eff_ema50 > 0,
+        len(closes_1h) >= 72,
+        poc is not None and poc > 0,
+        bbw is not None,
+        oi_7d is not None and vcr is not None,
+    )
+    checks = (
+        ("Trend Baseline", trend_passed, trend_detail),
+        ("Anti-Chasing Validated", anti_chase_passed, anti_chase_detail),
+        ("Value Acceptance", value_passed, value_detail + " (discovery reference)"),
+        ("Volatility Compression", vol_passed, vol_detail),
+        ("Smart Money Absorption", sm_passed, sm_detail),
+    )
+    updated_checklist: tuple[dict[str, Any], ...] = tuple(
+        {
+            "title": title,
+            "passed": bool(known and passed),
+            "status": ("passed" if passed else "failed") if known else "unknown",
+            "detail": detail if known else "Unavailable: fresh telemetry required",
+        }
+        for (title, passed, detail), known in zip(checks, availability, strict=True)
     )
     failed_titles: tuple[str, ...] = tuple(
-        str(item["title"]) for item in updated_checklist if not item["passed"]
+        str(item["title"]) for item in updated_checklist if item["status"] == "failed"
     )
-    passed_count = len(updated_checklist) - len(failed_titles)
+    passed_count = sum(item["passed"] for item in updated_checklist)
     return updated_checklist, passed_count, len(updated_checklist), failed_titles
 
 
@@ -339,7 +328,12 @@ def evaluate_radar_candidate_lifecycle(
             if td is not None and td > Decimal("0"):
                 targets.append(td)
 
-    if current_price <= Decimal("0") or stop is None or stop <= Decimal("0"):
+    if (
+        not current_price.is_finite()
+        or current_price <= Decimal("0")
+        or stop is None
+        or stop <= Decimal("0")
+    ):
         return RadarLifecycleDecision(
             retained=False,
             state=RadarLifecycleState.INVALIDATED,
@@ -348,13 +342,20 @@ def evaluate_radar_candidate_lifecycle(
             current_price=current_price,
         )
 
-    evaluated_at = _parse_iso(candidate.get("evaluated_at")) or _parse_iso(candidate.get("first_seen_at"))
+    evaluated_at = _parse_iso(candidate.get("first_seen_at")) or _parse_iso(
+        candidate.get("evaluated_at")
+    )
     eval_epoch = int(evaluated_at.timestamp()) if evaluated_at else 0
 
-    # Filter candles that occurred AFTER the setup was evaluated
+    invalid_discovery = evaluated_at is None or evaluated_at > ref_now
+    # A candle overlapping discovery cannot establish post-discovery event ordering.
     post_scan_candles = [
-        c for c in recent_candles_1h
-        if int(c.get("time", 0)) >= eval_epoch and float(c.get("low", 0)) > 0
+        c
+        for c in recent_candles_1h
+        if not invalid_discovery
+        and int(c.get("opened_time", int(c.get("time", 0)) - 3600)) >= eval_epoch
+        and int(c.get("time", 0)) <= int(ref_now.timestamp())
+        and (_to_dec(c.get("low")) or Decimal("0")) > 0
     ]
 
     # 1. Hard Stop-Loss Invalidation Check (Spot Price + Post-Scan Candle Extremes)
@@ -374,7 +375,7 @@ def evaluate_radar_candidate_lifecycle(
             val is not None
             and val > Decimal("0")
             and current_price < val * Decimal("0.965")
-            and (ema50_4h is None or current_price < ema50_4h * Decimal("0.965"))
+            and (ema50_4h is not None and current_price < ema50_4h * Decimal("0.965"))
         ):
             return RadarLifecycleDecision(
                 retained=False,
@@ -400,7 +401,7 @@ def evaluate_radar_candidate_lifecycle(
             vah is not None
             and vah > Decimal("0")
             and current_price > vah * Decimal("1.035")
-            and (ema50_4h is None or current_price > ema50_4h * Decimal("1.035"))
+            and (ema50_4h is not None and current_price > ema50_4h * Decimal("1.035"))
         ):
             return RadarLifecycleDecision(
                 retained=False,
@@ -410,26 +411,15 @@ def evaluate_radar_candidate_lifecycle(
                 current_price=current_price,
             )
 
-    # 2. Target Completion Check (Graduated after reaching Target 2 / Target 3)
-    if len(targets) >= 2:
-        completion_target = targets[-1]
-        if not is_short and current_price >= completion_target:
-            return RadarLifecycleDecision(
-                retained=False,
-                state=RadarLifecycleState.COMPLETED_TARGET,
-                label="🎯 TARGET HIT",
-                reason="long_final_target_reached",
-                current_price=current_price,
-            )
-        if is_short and current_price <= completion_target:
-            return RadarLifecycleDecision(
-                retained=False,
-                state=RadarLifecycleState.COMPLETED_TARGET,
-                label="🎯 TARGET HIT",
-                reason="short_final_target_reached",
-                current_price=current_price,
-            )
-
+    if evaluated_at is None or evaluated_at > ref_now:
+        return RadarLifecycleDecision(
+            retained=True,
+            state=RadarLifecycleState.ACTIVE_COIL,
+            label="⚠️ DATA UNAVAILABLE",
+            reason="invalid_discovery_timestamp",
+            current_price=current_price,
+            gates_passed=0,
+        )
     # 3. Re-Verify Live System Gates (5/5 Checklist)
     updated_checklist, gates_passed, gates_total, failed_gates = reverify_candidate_gates(
         candidate,
@@ -448,74 +438,93 @@ def evaluate_radar_candidate_lifecycle(
         )
         pnl_pct = raw_pnl.quantize(Decimal("0.1"))
 
-    if not is_short:
-        candle_source = recent_candles_1h if recent_candles_1h else (candidate.get("candles") or ())
-        lows_48h = _extract_decimals_from_candles(candle_source[-48:], "low")
-        highs_48h = _extract_decimals_from_candles(candle_source[-48:], "high")
-        low_48h = min(lows_48h) if lows_48h else current_price
-        high_48h = max(highs_48h) if highs_48h else current_price
-
-        at_entry_shelf = False
-        if entry is not None and entry > Decimal("0"):
-            dist_to_entry = abs(current_price - entry) / entry
-            if dist_to_entry <= Decimal("0.018"):
-                at_entry_shelf = True
-        if not at_entry_shelf and poc is not None and poc > Decimal("0"):
-            if abs(current_price - poc) / poc <= Decimal("0.012"):
-                at_entry_shelf = True
-
-        filled_retest = (
+    # Trigger is an observed setup event, never an assertion of an executed fill.
+    prior_trigger = _parse_iso(candidate.get("radar_triggered_at"))
+    triggered_at = (
+        prior_trigger if prior_trigger and evaluated_at <= prior_trigger <= ref_now else None
+    )
+    deadline = evaluated_at + timedelta(hours=max_age_hours)
+    for c in sorted(post_scan_candles, key=lambda c: int(c["time"])):
+        if int(c["time"]) > int(deadline.timestamp()):
+            continue
+        high, low, close = (_to_dec(c.get(k)) for k in ("high", "low", "close"))
+        breakout = trigger is not None and (
+            (not is_short and high is not None and high >= trigger)
+            or (is_short and low is not None and low <= trigger)
+        )
+        # A retest requires the entire candle to open after discovery and close
+        # favorably after touching entry; this is an observation, not a fill model.
+        retest = (
             entry is not None
-            and low_48h <= entry * Decimal("1.015")
-            and current_price >= entry * Decimal("1.018")
-        )
-        expanding_above_value = (
-            pnl_pct is not None
-            and pnl_pct >= Decimal("3.0")
-            and (vah is None or current_price >= vah)
-        )
-        triggered_breakout = (
-            trigger is not None
-            and trigger > Decimal("0")
+            and high is not None
+            and low is not None
+            and close is not None
             and (
-                current_price >= trigger
-                or (high_48h >= trigger and current_price >= (entry or trigger) * Decimal("0.99"))
+                (not is_short and low <= entry and close >= entry * Decimal("1.018"))
+                or (is_short and high >= entry and close <= entry * Decimal("0.982"))
             )
         )
+        if triggered_at is None and (breakout or retest):
+            triggered_at = datetime.fromtimestamp(int(c["time"]), UTC)
+    if (
+        triggered_at is None
+        and ref_now < deadline
+        and trigger is not None
+        and ((not is_short and current_price >= trigger) or (is_short and current_price <= trigger))
+    ):
+        triggered_at = ref_now
+    # Expired, never-triggered setups cannot become retrospective target winners.
+    if triggered_at is not None or ref_now < deadline:
+        # 2. Target Completion Check (Graduated after reaching Target 2 / Target 3)
+        if targets:
+            completion_target = targets[-1]
+            if (
+                not is_short
+                and max([current_price] + _extract_decimals_from_candles(post_scan_candles, "high"))
+                >= completion_target
+            ):
+                return RadarLifecycleDecision(
+                    retained=False,
+                    state=RadarLifecycleState.COMPLETED_TARGET,
+                    label="🎯 TARGET HIT",
+                    reason="long_final_target_reached",
+                    current_price=current_price,
+                )
+            if (
+                is_short
+                and min([current_price] + _extract_decimals_from_candles(post_scan_candles, "low"))
+                <= completion_target
+            ):
+                return RadarLifecycleDecision(
+                    retained=False,
+                    state=RadarLifecycleState.COMPLETED_TARGET,
+                    label="🎯 TARGET HIT",
+                    reason="short_final_target_reached",
+                    current_price=current_price,
+                )
 
-        if triggered_breakout or filled_retest or expanding_above_value:
-            gain_str = f" ({pnl_pct:+.1f}%)" if pnl_pct is not None and pnl_pct > Decimal("0") else ""
-            return RadarLifecycleDecision(
-                retained=True,
-                state=RadarLifecycleState.IN_ACTIVE_TRADE,
-                label=f"🚀 IN TRADE{gain_str}",
-                reason="active_trade_running",
-                current_price=current_price,
-                pnl_from_entry_pct=pnl_pct,
-                gates_passed=gates_passed,
-                gates_total=gates_total,
-                failed_gates=failed_gates,
-                updated_checklist=updated_checklist,
-            )
-
-        if at_entry_shelf:
-            return RadarLifecycleDecision(
-                retained=True,
-                state=RadarLifecycleState.AT_ENTRY_ZONE,
-                label="🟢 AT ENTRY ZONE",
-                reason="testing_limit_entry_shelf",
-                current_price=current_price,
-                pnl_from_entry_pct=pnl_pct,
-                gates_passed=gates_passed,
-                gates_total=gates_total,
-                failed_gates=failed_gates,
-                updated_checklist=updated_checklist,
-            )
-
+    if triggered_at is not None:
+        return RadarLifecycleDecision(
+            retained=True,
+            state=RadarLifecycleState.IN_ACTIVE_TRADE,
+            label="🚀 TRIGGER OBSERVED",
+            reason="setup_trigger_observed",
+            current_price=current_price,
+            pnl_from_entry_pct=pnl_pct,
+            gates_passed=gates_passed,
+            gates_total=gates_total,
+            failed_gates=failed_gates,
+            updated_checklist=updated_checklist,
+            triggered_at=triggered_at.isoformat(),
+        )
+    at_entry_shelf = any(
+        level is not None and level > 0 and abs(current_price - level) / level <= tolerance
+        for level, tolerance in ((entry, Decimal("0.018")), (poc, Decimal("0.012")))
+    )
     # 5. Expiration Check (Only expire if not in an active triggered trade and older than max_age_hours)
     if evaluated_at is not None:
         age_hours = (ref_now - evaluated_at).total_seconds() / 3600.0
-        if age_hours > max_age_hours:
+        if age_hours >= max_age_hours:
             return RadarLifecycleDecision(
                 retained=False,
                 state=RadarLifecycleState.EXPIRED,
@@ -527,6 +536,20 @@ def evaluate_radar_candidate_lifecycle(
                 failed_gates=failed_gates,
                 updated_checklist=updated_checklist,
             )
+
+    if at_entry_shelf:
+        return RadarLifecycleDecision(
+            retained=True,
+            state=RadarLifecycleState.AT_ENTRY_ZONE,
+            label="🟢 AT ENTRY ZONE",
+            reason="testing_limit_entry_shelf",
+            current_price=current_price,
+            pnl_from_entry_pct=pnl_pct,
+            gates_passed=gates_passed,
+            gates_total=gates_total,
+            failed_gates=failed_gates,
+            updated_checklist=updated_checklist,
+        )
 
     coil_label = (
         "⏳ ACTIVE COIL"
@@ -545,3 +568,12 @@ def evaluate_radar_candidate_lifecycle(
         failed_gates=failed_gates,
         updated_checklist=updated_checklist,
     )
+
+
+def same_radar_episode(previous: Mapping[str, Any], fresh: Mapping[str, Any]) -> bool:
+    """A continuing thesis retains its original bracket, discovery time and events.
+
+    A changed direction or archetype is a new thesis. An active original thesis must
+    be reconciled before it can be replaced. Score/price drift alone is not renewal.
+    """
+    return all(previous.get(k) == fresh.get(k) for k in ("symbol", "direction", "setup_label"))

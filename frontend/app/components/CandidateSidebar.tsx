@@ -32,7 +32,7 @@ export interface Opportunity {
   oi_change_7d_pct?: number | string;
   taker_ratio?: number | string;
   volume_contraction_ratio?: number | string;
-  checklist?: { title: string; passed: boolean; detail: string }[];
+  checklist?: { title: string; passed: boolean; status?: "passed" | "failed" | "unknown"; detail: string }[];
   rationale?: string[];
   macro_narrative?: string;
   candles?: Candle[];
@@ -50,6 +50,7 @@ export interface Opportunity {
   gates_passed?: number;
   gates_total?: number;
   failed_gates?: string[];
+  radar_data_status?: "current" | "unavailable";
   score_breakdown?: {
     trend?: string;
     momentum?: string;
@@ -101,7 +102,7 @@ const CandidateCard = memo(function CandidateCard({
       ? opp.gates_passed
       : opp.checklist
         ? opp.checklist.filter((c) => c.passed).length
-        : 5;
+        : 0;
   const totalCount =
     opp.gates_total !== undefined
       ? opp.gates_total
@@ -114,8 +115,10 @@ const CandidateCard = memo(function CandidateCard({
       : opp.checklist
         ? opp.checklist.filter((c) => !c.passed).map((c) => c.title)
         : [];
+  const unknownCount = opp.checklist?.filter((c) => c.status === "unknown").length || 0;
+  const dataUnavailable = opp.radar_data_status === "unavailable" || unknownCount > 0;
   const isHighRejection = opp.breakout_readiness_status === "HIGH_REJECTION_RISK";
-  const isGradeAPlus = passCount === totalCount && !isHighRejection;
+  const isGradeAPlus = totalCount > 0 && passCount === totalCount && !isHighRejection && !dataUnavailable;
 
   const currentPrice = price !== undefined && !isNaN(price) && price > 0 ? price : Number(opp.current_price || 0);
   const formattedPrice = formatCandidatePrice(currentPrice, opp.tick_size);
@@ -156,11 +159,15 @@ const CandidateCard = memo(function CandidateCard({
           >
             {isShort ? "SHORT" : "LONG"}
           </span>
-          {isGradeAPlus ? (
+          {dataUnavailable ? (
+            <span title="Some lifecycle checks lack fresh market data" style={{ fontSize: "9px", color: "#f49d0d" }}>
+              ⚠️ DATA INCOMPLETE
+            </span>
+          ) : isGradeAPlus ? (
             <span
               className="badge-grade-a-plus"
               style={{ fontSize: "9px", padding: "1px 5px" }}
-              title="All 5/5 Institutional Screening Gates Passing Live"
+              title="All displayed screening checks passed at the last verification"
             >
               <ShieldCheck size={10} /> {passCount}/{totalCount}
             </span>

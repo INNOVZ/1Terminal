@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, memo } from "react";
 import {
   Check,
   X,
+  CircleHelp,
   ShieldCheck,
   BookmarkPlus,
   CheckCircle2,
@@ -30,14 +31,17 @@ interface VerificationPanelProps {
 interface ChecklistItemProps {
   title: string;
   passed: boolean;
+  status?: "passed" | "failed" | "unknown";
   detail: string;
 }
 
 const ChecklistItemRow = memo(function ChecklistItemRow({
   title,
   passed,
+  status,
   detail,
 }: ChecklistItemProps) {
+  const unknown = status === "unknown";
   return (
     <div
       style={{
@@ -46,10 +50,10 @@ const ChecklistItemRow = memo(function ChecklistItemRow({
         gap: "10px",
         padding: "10px 12px",
         borderRadius: "8px",
-        background: passed
+        background: unknown ? "rgba(244, 157, 13, 0.08)" : passed
           ? "rgba(16, 185, 129, 0.05)"
           : "rgba(239, 68, 68, 0.05)",
-        border: `1px solid ${passed ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)"}`,
+        border: `1px solid ${unknown ? "rgba(244, 157, 13, 0.3)" : passed ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)"}`,
       }}
     >
       <div
@@ -57,10 +61,10 @@ const ChecklistItemRow = memo(function ChecklistItemRow({
           width: "20px",
           height: "20px",
           borderRadius: "50%",
-          background: passed
+          background: unknown ? "rgba(244, 157, 13, 0.08)" : passed
             ? "rgba(16, 185, 129, 0.2)"
             : "rgba(239, 68, 68, 0.2)",
-          color: passed ? "var(--accent-emerald)" : "var(--accent-crimson)",
+          color: unknown ? "#f49d0d" : passed ? "var(--accent-emerald)" : "var(--accent-crimson)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -68,7 +72,9 @@ const ChecklistItemRow = memo(function ChecklistItemRow({
           marginTop: "1px",
         }}
       >
-        {passed ? (
+        {unknown ? (
+          <CircleHelp size={13} aria-label="Data unavailable" />
+        ) : passed ? (
           <Check size={13} strokeWidth={3} />
         ) : (
           <X size={13} strokeWidth={3} />
@@ -79,10 +85,10 @@ const ChecklistItemRow = memo(function ChecklistItemRow({
           style={{
             fontSize: "12px",
             fontWeight: 700,
-            color: passed ? "var(--text-primary)" : "var(--accent-crimson)",
+            color: unknown ? "#f49d0d" : passed ? "var(--text-primary)" : "var(--accent-crimson)",
           }}
         >
-          {title}
+          {title}{unknown ? " — UNKNOWN" : ""}
         </div>
         <div
           style={{
@@ -139,6 +145,7 @@ function VerificationPanel({
     const currPrice = livePrice ?? Number(opportunity?.current_price || 0);
     const isShortDir = opportunity?.direction?.toLowerCase() === "short";
     return raw.map((item) => {
+      if (item.status === "unknown") return item;
       let detail = item.detail;
       if (item.title === "Value Acceptance" && adaptedLevels.pocPrice) {
         const poc = adaptedLevels.pocPrice;
@@ -393,41 +400,16 @@ function VerificationPanel({
                   passCount === totalCount ? "var(--accent-emerald)" : "#f49d0d",
               }}
             >
-              {(() => {
-                const entryNum = Number(
-                  adaptedLevels?.entryPrice ??
-                    (opportunity.suggested_entry || opportunity.pullback_entry || 0),
-                );
-                const currNum = bracket.currentPriceNum;
-                if (entryNum > 0 && currNum > 0) {
-                  const diffPct = isShort
-                    ? ((entryNum - currNum) / entryNum) * 100
-                    : ((currNum - entryNum) / entryNum) * 100;
-                  const diffStr = `${diffPct >= 0 ? "+" : ""}${diffPct.toFixed(1)}%`;
-                  if (passCount < totalCount) {
-                    return `⚠️ ${passCount}/${totalCount} GATES (${diffStr})`;
-                  }
-                  if (Math.abs(diffPct) <= 1.5) {
-                    return `🟢 AT ENTRY ZONE (${diffStr})`;
-                  }
-                  if (diffPct > 1.5) {
-                    return `🚀 IN TRADE (${diffStr})`;
-                  }
-                  return opportunity.radar_status === "FRESH_COIL"
-                    ? `🆕 FRESH COIL (${diffStr})`
-                    : `🎯 ACTIVE COIL (${diffStr})`;
-                }
-                return opportunity.radar_status_label || "ACTIVE SETUP";
-              })()}
+              {opportunity.radar_status_label || "ACTIVE SETUP"}
             </strong>
           </div>
           <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>
-            {passCount === totalCount
-              ? "✓ All 5/5 (L1–L6) institutional system gates verified live."
-              : `⚠️ Gate Drift (${passCount}/${totalCount} passing) — Failed: ${checklist
-                  .filter((c) => !c.passed)
-                  .map((c) => c.title)
-                  .join(", ")}. Setup remains above Stop Loss.`}
+            {checklist.some((c) => c.status === "unknown")
+              ? "Some checks lack fresh data. Unknown does not mean passed or failed."
+              : passCount === totalCount
+                ? "All displayed checks passed at the last verification."
+                : `Gate drift: ${checklist.filter((c) => !c.passed).map((c) => c.title).join(", ")}.`}
+
           </div>
         </div>
       )}
@@ -446,6 +428,7 @@ function VerificationPanel({
             key={idx}
             title={item.title}
             passed={item.passed}
+            status={item.status}
             detail={item.detail}
           />
         ))}

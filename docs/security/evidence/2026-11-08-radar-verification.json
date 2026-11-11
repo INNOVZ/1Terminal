@@ -1,0 +1,32 @@
+{
+  "scope": "local lifecycle hardening; no deployment or research enrollment",
+  "full_suite": {
+    "passed": 680,
+    "warning": "existing Starlette deprecation",
+    "seconds": 113.47,
+    "stage": "before final isolated expiry-target guard"
+  },
+  "final_focused": {
+    "passed": 47,
+    "lifecycle_tests": 31,
+    "seconds": 0.69
+  },
+  "mypy": "two lifecycle modules passed",
+  "frontend": [
+    "TypeScript passed",
+    "targeted ESLint passed",
+    "production build passed"
+  ],
+  "sha256": {
+    "src/algotrader/api/portal.py": "5fdc8164d1f911571a59c00f11ebfd61a0c905cfbfa193e68fe8873b55e0deac",
+    "src/algotrader/application/radar_service.py": "7d434dbfa8ddb7707d6a85085d50db281f1e8005b71f4795bba16ffa5a233744",
+    "src/algotrader/domain/radar_lifecycle.py": "5d6a326ed6e73ae626da59627ed6f4325dac0d771d9ea37df2fabb81603b22a0",
+    "frontend/app/components/CandidateSidebar.tsx": "b1f62b221e4279de3f6d733f5ab22c03f64d6e39cfa2afb3d2b7260c5997d1ee",
+    "frontend/app/components/VerificationPanel.tsx": "79461cd9ecbb4d60004707aed914548c1fc85838a4a84f95bbda06478eeaee23",
+    "tests/test_radar_lifecycle.py": "180e2ff7641de9d243dc68648b2c0779a63f6ca71468ea013872faa4d8f7158f",
+    "tests/test_screener_publication_policy.py": "ac370d27d1eea8514441f21489fe511e9429ce846d429e1a6898e99af72dc874"
+  },
+  "deployed": false,
+  "research_enrolled": false,
+  "predictive_claims_permitted": false
+}

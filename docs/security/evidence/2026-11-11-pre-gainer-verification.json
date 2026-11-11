@@ -1,0 +1,18 @@
+{
+  "study_id": "71346822-f686-4bb1-99ec-0f56ef8f0ea1",
+  "deterministic_rebuild": true,
+  "analysis_sha256": "38f5d735f04952b93073e96e0001f979cfd719d5bb55d8ba63d0a520a6667adb",
+  "raw_response_files_verified": 268,
+  "historical_symbols": 134,
+  "analysis_cases": 132,
+  "new_entrants": 55,
+  "sampled_comparisons": 64,
+  "archived_feature_cross_checks": 11,
+  "selection_reproduced": true,
+  "320_selected": 270,
+  "320_discovery_turnover_exclusions": 14,
+  "production_changes_during_this_research": false,
+  "vm_existing_services_changed": false,
+  "temporary_credentials_removed": true,
+  "report_sha256": "20902979f87d54ff3731c455e09c0ac4be3454fd4078b4a5e3292f6928e64a69"
+}

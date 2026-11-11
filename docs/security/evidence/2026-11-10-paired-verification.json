@@ -1,0 +1,145 @@
+{
+  "study_id": "71346822-f686-4bb1-99ec-0f56ef8f0ea1",
+  "read_only_vm_verification": true,
+  "coverage": {
+    "records": {
+      "observed": 576,
+      "missed": 1
+    },
+    "cohort": 512,
+    "min_known": 466,
+    "max_known": 512,
+    "mean_known": 505.3958333333333,
+    "all_snapshot_checksums_and_rank_bounds_verified": true
+  },
+  "identity": {
+    "study_id": "71346822-f686-4bb1-99ec-0f56ef8f0ea1",
+    "source_hash": "b182ba78f210d38b04f4206c7e18243513db8e4e07482e2c96b7d5dc707aac4a",
+    "packages": {
+      "atlas-algotrader": "0.1.2",
+      "pydantic": "2.13.4",
+      "httpx": "0.28.1"
+    },
+    "runner": "9ee8c397fc3d96a69dfdec16a7a4085dcde389a95815b508c1c685c51a4a348c",
+    "rank_normalizer": "0ce79541c4f13ae0cc4689cd8122c4cb406906c9994f606c41f5ab464a547081",
+    "comparison_status": "complete",
+    "counts": {
+      "control": {
+        "eligible": 547,
+        "liquid": 462,
+        "selected": 48,
+        "evaluated": 48,
+        "failed": 0,
+        "stage1_survivors": 2,
+        "stage2_shortlist": 2,
+        "stage2_probes": 15,
+        "returned": 1
+      },
+      "challenger": {
+        "eligible": 547,
+        "liquid": 462,
+        "selected": 48,
+        "evaluated": 48,
+        "failed": 0,
+        "stage1_survivors": 4,
+        "stage2_shortlist": 4,
+        "stage2_probes": 15,
+        "returned": 3
+      }
+    }
+  },
+  "candidate_results_24h": [
+    {
+      "symbol": "1000PEPEUSDT",
+      "initial_inside": false,
+      "anchor_price": "0.0050313",
+      "first_top10": null,
+      "max_return": "3.184067735972810208097310800",
+      "min_return": "-3.523940134756424780871742890",
+      "rank_unknown": 0,
+      "best_rank_min": 12,
+      "best_rank_max": 12,
+      "return_24h": "1.476755510504243436090076100"
+    },
+    {
+      "symbol": "INJUSDT",
+      "initial_inside": false,
+      "anchor_price": "8.099000",
+      "first_top10": null,
+      "max_return": "1.950858130633411532287936800",
+      "min_return": "-3.407828126929250524756142730",
+      "rank_unknown": 0,
+      "best_rank_min": 34,
+      "best_rank_max": 36,
+      "return_24h": "0.567971354488208420792690500"
+    },
+    {
+      "symbol": "ZECUSDT",
+      "initial_inside": false,
+      "anchor_price": "1268.52",
+      "first_top10": null,
+      "max_return": "0.662977327909690032478794200",
+      "min_return": "-6.135496484091697411156308140",
+      "rank_unknown": 0,
+      "best_rank_min": 38,
+      "best_rank_max": 46,
+      "return_24h": "-3.992842052155267555891905530"
+    }
+  ],
+  "candidate_results_48h": [
+    {
+      "symbol": "1000PEPEUSDT",
+      "initial_inside": false,
+      "anchor_price": "0.0050313",
+      "first_top10": null,
+      "max_return": "6.525152545067875101862341700",
+      "min_return": "-3.523940134756424780871742890",
+      "rank_unknown": 0,
+      "best_rank_min": 12,
+      "best_rank_max": 12,
+      "return_24h": "1.476755510504243436090076100",
+      "return_48h": "6.274720251227316995607497100"
+    },
+    {
+      "symbol": "INJUSDT",
+      "initial_inside": false,
+      "anchor_price": "8.099000",
+      "first_top10": null,
+      "max_return": "2.123718977651561921224842600",
+      "min_return": "-3.407828126929250524756142730",
+      "rank_unknown": 0,
+      "best_rank_min": 34,
+      "best_rank_max": 36,
+      "return_24h": "0.567971354488208420792690500",
+      "return_48h": "-0.4321521175453759723422644800"
+    },
+    {
+      "symbol": "ZECUSDT",
+      "initial_inside": false,
+      "anchor_price": "1268.52",
+      "first_top10": null,
+      "max_return": "0.662977327909690032478794200",
+      "min_return": "-10.36719957115378551382713714",
+      "rank_unknown": 0,
+      "best_rank_min": 38,
+      "best_rank_max": 46,
+      "return_24h": "-3.992842052155267555891905530",
+      "return_48h": "-7.755494592123104089805442560"
+    }
+  ],
+  "report_24h_verified_against_snapshots": true,
+  "report_48h_pending_at_last_check": true,
+  "missed_slot": {
+    "slot": 289,
+    "scheduled_at": "2026-11-09T13:55:00+00:00",
+    "requested_at": "2026-11-09T13:59:23.527938+00:00",
+    "reason": "slot_late"
+  },
+  "report24_publication_time": "2026-11-09T13:59:14.295621+00:00",
+  "image_expected": "sha256:435e5fe024b198ed23ca5990bf45d7be3cff662e835b4b8d531d7bb7aab2cfb5",
+  "image_running": "sha256:9c3476cb1d21cb6efc655691a56e2408f2e534d864ef63d0c149a95afd988339",
+  "recorded_source_and_research_fingerprints_match_prepared_release": true,
+  "automatic_approval_rejected_full_archive_export": true,
+  "safer_alternative": "on-VM verification with bounded summaries; no raw archive exported",
+  "services_modified": false
+}

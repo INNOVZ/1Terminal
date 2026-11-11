@@ -41,6 +41,8 @@ def _opportunity(direction: Direction = Direction.SHORT) -> CryptoOpportunity:
         funding_rate=Decimal("0.0001"), oi_change_1h=Decimal("0.01"), taker_ratio=Decimal("0.9"),
         rationale=(), macro_narrative="neutral", conviction=score, expected_value_r=Decimal("0.25"),
         checklist_verification=ChecklistVerification(True, True, True, True, False), grade="Grade B",
+        # Radar admission uses the displayed checklist, separately from core consensus.
+        checklist=tuple((f"gate-{i}", True, "verified") for i in range(5)),
     )
 
 

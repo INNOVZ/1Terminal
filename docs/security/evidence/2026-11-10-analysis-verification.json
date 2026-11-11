@@ -1,0 +1,30 @@
+{
+  "study_id": "71346822-f686-4bb1-99ec-0f56ef8f0ea1",
+  "both_reports_finalized_and_checksummed": true,
+  "report_sha256": {
+    "24": "9fca61171dc64ef3f4f24012e5bd118ce14b6c2c854ead3f6319cd46785da00b",
+    "48": "c193f41b281428f463f9a69770e0288823357a82bb427ad3313a3bb40404c287"
+  },
+  "original_control_and_challenger_replays": "complete; no rule/input changes",
+  "original_48_selection_reproduced": true,
+  "selection_320_counterfactual_is_publication_prediction": false,
+  "night_branch_verified": {
+    "flow_confirmed": true,
+    "ignition_confirmed": false
+  },
+  "source_modified": false,
+  "study_modified": false,
+  "existing_services_modified": false,
+  "raw_archive_exported": false,
+  "diagnostic_containers": "ephemeral, read-only, network-none, --rm",
+  "credential_cleanup": "OS Login key no longer found at cleanup; local key pair deleted",
+  "sha256": {
+    "docs/security/evidence/2026-11-10-frozen-replay-diagnostics.json": "6ed2490f21952a857a04d9ffdca21b7ffa76c00d214c85ebae7f8d1acd51eb2a",
+    "docs/security/evidence/2026-11-10-replay-diagnostics-driver.py": "928be34375053f2ac51898495e2f80ec96c0a19cdbc5c168b39cbe806bf4a78a",
+    "docs/security/evidence/2026-11-10-finalized-horizon-analysis.json": "2b787ac8c656274ffc5e07b335eac28d1aba68a32d7ab32295fdedb98b6777a1",
+    "docs/security/evidence/2026-11-10-selection-counterfactual.json": "3946193b7f49878009428139ef1f17c2e42d4f7d771952a804a65a8f92115ced",
+    "docs/security/evidence/2026-11-10-frozen-branch-diagnostics.json": "2e3e95605b16cb03b6cd209836b7249bc003e3a9fb072fa8ef9e8ef92735ceea",
+    "docs/security/evidence/2026-11-10-branch-diagnostics-driver.py": "0032f13f8627d42872876fec7fd02fc8f1e415fcbd13b6623471964e99539a8e",
+    "docs/security/evidence/2026-11-10-selection-counterfactual-driver.py": "21f1b17e5a1b54acedd506228b7cc294472fd5342823db95c74fab514c28ef71"
+  }
+}

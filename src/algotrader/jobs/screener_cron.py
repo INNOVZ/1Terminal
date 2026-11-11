@@ -38,7 +38,7 @@ async def execute_screener_job(
     *,
     interval_hours: int = 1,
     min_score: float = 65.0,
-    max_symbols: int = 250,
+    max_symbols: int = 320,
 ) -> dict[str, Any]:
     """Executes a full USD-M universe scan and persists results."""
     now = datetime.now(UTC)
@@ -52,6 +52,7 @@ async def execute_screener_job(
         min_score=Decimal(str(min_score)),
         max_symbols=max_symbols,
         mode=ScreenerMode.ALL,
+        feature_contract="discovery_v2",
     )
     opportunities = run.opportunities
 
@@ -124,6 +125,7 @@ async def execute_screener_job(
         "order_execution_enabled": False,
         "validation_status": "uncalibrated_research",
         "screening_policy_version": SCREENING_POLICY_VERSION,
+        "screening_feature_contract": "discovery_v2",
         "qualifying_count": len(opps_list),
         "long_count": len([o for o in opps_list if o["direction"] == "long"]),
         "short_count": len([o for o in opps_list if o["direction"] == "short"]),
@@ -165,7 +167,7 @@ async def execute_screener_job(
 async def run_cron_daemon(
     interval_hours: int = 4,
     min_score: float = 50.0,
-    max_symbols: int = 250,
+    max_symbols: int = 320,
 ) -> None:
     """Runs a daemon loop scheduled every 4 hours on UTC candle closes."""
     settings = load_settings()
@@ -230,8 +232,8 @@ def main() -> None:
     parser.add_argument(
         "--max-symbols",
         type=int,
-        default=250,
-        help="Maximum contracts to scan (default 250 for core liquid tier)",
+        default=320,
+        help="Maximum contracts to scan (default 320 for full core + discovery tier)",
     )
 
     args = parser.parse_args()

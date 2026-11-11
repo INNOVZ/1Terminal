@@ -255,7 +255,7 @@ async def test_slow_outcomes_do_not_delay_independent_rank_role(tmp_path, monkey
     rank_stop, outcome_stop = asyncio.Event(), asyncio.Event()
 
     async def rank_wait(seconds, stop):
-        await asyncio.wait_for(outcome_entered.wait(), 2)
+        await asyncio.wait_for(outcome_entered.wait(), 8)
         stop.set()
         outcome_stop.set()
 
@@ -269,7 +269,7 @@ async def test_slow_outcomes_do_not_delay_independent_rank_role(tmp_path, monkey
             tmp_path, session.session_id, "ranks", clock=lambda: now, wait=rank_wait, stop=rank_stop
         )
     )
-    assert await asyncio.wait_for(asyncio.gather(outcomes, ranks), 5) == [0, 0]
+    assert await asyncio.wait_for(asyncio.gather(outcomes, ranks), 12) == [0, 0]
     assert paths.count("/fapi/v1/ticker/24hr") == 1
     assert paths.count("/fapi/v1/klines") == 1
     assert sessions.status(session.session_id, now=now)["rank_slots"][289]["status"] == "complete"

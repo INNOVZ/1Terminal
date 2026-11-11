@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Sequence
+from dataclasses import asdict
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -27,6 +29,12 @@ from algotrader.domain.crypto_screener_models import (
     ScreenerMode,
     SetupLabel,
     calculate_opportunity_win_rate_and_ev,
+)
+from algotrader.domain.discovery_features import (
+    DiscoveryFeatureUnavailable,
+    discovery_temporal_features,
+    discovery_volume_metrics,
+    discovery_watch_selection,
 )
 from algotrader.domain.execution_brackets import (
     build_long_bracket,
@@ -106,6 +114,7 @@ class CryptoOpportunityScreener:
         *,
         evaluated_at: datetime | None = None,
         journal: ScanDecisionJournal | None = None,
+        feature_contract: str = "legacy",
     ) -> None:
         self._settings = settings
         self._macro_provider = macro_provider or MacroSentimentProvider()
@@ -113,10 +122,40 @@ class CryptoOpportunityScreener:
         self._evaluated_at = evaluated_at
         self._journal = journal
         self._fetch_failures: set[str] = set()
+        if feature_contract not in ("legacy", "discovery_v2"):
+            raise ValueError("unsupported screener feature contract")
+        self._feature_contract = feature_contract
+        self._feature_unavailable: set[str] = set()
+        self._ready_waiting_symbols: set[str] = set()
+        self._emerging_symbols: set[str] = set()
 
     def _note(self, symbol: str, stage: str, reason: str, **details: object) -> None:
         if self._journal is not None:
-            self._journal.note(symbol, stage, reason, **details)
+            values = json.loads(json.dumps(details, default=str, allow_nan=False))
+            self._journal.note(symbol, stage, reason, **values)
+
+    def _extend_selection(
+        self, selected: list[Instrument], liquid: list[Instrument],
+        quotes: dict[str, Quote], max_symbols: int | None,
+    ) -> list[Instrument]:
+        """Explicit seam for versioned research selection policies."""
+        if self._feature_contract == "discovery_v2":
+            return discovery_watch_selection(selected, liquid, quotes, max_symbols or 265,
+                                             self._evaluated_at or datetime.now(UTC))
+        return selected
+
+    def _hourly_history_limit(self) -> int:
+        return 360 if self._feature_contract == "discovery_v2" else 240
+
+    def _accumulation_volume_metrics(
+        self, hourly: Sequence[Candle], four_hour: Sequence[Candle],
+        hourly_snapshot: IndicatorSnapshot,
+    ) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+        """Legacy feature contract retained for the production/control engine."""
+        if self._feature_contract == "discovery_v2":
+            return discovery_volume_metrics(hourly, four_hour)
+        short, long, contraction = volume_contraction_metrics(hourly, 7, 14)
+        return short, long, contraction, hourly_snapshot.relative_volume
 
     async def screen(
         self,
@@ -132,6 +171,9 @@ class CryptoOpportunityScreener:
         enforce_quality: bool = False,
     ) -> list[CryptoOpportunity]:
         self._fetch_failures.clear()
+        self._feature_unavailable.clear()
+        self._ready_waiting_symbols.clear()
+        self._emerging_symbols.clear()
         self.scan_counts = {
             "eligible": 0,
             "liquid": 0,
@@ -314,10 +356,26 @@ class CryptoOpportunityScreener:
         if not selected_instruments:
             selected_instruments = liquid_instruments[:(target_core + target_discovery)]
 
+        legacy_selection_count = len(selected_instruments)
+        selected_instruments = self._extend_selection(
+            selected_instruments, liquid_instruments, quotes_by_symbol, max_symbols
+        )
+        if self._feature_contract == "discovery_v2":
+            self.scan_counts["discovery_watch_selected"] = len(selected_instruments) - legacy_selection_count
+        discovery_tier_set.update(i.id.symbol for i in selected_instruments if i.id.symbol not in core_set)
+
         self.scan_counts["selected"] = len(selected_instruments)
         selected_ids = {inst.id for inst in selected_instruments}
         for inst in liquid_instruments:
             self._note(inst.id.symbol, "selection", "selected" if inst.id in selected_ids else "selection_limit")
+            q = quotes_by_symbol[inst.id.symbol]
+            self._note(inst.id.symbol, "selection_evidence", "allocation", core=inst.id.symbol in core_set,
+                       discovery=inst.id.symbol in discovery_tier_set, selected=inst.id in selected_ids,
+                       core_budget=target_core, discovery_budget=target_discovery,
+                       requested_max_symbols=max_symbols, quote_volume_24h=q.quote_volume_24h,
+                       spread_bps=q.spread_bps,
+                       discovery_volume_eligible=q.quote_volume_24h >= Decimal("1500000"),
+                       discovery_spread_eligible=q.spread_bps <= Decimal("25"))
         log.info(
             "universe_liquidity_filtered",
             total=len(instruments),
@@ -545,6 +603,9 @@ class CryptoOpportunityScreener:
                 opportunities.append(opp)
 
         # Estimate & Log Binance API request weight
+        if self._feature_contract == "discovery_v2":
+            self.scan_counts["ready_waiting_activation"] = len(self._ready_waiting_symbols)
+            self.scan_counts["emerging_rs_count"] = len(self._emerging_symbols)
         w_stage0 = 56
         w_stage1 = len(selected_instruments) * 5 + 2
         w_stage2 = (len(stage2_shortlist) + len(stage2_probes)) * 4 if derivatives_port is not None else 0
@@ -685,7 +746,7 @@ class CryptoOpportunityScreener:
 
             # Concurrently fetch 1h (240 bars, w=2), 4h (480 bars = 80d, w=2), and 1w (40 bars = 280d, w=1)
             c1h, c4h, c1w = await asyncio.gather(
-                _fetch_candles("1h", 240),
+                _fetch_candles("1h", self._hourly_history_limit()),
                 _fetch_candles("4h", 480),
                 _fetch_candles("1w", 40),
                 return_exceptions=True,
@@ -731,6 +792,11 @@ class CryptoOpportunityScreener:
         beta, correlation, residual_24h, residual_6h, residual_7d = self._calc_residual_alpha(
             closed_1h, btc_candles
         )
+        if self._feature_contract == "discovery_v2" and explicit_derivatives is None:
+            closed_btc = sorted((c for c in btc_candles if c.closed), key=lambda c: c.closed_at)
+            temporal = discovery_temporal_features(closed_1h, closed_btc)
+            if temporal.get("emerging") is True:
+                self._emerging_symbols.add(inst.id.symbol)
 
         # Regime classification
         regime = self._classify_regime(snap_1h, ema20_4h, ema50_4h)
@@ -930,6 +996,14 @@ class CryptoOpportunityScreener:
 
         return opps
 
+    def _accumulation_funding_rate(
+        self, quote: Quote, derivatives: DerivativesSnapshot | None
+    ) -> Decimal | None:
+        """Default production source; research subclasses can isolate funding carry."""
+        if self._feature_contract == "discovery_v2":
+            return derivatives.funding_rate if derivatives is not None else quote.funding_rate
+        return derivatives.funding_rate if derivatives else None
+
     def _score_accumulation_setup(
         self,
         inst: Instrument,
@@ -1024,15 +1098,25 @@ class CryptoOpportunityScreener:
         )
         bb_inside_kc = bb_inside_kc_4h or bb_inside_kc_1h
         bandwidth_current = bbw_4h[-1] if bbw_4h else Decimal("0.20")
-        adv_7d, adv_14d, vol_contraction_ratio = volume_contraction_metrics(closed_1h, 7, 14)
+        try:
+            adv_7d, adv_14d, vol_contraction_ratio, rvol_4h = self._accumulation_volume_metrics(
+                closed_1h, closed_4h, snap_1h
+            )
+        except DiscoveryFeatureUnavailable as exc:
+            self._feature_unavailable.add(inst.id.symbol)
+            self.scan_counts["feature_unavailable"] = len(self._feature_unavailable)
+            self._note(inst.id.symbol, "accumulation_rejection", "feature_contract_unavailable", detail=str(exc))
+            return None
 
         # Disqualify Active Bearish Divergences on accumulation only if price broke below structural support
         if len(closed_4h) >= 24 and (close < ema50_4h and close < poc_price):
             rsi_divs_4h = confirmed_rsi_divergences(closed_4h[-24:], lookback=18, min_rsi_delta=Decimal("2.0"))
             if any(d.kind == "bearish" for d in rsi_divs_4h):
+                self._note(inst.id.symbol, "accumulation_rejection", "bearish_rsi_divergence_below_support")
                 return None
             macd_divs_4h = confirmed_macd_divergences(closed_4h[-24:], lookback=18)
             if any(d.kind == "bearish" for d in macd_divs_4h):
+                self._note(inst.id.symbol, "accumulation_rejection", "bearish_macd_divergence_below_support")
                 return None
 
         # Swings & Indicators
@@ -1041,16 +1125,19 @@ class CryptoOpportunityScreener:
         macd_line_4h, macd_sig_4h, macd_hist_4h_series = macd(closes_4h)
         macd_hist_4h = macd_hist_4h_series[-1] if macd_hist_4h_series else ZERO
         macd_hist_4h_prev = macd_hist_4h_series[-2] if len(macd_hist_4h_series) >= 2 else ZERO
-        rvol_4h = snap_1h.relative_volume
 
         # Derivatives & Order Flow features
-        funding = derivatives.funding_rate if derivatives else None
-        # Crowded long funding guard (> 25% APR / 2.5 bps per 8h)
+        funding = self._accumulation_funding_rate(quote, derivatives)
+        # Legacy raw-rate guard. Settlement interval normalization is a separate policy change.
         if funding is not None and funding > Decimal("0.00025"):
+            self._note(inst.id.symbol, "accumulation_rejection", "crowded_raw_funding",
+                       observed=funding, threshold=Decimal("0.00025"), enriched=derivatives is not None)
             return None
         oi_change = derivatives.open_interest_change_1h if derivatives else None
         # Fix 4: Disqualify any Long candidate where oi_change_1h < -2.5% (acute long liquidation / position unwinding)
         if oi_change is not None and oi_change < Decimal("-0.025"):
+            self._note(inst.id.symbol, "accumulation_rejection", "acute_oi_unwinding",
+                       observed=oi_change, threshold=Decimal("-0.025"))
             return None
         oi_change_7d = derivatives.open_interest_change_7d if derivatives else None
         taker_ratio_calc = taker_buy_ratio_from_candles(closed_1h, hours=4)
@@ -1148,6 +1235,8 @@ class CryptoOpportunityScreener:
         )
         archetype = classify_long_archetype(long_features)
         if archetype is None:
+            self._note(inst.id.symbol, "accumulation_rejection", "no_long_archetype",
+                       enriched=derivatives is not None, features=asdict(long_features))
             return None
 
         # Fix 2: Hard veto on derivative Long setups when 7d OI is missing ("N/A")
@@ -1156,16 +1245,22 @@ class CryptoOpportunityScreener:
             SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG,
             SetupLabel.FUNDING_SQUEEZE_SPRING_LONG,
         ) and (derivatives is not None and oi_change_7d is None):
+            self._note(inst.id.symbol, "accumulation_rejection", "required_7d_oi_unavailable",
+                       archetype=archetype.value)
             return None
 
         # Fix 4: Require current_price >= val_price for RANGE_BOTTOM_ACCUMULATION_LONG and OI_ACCUMULATION_LONG
         if archetype in (SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG, SetupLabel.OI_ACCUMULATION_LONG):
             if val_price > ZERO and close < val_price:
+                self._note(inst.id.symbol, "accumulation_rejection", "below_value_area_low",
+                           observed=close, threshold=val_price, archetype=archetype.value)
                 return None
 
         # Fix 6: Require strictly negative funding (funding <= -0.50 bps) for SHORT_SQUEEZE_ABSORPTION_LONG
         if archetype == SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG:
             if funding is not None and funding > Decimal("-0.00005"):
+                self._note(inst.id.symbol, "accumulation_rejection", "squeeze_funding_not_negative",
+                           observed=funding, threshold=Decimal("-0.00005"))
                 return None
 
         # Multi-Timeframe Candle Handling & HTF RSI (Anti-Chasing Gates)
@@ -1189,6 +1284,8 @@ class CryptoOpportunityScreener:
         # Stage 2 Gate L6 Bull-Trap Guard: Missing Stage 2 OI telemetry cannot falsely satisfy ceiling gate
         if dist_to_ceiling <= Decimal("0.045") and derivatives is not None:
             if oi_change_7d is None and oi_delta_4h_val is None and rvol_4h < Decimal("1.20"):
+                self._note(inst.id.symbol, "accumulation_rejection", "ceiling_confirmation_unavailable",
+                           rvol=rvol_4h, distance_to_ceiling=dist_to_ceiling)
                 return None
 
         # Mandatory Domain Gates L1-L6
@@ -1236,6 +1333,14 @@ class CryptoOpportunityScreener:
             oi_delta_24h=oi_delta_24h_val,
         )
         gates_passed, gate_details = evaluate_long_gates(gate_inputs, archetype)
+        if self._feature_contract == "discovery_v2":
+            if all(gate_details.get(f"L{i}") is True for i in range(1, 6)) and not gate_details.get("L6"):
+                self._ready_waiting_symbols.add(inst.id.symbol)
+            elif gates_passed:
+                self._ready_waiting_symbols.discard(inst.id.symbol)
+        self._note(inst.id.symbol, "accumulation_gates", "passed" if gates_passed else "failed",
+                   archetype=archetype.value, enriched=derivatives is not None,
+                   gates=gate_details, inputs=asdict(gate_inputs))
         if not gates_passed:
             return None
 

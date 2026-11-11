@@ -1,0 +1,6 @@
+{"phase": "write", "slots": 1, "seconds": 1.796002043003682}
+{"phase": "write", "slots": 145, "seconds": 81.81150978599908}
+{"phase": "write", "slots": 289, "seconds": 164.90984724002192}
+{"phase": "write", "slots": 433, "seconds": 247.89859756903024}
+{"phase": "write", "slots": 577, "seconds": 334.58906781702535}
+{"synthetic": true, "network": "none", "cohort": 1000, "slots": 577, "write_seconds": 334.58915531699313, "report_seconds": 603.9961429830291, "total_seconds": 938.9836440919898, "max_rss_kib": 73824, "bytes": 806894077, "status": "complete", "live_observation_started": false}

@@ -87,6 +87,10 @@ _TYPES: dict[str, Any] = {cls.__name__: cls for cls in (
 
 
 def encode_value(value: Any) -> Any:
+    # Exact primitives only: enum/subclass tagged representations remain unchanged.
+    kind = type(value)
+    if value is None or kind is str or kind is int or kind is float or kind is bool:
+        return value
     if isinstance(value, Enum):
         return {"@": type(value).__name__, "value": value.value}
     if isinstance(value, Decimal):

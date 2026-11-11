@@ -90,8 +90,10 @@ async def replay_scan(record: ScanRecord) -> ReplayReport:
     tape = ReplayTape(record.inputs)
     market = ReplayMarket(tape)
     journal = ScanDecisionJournal()
-    screener = CryptoOpportunityScreener(settings, market, evaluated_at=record.started_at, journal=journal)
     arguments = dict(record.request)
+    feature_contract = arguments.pop("feature_contract", "legacy")
+    screener = CryptoOpportunityScreener(settings, market, evaluated_at=record.started_at, journal=journal,
+                                        feature_contract=feature_contract)
     enabled = arguments.pop("derivatives_enabled")
     result = await screener.screen(market, derivatives_port=market if enabled else None, **arguments)
     tape.assert_consumed()

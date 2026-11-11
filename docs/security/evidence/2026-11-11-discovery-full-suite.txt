@@ -1,0 +1,212 @@
+........................................................................ [  8%]
+........................................................................ [ 17%]
+........................................................................ [ 26%]
+........................................................................ [ 35%]
+........................................................................ [ 44%]
+........................................................................ [ 53%]
+..............................................................F......... [ 62%]
+........................................................................ [ 71%]
+........................................................................ [ 80%]
+........................................................................ [ 89%]
+........................................................................ [ 98%]
+.........                                                                [100%]
+=================================== FAILURES ===================================
+____________ test_slow_outcomes_do_not_delay_independent_rank_role _____________
+
+fut = <_GatheringFuture finished exception=CancelledError()>, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+
+/opt/anaconda3/lib/python3.13/asyncio/tasks.py:507: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/algotrader/jobs/research_worker.py:185: in run_research_worker
+    await _tick_until_stop(worker.tick(session_id, now=now), stop)
+src/algotrader/jobs/research_worker.py:69: in _tick_until_stop
+    done, _ = await asyncio.wait({acquisition, stopping}, return_when=asyncio.FIRST_COMPLETED)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/anaconda3/lib/python3.13/asyncio/tasks.py:451: in wait
+    return await _wait(fs, timeout, return_when, loop)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+fs = {<Task cancelled name='Task-2158' coro=<ResearchOutcomeWorker.tick() done, defined at /Users/jithinjacob/Desktop/trdin...sk cancelled name='Task-2159' coro=<Event.wait() done, defined at /opt/anaconda3/lib/python3.13/asyncio/locks.py:200>>}
+timeout = None, return_when = 'FIRST_COMPLETED'
+loop = <_UnixSelectorEventLoop running=False closed=False debug=False>
+
+    async def _wait(fs, timeout, return_when, loop):
+        """Internal helper for wait().
+    
+        The fs argument must be a collection of Futures.
+        """
+        assert fs, 'Set of Futures is empty.'
+        waiter = loop.create_future()
+        timeout_handle = None
+        if timeout is not None:
+            timeout_handle = loop.call_later(timeout, _release_waiter, waiter)
+        counter = len(fs)
+    
+        def _on_completion(f):
+            nonlocal counter
+            counter -= 1
+            if (counter <= 0 or
+                return_when == FIRST_COMPLETED or
+                return_when == FIRST_EXCEPTION and (not f.cancelled() and
+                                                    f.exception() is not None)):
+                if timeout_handle is not None:
+                    timeout_handle.cancel()
+                if not waiter.done():
+                    waiter.set_result(None)
+    
+        for f in fs:
+            f.add_done_callback(_on_completion)
+    
+        try:
+>           await waiter
+E           asyncio.exceptions.CancelledError
+
+/opt/anaconda3/lib/python3.13/asyncio/tasks.py:537: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/private/var/folders/hk/cwhrf3xs4cs_xtxzzqw2gxgc0000gn/T/pytest-of-jithinjacob/pytest-642/test_slow_outcomes_do_not_dela0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11c893a80>
+
+    async def test_slow_outcomes_do_not_delay_independent_rank_role(tmp_path, monkeypatch):
+        sessions, session, child = setup_session(tmp_path)
+        from algotrader.infrastructure.scan_archive import LocalScanArchive
+    
+        parent = LocalScanArchive(tmp_path).read_scan(session.parent_id)
+        now = ANCHOR + timedelta(hours=24, minutes=5)
+        outcome_entered = asyncio.Event()
+        paths = []
+    
+        async def handler(request):
+            paths.append(request.url.path)
+            if request.url.path == "/fapi/v1/klines":
+                outcome_entered.set()
+                await asyncio.Event().wait()
+            return httpx.Response(
+                200,
+                json=[
+                    dict(row, closeTime=int(now.timestamp() * 1000)) for row in ticker_fixture(parent)
+                ],
+            )
+    
+        monkeypatch.setattr(
+            "algotrader.jobs.research_worker.ResearchMarketData",
+            lambda budget, metadata: ResearchMarketData(
+                budget, metadata, transport=httpx.MockTransport(handler)
+            ),
+        )
+        rank_stop, outcome_stop = asyncio.Event(), asyncio.Event()
+    
+        async def rank_wait(seconds, stop):
+            await asyncio.wait_for(outcome_entered.wait(), 2)
+            stop.set()
+            outcome_stop.set()
+    
+        outcomes = asyncio.create_task(
+            run_research_worker(
+                tmp_path, session.session_id, "outcomes", clock=lambda: now, stop=outcome_stop
+            )
+        )
+        ranks = asyncio.create_task(
+            run_research_worker(
+                tmp_path, session.session_id, "ranks", clock=lambda: now, wait=rank_wait, stop=rank_stop
+            )
+        )
+>       assert await asyncio.wait_for(asyncio.gather(outcomes, ranks), 5) == [0, 0]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_research_worker.py:272: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/anaconda3/lib/python3.13/asyncio/tasks.py:506: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x11cb21800>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is not None:
+                # Since there are no new cancel requests, we're
+                # handling this.
+                if issubclass(exc_type, exceptions.CancelledError):
+>                   raise TimeoutError from exc_val
+E                   TimeoutError
+
+/opt/anaconda3/lib/python3.13/asyncio/timeouts.py:116: TimeoutError
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/fastapi/testclient.py:1
+  /Users/jithinjacob/Desktop/trdindicator/.venv/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_research_worker.py::test_slow_outcomes_do_not_delay_independent_rank_role
+1 failed, 800 passed, 1 warning in 292.54s (0:04:52)
