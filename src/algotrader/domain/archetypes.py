@@ -237,7 +237,20 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
     if oi_7d >= Decimal("0.05") and is_compressed and is_mom_up and holding_structure:
         return SetupLabel.OI_ACCUMULATION_LONG
     if is_compressed or features.bb_bandwidth_4h <= Decimal("0.22"):
-        if features.pos_in_range_30d > Decimal("0.60") and has_supply_exhaustion and is_mom_up:
+        if (
+            (
+                features.pos_in_range_30d > Decimal("0.60")
+                or (
+                    features.bb_inside_kc_4h
+                    and features.bb_bandwidth_4h <= Decimal("0.12")
+                    and features.close >= features.poc_30d
+                    and features.close >= features.ema50_4h
+                    and features.pos_in_range_30d >= Decimal("0.45")
+                )
+            )
+            and has_supply_exhaustion
+            and is_mom_up
+        ):
             return SetupLabel.VCP_COMPRESSION_LONG
         is_val_support_holding = (
             features.close >= features.val_30d
@@ -266,7 +279,15 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
                     and taker_4h >= Decimal("0.85")
                 )
             )
-            and has_supply_exhaustion
+            and (
+                has_supply_exhaustion
+                or (
+                    features.bb_inside_kc_4h
+                    and features.close >= features.ema50_4h
+                    and taker_4h is not None
+                    and taker_4h >= Decimal("1.02")
+                )
+            )
         ):
             if features.pos_in_range_30d > Decimal("0.55"):
                 return SetupLabel.VCP_COMPRESSION_LONG

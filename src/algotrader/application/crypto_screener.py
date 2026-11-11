@@ -324,8 +324,13 @@ class CryptoOpportunityScreener:
             q = quotes_by_symbol.get(sym)
             if q is None:
                 continue
-            # Execution Hygiene: quote_vol >= $1,500,000 and spread <= 25 bps
-            if q.quote_volume_24h < Decimal("1500000") or q.spread_bps > Decimal("25"):
+            # Execution Hygiene: quote_vol >= $1,500,000 ($1,200,000 in discovery_v2 to prevent $1.45M cliff dropouts) and spread <= 25 bps
+            min_disc_qv = (
+                Decimal("1200000")
+                if self._feature_contract == "discovery_v2"
+                else Decimal("1500000")
+            )
+            if q.quote_volume_24h < min_disc_qv or q.spread_bps > Decimal("25"):
                 continue
 
             anomaly_score = 0.0
@@ -349,6 +354,21 @@ class CryptoOpportunityScreener:
             # are pre-loaded springs winding up before markup explosion
             if rng <= 0.040 and -3.0 <= chg <= 3.0:
                 anomaly_score += 25.0 + 15.0 * max(0.0, (0.040 - rng) / 0.040)
+
+            # 5. Upper-Range Coiled Accumulation (discovery_v2):
+            # Prioritize tight-range setups (rng <= 8.0%) with constructive 24h return (0% <= chg <= 8.5%)
+            # closing in the top 70% of their 24h range so they are not crowded out by $4M+ volume ties at 35.0.
+            if (
+                self._feature_contract == "discovery_v2"
+                and rng <= 0.080
+                and 0.0 <= chg <= 8.5
+                and q.high_24h is not None
+                and q.low_24h is not None
+                and q.high_24h > q.low_24h
+            ):
+                close_pos_24h = float((q.last - q.low_24h) / (q.high_24h - q.low_24h))
+                if close_pos_24h >= 0.70:
+                    anomaly_score += 25.0 * close_pos_24h
 
             if anomaly_score > 0.0:
                 discovery_candidates.append((anomaly_score, inst))
@@ -1492,12 +1512,12 @@ class CryptoOpportunityScreener:
                 or (pos_in_range >= Decimal("0.18"))
             )
         )
-        # Fix 2 & 4: Smart Money Absorption verification
+        # Fix 2 & 4: Smart Money Absorption verification (aligned with Gate L6 tolerances)
         is_deriv_flow_ok = bool(
             gate_details.get("L6", True)
             and derivatives is not None
             and (
-                (oi_change_7d is not None and oi_change_7d >= Decimal("0.0"))
+                (oi_change_7d is not None and oi_change_7d >= Decimal("-0.030"))
                 or (
                     self._feature_contract == "discovery_v2"
                     and oi_delta_24h_val is not None
@@ -1509,7 +1529,11 @@ class CryptoOpportunityScreener:
             value_acceptance=va_accepted,
             volatility_structure=(bb_inside_kc or bandwidth_current <= Decimal("0.24")),
             momentum_alignment=(ema20_4h >= ema50_4h and macd_hist_4h >= macd_hist_4h_prev),
-            volume_microstructure=(vol_contraction_ratio <= Decimal("1.0") or rvol_4h >= Decimal("1.25")),
+            volume_microstructure=(
+                vol_contraction_ratio <= Decimal("1.0")
+                or rvol_4h >= Decimal("1.25")
+                or (bb_inside_kc and bandwidth_current <= Decimal("0.10"))
+            ),
             derivatives_positioning=is_deriv_flow_ok,
         )
 
@@ -1612,7 +1636,7 @@ class CryptoOpportunityScreener:
                         )
                         else (
                             f"7d OI Bleeding ({float((oi_change_7d or Decimal('0'))*100):+.1f}%), funding {float((funding or Decimal('0'))*10000):+.2f} bps"
-                            if (oi_change_7d is not None and oi_change_7d < Decimal("0.0"))
+                            if (oi_change_7d is not None and oi_change_7d < Decimal("-0.030"))
                             else f"7d OI {float((oi_change_7d or Decimal('0'))*100):+.1f}%, funding {float((funding or Decimal('0'))*10000):+.2f} bps"
                         )
                     )

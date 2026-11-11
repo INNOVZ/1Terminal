@@ -294,6 +294,11 @@ async def _do_crypto_screen(
         retained_prior: list[dict[str, Any]] = []
         for p in raw_retained_prior:
             failed_g = p.get("failed_gates") or []
+            first_seen_raw = p.get("first_seen_at") or p.get("evaluated_at")
+            age_hours = 0.0
+            if isinstance(first_seen_raw, str) and first_seen_raw:
+                with contextlib.suppress(Exception):
+                    age_hours = (now - datetime.fromisoformat(first_seen_raw)).total_seconds() / 3600.0
             if failed_g:
                 radar_events.append(
                     {
@@ -303,7 +308,19 @@ async def _do_crypto_screen(
                         "retained": False,
                         "reason": "radar_gates_degraded",
                         "failed_gates": list(failed_g),
-                        "first_seen_at": p.get("first_seen_at") or p.get("evaluated_at"),
+                        "first_seen_at": first_seen_raw,
+                        "candidate": {k: v for k, v in p.items() if k != "candles"},
+                    }
+                )
+            elif age_hours > 96.0:
+                radar_events.append(
+                    {
+                        "symbol": p.get("symbol"),
+                        "at": now.isoformat(),
+                        "state": "EXPIRED",
+                        "retained": False,
+                        "reason": "max_trade_horizon_exceeded",
+                        "first_seen_at": first_seen_raw,
                         "candidate": {k: v for k, v in p.items() if k != "candles"},
                     }
                 )
