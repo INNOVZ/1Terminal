@@ -377,15 +377,42 @@ def evaluate_long_gates(
     coil_maturity = compute_coil_maturity_score(inputs)
     volume_vacuum = is_volume_vacuum_setup(inputs)
     mature_squeeze = is_mature_squeeze_setup(inputs)
-    stealth_coil_qualified = (coil_maturity >= 65) or volume_vacuum or mature_squeeze
+    stealth_oi_accumulation = bool(
+        (inputs.bb_inside_kc_4h or inputs.bb_bandwidth_4h <= Decimal("0.20"))
+        and inputs.close >= inputs.ema50_4h
+        and inputs.close >= inputs.poc_30d
+        and inputs.oi_delta_7d is not None
+        and inputs.oi_delta_7d >= Decimal("0.08")
+        and inputs.oi_delta_24h is not None
+        and inputs.oi_delta_24h >= Decimal("0.01")
+        and (inputs.oi_delta_4h is None or inputs.oi_delta_4h >= Decimal("-0.005"))
+        and (
+            (inputs.taker_buy_ratio_4h is not None and inputs.taker_buy_ratio_4h >= Decimal("1.02"))
+            or (inputs.taker_buy_ratio_1h is not None and inputs.taker_buy_ratio_1h >= Decimal("1.10"))
+        )
+    )
+    stealth_coil_qualified = (
+        (coil_maturity >= 65) or volume_vacuum or mature_squeeze or stealth_oi_accumulation
+    )
 
     # 1. Universal Order-Flow Audit (Bypass eliminated: every candidate audited regardless of dist_to_ceiling)
     has_oi_metrics = (inputs.oi_delta_7d is not None or inputs.oi_delta_4h is not None)
     if has_oi_metrics:
         # Across all distances to ceiling: require non-bleeding OI: OI_7d >= -2.5% OR OI_4h >= +2.5%
+        # or fresh 24h+4h OI inflection with confirmed taker buyer absorption
         universal_oi_ok = (
             (inputs.oi_delta_7d is not None and inputs.oi_delta_7d >= Decimal("-0.025"))
             or (inputs.oi_delta_4h is not None and inputs.oi_delta_4h >= Decimal("0.025"))
+            or (
+                inputs.oi_delta_24h is not None
+                and inputs.oi_delta_24h >= Decimal("0.020")
+                and inputs.oi_delta_4h is not None
+                and inputs.oi_delta_4h >= Decimal("0.005")
+                and (
+                    (inputs.taker_buy_ratio_4h is not None and inputs.taker_buy_ratio_4h >= Decimal("1.05"))
+                    or (inputs.taker_buy_ratio_1h is not None and inputs.taker_buy_ratio_1h >= Decimal("1.05"))
+                )
+            )
         )
         if dist_to_ceiling <= Decimal("0.045"):
             # Strict resistance ceiling rule: OI_7d >= -1.0% AND RVOL >= 1.15x

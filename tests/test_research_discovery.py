@@ -250,3 +250,51 @@ def test_live_discovery_v2_contract_carries_quote_funding_and_temporal_features(
     btc = trending_candles(count=24)
     assert discovery_temporal_features(hourly, btc) == temporal_features(hourly, btc)
 
+
+def test_discovery_v2_stealth_oi_and_fresh_oi_inflection_gates():
+    from algotrader.domain.crypto_screener_models import SetupLabel
+    from algotrader.domain.screening_gates import LongGateInputs, evaluate_long_gates
+
+    base_inputs = LongGateInputs(
+        close=Decimal("105"),
+        ema50_4h=Decimal("100"),
+        ema20_1h=Decimal("104"),
+        ema200_4h=Decimal("98"),
+        low_24h=Decimal("101"),
+        atr14_4h=Decimal("3"),
+        vcr_4h=Decimal("1.05"),
+        ema20_4h=Decimal("103"),
+        excursion_72h=Decimal("0.12"),
+        ret_24h=Decimal("0.02"),
+        rsi_1h=Decimal("55"),
+        rsi_4h=Decimal("54"),
+        high_30d=Decimal("118"),
+        low_30d=Decimal("90"),
+        poc_30d=Decimal("101"),
+        val_30d=Decimal("95"),
+        vah_30d=Decimal("112"),
+        bb_inside_kc_4h=True,
+        bb_bandwidth_4h=Decimal("0.11"),
+        rvol_4h=Decimal("0.65"),
+        oi_delta_7d=Decimal("0.15"),
+        oi_delta_24h=Decimal("0.025"),
+        oi_delta_4h=Decimal("0.004"),
+        taker_buy_ratio_4h=Decimal("1.04"),
+    )
+    passed, details = evaluate_long_gates(base_inputs, SetupLabel.VCP_COMPRESSION_LONG)
+    assert passed is True and details["L6"] is True
+
+    # Fresh 24h+4h OI inflection after 7d washout with active RVOL/ignition
+    inflection_inputs = replace(
+        base_inputs,
+        rvol_4h=Decimal("1.80"),
+        has_kinetic_ignition=True,
+        oi_delta_7d=Decimal("-0.04"),
+        oi_delta_24h=Decimal("0.030"),
+        oi_delta_4h=Decimal("0.015"),
+        taker_buy_ratio_4h=Decimal("1.10"),
+    )
+    passed_inf, details_inf = evaluate_long_gates(inflection_inputs, SetupLabel.VCP_COMPRESSION_LONG)
+    assert passed_inf is True and details_inf["L6"] is True
+
+

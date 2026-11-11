@@ -203,6 +203,8 @@ class CryptoOpportunityScreener:
             "PAXG", "XAU", "XAG", "COPPER", "SPY", "QQQ", "WLFI", "USDT", "USDC", "FDUSD", "TUSD", "USDP", "DAI", "EUR",
             "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "DAIUSDT",
         }
+        if self._feature_contract == "discovery_v2":
+            toxic_symbols = toxic_symbols | {"XAUT", "XAUTUSDT"}
         excluded = set(self._settings.excluded_base_assets) | benchmark_exclusions | toxic_symbols
         eligible_instruments = [
             inst
@@ -289,8 +291,13 @@ class CryptoOpportunityScreener:
         self.scan_counts["liquid"] = len(liquid_instruments)
 
         # Stage 5: Dynamic 265-Pair Funnel (Top 215 ILI Core + Top 50 Pre-Pump Anomaly Discovery)
-        target_core = 215 if max_symbols is None else min(max_symbols, max(1, int(max_symbols * (215 / 265))))
-        target_discovery = 50 if max_symbols is None else max(0, max_symbols - target_core)
+        alloc_cap = (
+            max(1, max_symbols - min(20, max(0, max_symbols - 265)))
+            if (max_symbols is not None and self._feature_contract == "discovery_v2")
+            else max_symbols
+        )
+        target_core = 215 if alloc_cap is None else min(alloc_cap, max(1, int(alloc_cap * (215 / 265))))
+        target_discovery = 50 if alloc_cap is None else max(0, alloc_cap - target_core)
 
         ili_inputs = [
             SymbolLiquidityMetrics(
@@ -464,13 +471,21 @@ class CryptoOpportunityScreener:
                 q = quotes_by_symbol[inst.id.symbol]
                 if inst.id.symbol in shortlisted_symbols:
                     continue
-                if q.quote_volume_24h < Decimal("1500000") or q.spread_bps > Decimal("25"):
+                is_track_b_ready = (
+                    self._feature_contract == "discovery_v2"
+                    and inst.id.symbol in self._ready_waiting_symbols
+                )
+                min_probe_vol = Decimal("500000") if is_track_b_ready else Decimal("1500000")
+                if q.quote_volume_24h < min_probe_vol or q.spread_bps > Decimal("25"):
                     continue
                 funding_signal = max(Decimal("0"), Decimal("-0.00005") - (q.funding_rate or ZERO)) if q.funding_rate is not None else ZERO
                 basis_signal = max(ZERO, (q.basis_pct or ZERO) - Decimal("0.0008"))
-                if funding_signal <= ZERO and basis_signal <= ZERO:
+                track_b_boost = Decimal("1000") if is_track_b_ready else ZERO
+                if is_track_b_ready and inst.id.symbol in self._emerging_symbols:
+                    track_b_boost += Decimal("500")
+                if funding_signal <= ZERO and basis_signal <= ZERO and track_b_boost <= ZERO:
                     continue
-                anomaly_rank = funding_signal * Decimal("100000") + basis_signal * Decimal("10000")
+                anomaly_rank = track_b_boost + funding_signal * Decimal("100000") + basis_signal * Decimal("10000")
                 ranked_probes.append((anomaly_rank, inst))
             ranked_probes.sort(key=lambda item: (item[0], quotes_by_symbol[item[1].id.symbol].quote_volume_24h), reverse=True)
             stage2_probes = [inst for _, inst in ranked_probes[:15]]
@@ -1187,7 +1202,24 @@ class CryptoOpportunityScreener:
             and taker_ratio_1h >= Decimal("1.15")
             and c_1h_latest.close >= snap_1h.ema20
         )
-        has_kinetic_ignition = pocket_pivot_1h or micro_expansion_1h or of_absorption_1h
+
+        # Trigger D (Volume Velocity Index + 6h BTC Relative-Strength Ignition):
+        vvi_ignition_1h = False
+        if self._feature_contract == "discovery_v2" and len(closed_1h) >= 24:
+            qvol_6h = sum((c.quote_volume for c in closed_1h[-6:]), ZERO) / Decimal("6")
+            qvol_18h = sum((c.quote_volume for c in closed_1h[-24:-6]), ZERO) / Decimal("18")
+            vvi_ratio = (qvol_6h / qvol_18h) if qvol_18h > ZERO else ZERO
+            vvi_ignition_1h = bool(
+                inst.id.symbol in self._emerging_symbols
+                and vvi_ratio >= Decimal("1.35")
+                and c_1h_latest.close >= snap_1h.ema20
+                and taker_buy_ratio_4h is not None
+                and taker_buy_ratio_4h >= Decimal("1.00")
+            )
+
+        has_kinetic_ignition = (
+            pocket_pivot_1h or micro_expansion_1h or of_absorption_1h or vvi_ignition_1h
+        )
 
         # Gate 2 Anti-Chasing 2.1 inputs
         prior_bbw_4h = bbw_4h[-2] if len(bbw_4h) >= 2 else bandwidth_current
