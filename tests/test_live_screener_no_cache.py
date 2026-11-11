@@ -27,7 +27,7 @@ async def test_live_screener_sets_no_cache_headers() -> None:
     """Verifies that /screener/live sets strict cache prevention headers."""
     resp = Response()
     # Mock _screener_cache to avoid initiating a real scan during test
-    with patch.object(portal_module, "_screener_cache", {"opportunities": [], "qualifying_count": 0}):
+    with patch.object(portal_module, "_screener_cache", {"opportunities": [], "qualifying_count": 0, "radar_lifecycle_version": portal_module.RADAR_PUBLICATION_VERSION}):
         await get_live_screener(response=resp)
 
     assert resp.headers.get("Cache-Control") == "no-store, no-cache, must-revalidate, max-age=0"
@@ -68,3 +68,41 @@ async def test_do_crypto_screen_returns_empty_when_no_candidates_pass() -> None:
         assert result["scan_archive"]["status"] == "saved"
         assert result["total_scanned"] == 10
         assert result["order_execution_enabled"] is False
+
+
+@pytest.mark.parametrize("verified", [False, True])
+async def test_retained_radar_requires_five_current_verified_gates(verified):
+    from datetime import UTC, datetime
+
+    candidate = {
+        "symbol": "TESTUSDT", "base_asset": "TEST", "first_seen_at": datetime.now(UTC).isoformat(),
+        "radar_data_status": "current" if verified else "unavailable", "failed_gates": [],
+        "checklist": [{"passed": verified, "status": "passed" if verified else "unknown"} for _ in range(5)],
+    }
+    runtime = AsyncMock()
+    runtime.run_crypto_scan.return_value = ScreeningRun([], {}, ScanReceipt("fixture", "saved"))
+    with (
+        patch.object(portal_module, "_screener_cache", {"opportunities": [candidate]}),
+        patch.object(portal_module, "get_portal_runtime", return_value=runtime),
+        patch.object(portal_module, "reconcile_radar_cohort", return_value=[candidate]),
+        patch.object(portal_module, "atomic_write_json"),
+    ):
+        result = await portal_module._do_crypto_screen()
+    assert len(result["opportunities"]) == int(verified)
+    if not verified:
+        assert any(e["reason"] == "radar_gates_unverified" for e in result["radar_events"])
+
+
+async def test_previous_publication_cache_is_refreshed_before_display():
+    from unittest.mock import AsyncMock
+
+    old = {"opportunities": [{"symbol": "OLDUSDT"}], "radar_lifecycle_version": "radar-v2"}
+    with (
+        patch.object(portal_module, "_screener_cache", old),
+        patch.object(portal_module, "_screener_task", None),
+        patch.object(portal_module, "_do_crypto_screen", new_callable=AsyncMock) as scan,
+    ):
+        result = await get_live_screener()
+        assert result["opportunities"] == [] and result["is_scanning"] is True
+        await portal_module._screener_task
+        scan.assert_awaited_once()

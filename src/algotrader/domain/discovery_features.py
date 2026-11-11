@@ -75,4 +75,7 @@ def discovery_temporal_features(
         "btc_relative_6h_pp": str(ret6 - btc6),
         "turnover_acceleration_6h_vs_prior18h": str(recent / previous),
         "emerging": bool(ret6 - btc6 > 0 and recent / previous > 1 and ret24 <= 9),
+        "vvi_ignition": bool(ret6 - btc6 >= Decimal("1.5")
+                             and recent / previous >= Decimal("1.35")
+                             and 0 <= ret24 <= 9),
     }

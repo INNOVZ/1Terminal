@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
-from decimal import Decimal
 
 from algotrader.domain.discovery_features import (
+    DISCOVERY_VERSION,
     DiscoveryFeatureUnavailable,
+    discovery_temporal_features,
     discovery_volume_metrics,
     discovery_watch_selection,
 )
@@ -14,23 +14,26 @@ from scripts.replay_contract import ReplayUnavailable
 from scripts.research_pipeline_comparison import FundingCarryScreener
 
 POLICY = {
-    "version": "discovery-v2-full336-rvol4h-watch20",
+    "version": DISCOVERY_VERSION + "-admission-v2",
     "feature_contract": "hourly360-full336-rvol4h-inclusive20-v2",
     "hourly_history_limit": 360,
     "volume_history_closed_hours": 336,
     "watch_limit": 20,
+    "max_supplemental_derivatives": 90,
+    "max_supplemental_calls": 450,
     "watch_min_quote_volume": "500000",
     "watch_max_quote_volume_exclusive": "1500000",
     "watch_max_spread_bps": "25",
     "watch_order": "sha256(version|four_hour_utc_bucket|symbol)",
     "readiness": "existing_L1_to_L5_pass; activation_and_publication_recorded_separately",
     "emerging": "positive_6h_BTC_relative_return_and_turnover_acceleration_gt1_and_ret24h_le9pct",
-    "production_publication_gates": "unchanged",
+    "production_publication_gates": "discovery_v2_L5_L6_VVI_with_shared_final_quality_filters",
 }
 
 
 class DiscoveryScreener(FundingCarryScreener):
     def __init__(self, *args, **kwargs):
+        kwargs["feature_contract"] = "discovery_v2"
         super().__init__(*args, **kwargs)
         self.watch_symbols = set()
         self.gate_evidence = {}
@@ -96,24 +99,7 @@ class DiscoveryScreener(FundingCarryScreener):
 
 
 def temporal_features(hourly, btc):
-    if len(hourly) < 24 or len(btc) < 6 or hourly[-1].closed_at != btc[-1].closed_at:
-        return {"available": False, "reason": "unaligned_or_missing_closed_history"}
-    if any(b.opened_at - a.opened_at != timedelta(hours=1)
-           for sequence in (hourly[-24:], btc[-6:])
-           for a, b in zip(sequence, sequence[1:], strict=False)):
-        return {"available": False, "reason": "noncontiguous_closed_history"}
-    recent = sum((c.quote_volume for c in hourly[-6:]), Decimal("0")) / 6
-    previous = sum((c.quote_volume for c in hourly[-24:-6]), Decimal("0")) / 18
-    if previous <= 0 or min(hourly[-6].open, hourly[-24].open, btc[-6].open) <= 0:
-        return {"available": False, "reason": "nonpositive_return_or_turnover_baseline"}
-    ret6 = (hourly[-1].close / hourly[-6].open - 1) * 100
-    ret24 = (hourly[-1].close / hourly[-24].open - 1) * 100
-    btc6 = (btc[-1].close / btc[-6].open - 1) * 100
-    return {"available": True, "last_closed_at": hourly[-1].closed_at.isoformat(),
-            "return_6h_pct": str(ret6), "return_24h_pct": str(ret24),
-            "btc_relative_6h_pp": str(ret6 - btc6),
-            "turnover_acceleration_6h_vs_prior18h": str(recent / previous),
-            "emerging": ret6 - btc6 > 0 and recent / previous > 1 and ret24 <= 9}
+    return discovery_temporal_features(hourly, btc)
 
 
 def validate_history_overlap(record, supplemental):
@@ -149,6 +135,7 @@ async def run_discovery(record, supplemental):
                                evaluated_at=record.started_at, journal=journal)
     request = dict(record.request)
     enabled = request.pop("derivatives_enabled")
+    request.pop("feature_contract", None)
     opportunities = await engine.screen(market, derivatives_port=market if enabled else None, **request)
     if tape.missing or engine.scan_counts["failed"]:
         return {"status": "unavailable", "reason": "discovery_inputs_incomplete",

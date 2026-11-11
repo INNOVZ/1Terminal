@@ -29,10 +29,13 @@ async def test_removed_trading_endpoints_are_unreachable():
         assert root["order_execution_enabled"] is False
 
 
-def test_lifespan_closes_runtime_and_cancels_cron(monkeypatch):
+def test_lifespan_closes_runtime_and_cancels_cron(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     runtime = AsyncMock()
     runtime.readiness.return_value = (True, {"status": "ready"})
     monkeypatch.setattr(portal, "_shared_runtime", runtime)
+    monkeypatch.setattr(portal, "_screener_cache", {})
+    monkeypatch.setattr(portal, "_do_crypto_screen", AsyncMock(return_value={}))
     app = create_app(Settings(_env_file=None, screener_cron_enabled=True))
     with TestClient(app) as client:
         assert client.get("/readyz").status_code == 200

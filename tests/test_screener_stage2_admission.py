@@ -119,3 +119,50 @@ async def test_oi_led_candidate_can_enter_stage2_without_stage1_setup(settings: 
         "stage2_probes": 1,
         "returned": 1,
     }
+
+
+async def test_discovery_promotes_ready_and_vvi_setups_with_bounded_overflow(settings, monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from algotrader.domain.scan_observations import ScanDecisionJournal
+    from tests.test_screener_publication_policy import _opportunity
+
+    instruments = [make_instrument(symbol=f"COIN{i:03}USDT") for i in range(80)]
+    quotes = [Quote(i.id, Decimal("100"), Decimal("100"), Decimal("100"),
+                    Decimal("5000000")) for i in instruments]
+    market = SimpleNamespace(instruments=AsyncMock(return_value=instruments),
+                             quotes=AsyncMock(return_value=quotes))
+    derivatives = SimpleNamespace(derivatives_snapshot=AsyncMock(return_value=DerivativesSnapshot(
+        funding_rate=None, basis_rate=None, open_interest=None, open_interest_change_1h=None,
+        taker_buy_sell_ratio=None, bid_depth_notional=None, ask_depth_notional=None)))
+    macro = SimpleNamespace(get_context=AsyncMock(return_value=SimpleNamespace(
+        narrative=lambda: "neutral", coi_score=None)))
+    journal = ScanDecisionJournal()
+    screener = CryptoOpportunityScreener(settings, macro, journal=journal, feature_contract="discovery_v2")
+    opportunity = _opportunity(Direction.LONG)
+
+    async def evaluate(**kwargs):
+        inst = kwargs["inst"]
+        index = int(inst.id.symbol[4:7])
+        if kwargs.get("explicit_derivatives") is not None:
+            return [replace(opportunity, instrument=inst)]
+        kwargs["candle_cache"][inst.id.symbol] = ((), (), ())
+        if index >= 45:
+            # A strong ignition without readiness must have its own admission path.
+            if index == 79:
+                screener._vvi_symbols.add(inst.id.symbol)
+            else:
+                screener._stage1_ready_symbols.add(inst.id.symbol)
+            return []
+        return [replace(opportunity, instrument=inst, score=Decimal("40"))]
+
+    monkeypatch.setattr(screener, "_evaluate_single", evaluate)
+    await screener.screen(market, derivatives, max_symbols=320, min_score=Decimal("50"), mode=ScreenerMode.ALL)
+    assert screener.scan_counts["stage2_shortlist"] == 45
+    assert screener.scan_counts["stage2_probes"] == 30
+    assert screener.scan_counts["stage2_probe_overflow"] == 5
+    assert derivatives.derivatives_snapshot.await_count == 75
+    admissions = [x for x in journal.snapshot() if x["stage"] == "stage2" and x["reason"] == "admitted"]
+    assert any(x["symbol"] == "COIN079USDT" and x["vvi_ignition"] for x in admissions)

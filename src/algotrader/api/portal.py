@@ -37,6 +37,7 @@ portal_router = APIRouter(prefix="/api")
 # Global singleton cache for screener results & runtime
 _runtime_lock = asyncio.Lock()
 _shared_runtime: Runtime | None = None
+RADAR_PUBLICATION_VERSION = "radar-v3"
 _screener_cache: dict[str, Any] = {}
 _cache_timestamp: datetime | None = None
 _cached_instruments: Any = None
@@ -295,18 +296,27 @@ async def _do_crypto_screen(
         for p in raw_retained_prior:
             failed_g = p.get("failed_gates") or []
             first_seen_raw = p.get("first_seen_at") or p.get("evaluated_at")
-            age_hours = 0.0
+            age_hours = float("inf")
             if isinstance(first_seen_raw, str) and first_seen_raw:
-                with contextlib.suppress(Exception):
-                    age_hours = (now - datetime.fromisoformat(first_seen_raw)).total_seconds() / 3600.0
-            if failed_g:
+                with contextlib.suppress(ValueError, TypeError):
+                    discovered_at = datetime.fromisoformat(first_seen_raw)
+                    if discovered_at.tzinfo is not None and discovered_at <= now:
+                        age_hours = (now - discovered_at).total_seconds() / 3600.0
+            checklist = p.get("checklist") or []
+            gates_verified = (
+                p.get("radar_data_status") == "current"
+                and len(checklist) == 5
+                and all(item.get("passed") is True and item.get("status", "passed") == "passed"
+                        for item in checklist)
+            )
+            if failed_g or not gates_verified:
                 radar_events.append(
                     {
                         "symbol": p.get("symbol"),
                         "at": now.isoformat(),
-                        "state": "INVALIDATED",
+                        "state": "INVALIDATED" if failed_g else "DATA_UNAVAILABLE",
                         "retained": False,
-                        "reason": "radar_gates_degraded",
+                        "reason": "radar_gates_degraded" if failed_g else "radar_gates_unverified",
                         "failed_gates": list(failed_g),
                         "first_seen_at": first_seen_raw,
                         "candidate": {k: v for k, v in p.items() if k != "candles"},
@@ -406,7 +416,7 @@ async def _do_crypto_screen(
             "macro_narrative": macro_narrative,
             "opportunities": final_opps,
             "radar_events": radar_events,
-            "radar_lifecycle_version": "radar-v2",
+            "radar_lifecycle_version": RADAR_PUBLICATION_VERSION,
         }
         # Persist every reconciliation, including removals, independently of the sidebar.
         # This is an operational audit trail, not prospective study enrollment.
@@ -497,8 +507,8 @@ async def get_live_screener(
     if not _screener_cache:
         warm_screener_cache()
 
-    # If still no live scan exists yet, trigger one on demand
-    if not _screener_cache:
+    # Refresh older publication policies before exposing their cached candidates.
+    if not _screener_cache or _screener_cache.get("radar_lifecycle_version") != RADAR_PUBLICATION_VERSION:
         async with _screener_task_lock:
             if _screener_task is None or _screener_task.done():
                 _screener_task = asyncio.create_task(
@@ -522,7 +532,7 @@ async def get_live_screener(
 async def trigger_screener_rescan(
     mode: str = "all",
     min_score: float = 50.0,
-    max_symbols: int = 250,
+    max_symbols: int = 320,
     scope: str = "core",
 ) -> dict[str, Any]:
     """Explicitly triggers a synchronous deep rescan and returns newly qualified candidates."""
@@ -561,7 +571,7 @@ seconds_until_next_8h_cycle = seconds_until_next_cycle
 
 async def _screener_cron_loop(interval_hours: int = 4) -> None:
     global _last_cron_run, _next_cron_run, _screener_task
-    # If cache on startup is stale (>interval_hours) or lacks radar-v2 lifecycle metadata, refresh immediately
+    # If cache on startup is stale (>interval_hours) or lacks the current publication policy, refresh immediately
     now_init = datetime.now(UTC)
     cache_age_hours = (
         (now_init - _cache_timestamp).total_seconds() / 3600.0
@@ -571,7 +581,7 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
     if (
         not _screener_cache
         or cache_age_hours >= float(interval_hours)
-        or _screener_cache.get("radar_lifecycle_version") != "radar-v2"
+        or _screener_cache.get("radar_lifecycle_version") != RADAR_PUBLICATION_VERSION
     ):
         try:
             async with _screener_task_lock:

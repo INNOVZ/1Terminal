@@ -298,3 +298,61 @@ def test_discovery_v2_stealth_oi_and_fresh_oi_inflection_gates():
     assert passed_inf is True and details_inf["L6"] is True
 
 
+
+
+@pytest.mark.parametrize(("relative_strength", "return24", "expected"), [
+    ("0.1", "2", False), ("1.5", "-1", False), ("1.5", "0", True),
+    ("1.5", "9", True), ("1.5", "9.01", False),
+])
+def test_vvi_thresholds_are_separate_from_exploratory_emerging(relative_strength, return24, expected):
+    hourly = trending_candles(count=24)
+    btc = [replace(c, open=Decimal("100"), close=Decimal("100")) for c in hourly]
+    last = Decimal("100") * (1 + Decimal(return24) / 100)
+    prior6 = last / (1 + Decimal(relative_strength) / 100)
+    hourly = [replace(c, open=Decimal("100"), close=last,
+                      quote_volume=Decimal("150") if i >= 18 else Decimal("100"))
+              for i, c in enumerate(hourly)]
+    hourly[-6] = replace(hourly[-6], open=prior6)
+    result = temporal_features(hourly, btc)
+    assert result["vvi_ignition"] is expected
+
+
+def test_research_challenger_explicitly_uses_production_feature_contract(settings):
+    assert engine(settings)._feature_contract == "discovery_v2"
+
+
+async def test_discovery_replay_consumes_recorded_feature_contract_keyword():
+    from scripts.research_discovery import run_discovery
+
+    bundle = await discovery_bundle()
+    record = replace(bundle["record"], request={**bundle["record"].request, "feature_contract": "discovery_v2"})
+    result = await run_discovery(record, bundle["supplemental"])
+    assert result["status"] == "complete"
+
+
+@pytest.mark.parametrize(("oi7d", "taker", "expected"), [
+    ("-0.030", "1.01", True), ("-0.0301", "1.01", False), ("-0.028", "1.00", False),
+])
+def test_discovery_flow_tolerance_requires_confirmation(oi7d, taker, expected):
+    from algotrader.domain.crypto_screener_models import SetupLabel
+    from algotrader.domain.screening_gates import LongGateInputs, evaluate_long_gates
+
+    inputs = LongGateInputs(
+        close=Decimal("105"), ema50_4h=Decimal("100"), ema20_1h=Decimal("104"),
+        ema200_4h=Decimal("98"), low_24h=Decimal("101"), atr14_4h=Decimal("3"),
+        vcr_4h=Decimal("0.85"), ema20_4h=Decimal("103"), excursion_72h=Decimal("0.12"),
+        ret_24h=Decimal("0.02"), rsi_1h=Decimal("55"), rsi_4h=Decimal("54"),
+        high_30d=Decimal("125"), low_30d=Decimal("90"), poc_30d=Decimal("101"),
+        val_30d=Decimal("95"), vah_30d=Decimal("120"), bb_inside_kc_4h=True,
+        bb_bandwidth_4h=Decimal("0.11"), oi_delta_7d=Decimal(oi7d),
+        oi_delta_4h=Decimal("-0.001"), taker_buy_ratio_4h=Decimal(taker),
+        has_kinetic_ignition=True, discovery_v2=True,
+    )
+    _, details = evaluate_long_gates(inputs, SetupLabel.VCP_COMPRESSION_LONG)
+    assert details["L6"] is expected
+    _, legacy = evaluate_long_gates(replace(inputs, discovery_v2=False), SetupLabel.VCP_COMPRESSION_LONG)
+    assert legacy["L6"] is False
+    _, no_ignition = evaluate_long_gates(replace(inputs, has_kinetic_ignition=False,
+                                               bb_inside_kc_4h=False, bb_bandwidth_4h=Decimal("0.30")),
+                                        SetupLabel.MOMENTUM_EMERGING_LONG)
+    assert no_ignition["L6"] is False

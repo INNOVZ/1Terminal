@@ -127,6 +127,8 @@ class CryptoOpportunityScreener:
         self._feature_contract = feature_contract
         self._feature_unavailable: set[str] = set()
         self._ready_waiting_symbols: set[str] = set()
+        self._stage1_ready_symbols: set[str] = set()
+        self._vvi_symbols: set[str] = set()
         self._emerging_symbols: set[str] = set()
 
     def _note(self, symbol: str, stage: str, reason: str, **details: object) -> None:
@@ -173,6 +175,8 @@ class CryptoOpportunityScreener:
         self._fetch_failures.clear()
         self._feature_unavailable.clear()
         self._ready_waiting_symbols.clear()
+        self._stage1_ready_symbols.clear()
+        self._vvi_symbols.clear()
         self._emerging_symbols.clear()
         self.scan_counts = {
             "eligible": 0,
@@ -401,7 +405,7 @@ class CryptoOpportunityScreener:
                        core_budget=target_core, discovery_budget=target_discovery,
                        requested_max_symbols=max_symbols, quote_volume_24h=q.quote_volume_24h,
                        spread_bps=q.spread_bps,
-                       discovery_volume_eligible=q.quote_volume_24h >= Decimal("1500000"),
+                       discovery_volume_eligible=q.quote_volume_24h >= (Decimal("1200000") if self._feature_contract == "discovery_v2" else Decimal("1500000")),
                        discovery_spread_eligible=q.spread_bps <= Decimal("25"))
         log.info(
             "universe_liquidity_filtered",
@@ -465,7 +469,8 @@ class CryptoOpportunityScreener:
                        else "no_setup" if not result else "setup", error=type(result).__name__ if isinstance(result, BaseException) else None)
 
         stage1_survivors: list[CryptoOpportunity] = []
-        stage1_threshold = min(Decimal("55.0"), min_score) if min_score is not None else Decimal("55.0")
+        preliminary_floor = Decimal("38.0") if self._feature_contract == "discovery_v2" else Decimal("55.0")
+        stage1_threshold = min(preliminary_floor, min_score) if min_score is not None else preliminary_floor
         for res in results:
             if isinstance(res, list):
                 for opp in res:
@@ -485,6 +490,7 @@ class CryptoOpportunityScreener:
         # Probe a small, separate quote-anomaly lane without displacing core survivors.
         shortlisted_symbols = {opp.instrument.id.symbol for opp in stage2_shortlist}
         stage2_probes: list[Instrument] = []
+        probe_overflow_symbols: set[str] = set()
         if derivatives_port is not None and mode != ScreenerMode.BREAKOUT:
             ranked_probes: list[tuple[Decimal, Instrument]] = []
             for inst in selected_instruments:
@@ -493,7 +499,7 @@ class CryptoOpportunityScreener:
                     continue
                 is_track_b_ready = (
                     self._feature_contract == "discovery_v2"
-                    and inst.id.symbol in self._ready_waiting_symbols
+                    and (inst.id.symbol in self._stage1_ready_symbols or inst.id.symbol in self._vvi_symbols)
                 )
                 min_probe_vol = Decimal("500000") if is_track_b_ready else Decimal("1500000")
                 if q.quote_volume_24h < min_probe_vol or q.spread_bps > Decimal("25"):
@@ -501,18 +507,25 @@ class CryptoOpportunityScreener:
                 funding_signal = max(Decimal("0"), Decimal("-0.00005") - (q.funding_rate or ZERO)) if q.funding_rate is not None else ZERO
                 basis_signal = max(ZERO, (q.basis_pct or ZERO) - Decimal("0.0008"))
                 track_b_boost = Decimal("1000") if is_track_b_ready else ZERO
-                if is_track_b_ready and inst.id.symbol in self._emerging_symbols:
+                if is_track_b_ready and inst.id.symbol in self._vvi_symbols:
                     track_b_boost += Decimal("500")
                 if funding_signal <= ZERO and basis_signal <= ZERO and track_b_boost <= ZERO:
                     continue
                 anomaly_rank = track_b_boost + funding_signal * Decimal("100000") + basis_signal * Decimal("10000")
                 ranked_probes.append((anomaly_rank, inst))
             ranked_probes.sort(key=lambda item: (item[0], quotes_by_symbol[item[1].id.symbol].quote_volume_24h), reverse=True)
-            stage2_probes = [inst for _, inst in ranked_probes[:15]]
+            probe_limit = 30 if self._feature_contract == "discovery_v2" else 15
+            stage2_probes = [inst for _, inst in ranked_probes[:probe_limit]]
+            if self._feature_contract == "discovery_v2":
+                self.scan_counts["stage2_probe_overflow"] = max(0, len(ranked_probes) - probe_limit)
+            probe_overflow_symbols = {i.id.symbol for _, i in ranked_probes[probe_limit:]}
         self.scan_counts["stage2_probes"] = len(stage2_probes)
         admitted = shortlisted_symbols | {inst.id.symbol for inst in stage2_probes}
         for inst in selected_instruments:
-            self._note(inst.id.symbol, "stage2", "admitted" if inst.id.symbol in admitted else "not_admitted")
+            self._note(inst.id.symbol, "stage2", "admitted" if inst.id.symbol in admitted else "not_admitted",
+                       structural_ready=inst.id.symbol in self._stage1_ready_symbols,
+                       vvi_ignition=inst.id.symbol in self._vvi_symbols,
+                       probe_overflow=inst.id.symbol in probe_overflow_symbols)
 
         # Stage 2: Deep Derivatives Enrichment ONLY for surviving shortlist
         stage2_semaphore = asyncio.Semaphore(8)
@@ -832,6 +845,9 @@ class CryptoOpportunityScreener:
             temporal = discovery_temporal_features(closed_1h, closed_btc)
             if temporal.get("emerging") is True:
                 self._emerging_symbols.add(inst.id.symbol)
+            if temporal.get("vvi_ignition") is True:
+                self._vvi_symbols.add(inst.id.symbol)
+            self._note(inst.id.symbol, "temporal_features", "computed", **temporal)
 
         # Regime classification
         regime = self._classify_regime(snap_1h, ema20_4h, ema50_4h)
@@ -890,7 +906,8 @@ class CryptoOpportunityScreener:
 
         # Stage 2: Deep Derivatives Enrichment ONLY for Shortlisted Candidates
         # If neither accumulation nor distribution passed structural criteria, avoid expensive derivatives API calls
-        qual_threshold = min(Decimal("58.0"), min_score) if min_score is not None else Decimal("58.0")
+        viability_floor = Decimal("38.0") if self._feature_contract == "discovery_v2" and explicit_derivatives is None else Decimal("58.0")
+        qual_threshold = min(viability_floor, min_score) if min_score is not None else viability_floor
         is_viable_long = accum_opp is not None and accum_opp.score >= qual_threshold
         is_viable_short = dist_opp is not None and dist_opp.score >= qual_threshold
 
@@ -1225,13 +1242,9 @@ class CryptoOpportunityScreener:
 
         # Trigger D (Volume Velocity Index + 6h BTC Relative-Strength Ignition):
         vvi_ignition_1h = False
-        if self._feature_contract == "discovery_v2" and len(closed_1h) >= 24:
-            qvol_6h = sum((c.quote_volume for c in closed_1h[-6:]), ZERO) / Decimal("6")
-            qvol_18h = sum((c.quote_volume for c in closed_1h[-24:-6]), ZERO) / Decimal("18")
-            vvi_ratio = (qvol_6h / qvol_18h) if qvol_18h > ZERO else ZERO
+        if self._feature_contract == "discovery_v2":
             vvi_ignition_1h = bool(
-                inst.id.symbol in self._emerging_symbols
-                and vvi_ratio >= Decimal("1.35")
+                inst.id.symbol in self._vvi_symbols
                 and c_1h_latest.close >= snap_1h.ema20
                 and taker_buy_ratio_4h is not None
                 and taker_buy_ratio_4h >= Decimal("1.00")
@@ -1286,6 +1299,10 @@ class CryptoOpportunityScreener:
             low_48h=low_48h,
         )
         archetype = classify_long_archetype(long_features)
+        if (archetype is None and vvi_ignition_1h
+                and close >= ema50_4h and close >= poc_price
+                and pos_in_range <= Decimal("0.78")):
+            archetype = SetupLabel.MOMENTUM_EMERGING_LONG
         if archetype is None:
             self._note(inst.id.symbol, "accumulation_rejection", "no_long_archetype",
                        enriched=derivatives is not None, features=asdict(long_features))
@@ -1383,9 +1400,13 @@ class CryptoOpportunityScreener:
             of_absorption_1h=of_absorption_1h,
             taker_buy_ratio_1h=taker_ratio_1h,
             oi_delta_24h=oi_delta_24h_val,
+            discovery_v2=self._feature_contract == "discovery_v2",
+            vvi_ignition=vvi_ignition_1h,
         )
         gates_passed, gate_details = evaluate_long_gates(gate_inputs, archetype)
         if self._feature_contract == "discovery_v2":
+            if derivatives is None and all(gate_details.get(f"L{i}") is True for i in range(1, 6)):
+                self._stage1_ready_symbols.add(inst.id.symbol)
             if all(gate_details.get(f"L{i}") is True for i in range(1, 6)) and not gate_details.get("L6"):
                 self._ready_waiting_symbols.add(inst.id.symbol)
             elif gates_passed:
@@ -1525,6 +1546,8 @@ class CryptoOpportunityScreener:
                 )
             )
         )
+        if self._feature_contract == "discovery_v2":
+            is_deriv_flow_ok = derivatives is not None and gate_details.get("L6") is True
         checklist_verification = ChecklistVerification(
             value_acceptance=va_accepted,
             volatility_structure=(bb_inside_kc or bandwidth_current <= Decimal("0.24")),

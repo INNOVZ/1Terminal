@@ -61,6 +61,8 @@ class LongGateInputs:
     micro_expansion_1h: bool = False
     of_absorption_1h: bool = False
     taker_buy_ratio_1h: Decimal | None = None
+    discovery_v2: bool = False
+    vvi_ignition: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,6 +375,10 @@ def evaluate_long_gates(
     else:
         l5 = in_current_squeeze or in_recent_squeeze_expansion
 
+    if inputs.discovery_v2:
+        quiet_coil = inputs.bb_bandwidth_4h <= Decimal("0.14") and inputs.vcr_4h <= Decimal("0.95")
+        l5 = l5 or quiet_coil or inputs.vvi_ignition
+
     # Gate L6: Universal Order-Flow & Mandatory Kinetic Ignition Gate
     coil_maturity = compute_coil_maturity_score(inputs)
     volume_vacuum = is_volume_vacuum_setup(inputs)
@@ -414,6 +420,25 @@ def evaluate_long_gates(
                 )
             )
         )
+        if inputs.discovery_v2:
+            discovery_flow = (
+                inputs.oi_delta_7d is not None
+                and inputs.oi_delta_7d >= Decimal("-0.030")
+                and (
+                    (inputs.oi_delta_4h is not None and inputs.oi_delta_4h >= 0)
+                    or (inputs.taker_buy_ratio_4h is not None and inputs.taker_buy_ratio_4h >= Decimal("1.01"))
+                )
+            )
+            # Preserve confirmed fresh OI inflections after a longer washout.
+            fresh_inflection = (
+                inputs.oi_delta_24h is not None and inputs.oi_delta_24h >= Decimal("0.020")
+                and inputs.oi_delta_4h is not None and inputs.oi_delta_4h >= Decimal("0.005")
+                and (
+                    (inputs.taker_buy_ratio_4h is not None and inputs.taker_buy_ratio_4h >= Decimal("1.05"))
+                    or (inputs.taker_buy_ratio_1h is not None and inputs.taker_buy_ratio_1h >= Decimal("1.05"))
+                )
+            )
+            universal_oi_ok = discovery_flow or fresh_inflection
         if dist_to_ceiling <= Decimal("0.045"):
             # Strict resistance ceiling rule: OI_7d >= -1.0% AND RVOL >= 1.15x
             # Stealth coil bypass: mature compression coiling under ceiling doesn't require pre-breakout volume surge

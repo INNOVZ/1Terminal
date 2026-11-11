@@ -1,0 +1,82 @@
+{
+  "mode": "partial-input-counterfactual",
+  "baseline_revision": "09ca616",
+  "arms": {
+    "pre-correction": {
+      "file": "docs/security/evidence/2026-11-11-discovery-corrections-pre-correction.json",
+      "sha256": "7589a3fe1f2a7519d45d5ea76010c01b91a169b9b3a3fa9396683e9ca10adacc",
+      "source_hash": "96f6cd327cd639dd0def978fd10ed5e46aabdab51e727c413702fee4ee3144c9",
+      "counts": {
+        "discovery_watch_selected": 20,
+        "eligible": 546,
+        "emerging_rs_count": 3,
+        "evaluated": 301,
+        "failed": 0,
+        "liquid": 461,
+        "ready_waiting_activation": 2,
+        "returned": 2,
+        "selected": 301,
+        "stage1_survivors": 2,
+        "stage2_probes": 15,
+        "stage2_shortlist": 2
+      },
+      "selected_later_top10": 39,
+      "input_unavailable": 281,
+      "input_available_selected": 20,
+      "published_symbols": [
+        "1000PEPEUSDT",
+        "INJUSDT"
+      ],
+      "published_later_top10": 0,
+      "capture_sha256": "553116a623e1db5dd70c0907ee0757757597f6a5e6f7d3ce4187dc26d93f7397",
+      "definition_sha256": "ba2422c1ca5ed43e25e79b1b27faa48baede81588998681929dc3029af147a70",
+      "bundle_sha256": "98eaecacd1f903fac0be48c6fd7c0b2ceada6f7bb4e2815494f1f99abee70301"
+    },
+    "upgraded": {
+      "file": "docs/security/evidence/2026-11-11-discovery-corrections-upgraded.json",
+      "sha256": "c72bca44fa705044089acb368276ecf1b637192a39ad4db1b12de8f27a8ce1eb",
+      "source_hash": "e774200343f6d72772f4ef6a6443697a57384d0fd806b4cfefb22711ac284aff",
+      "counts": {
+        "discovery_watch_selected": 20,
+        "eligible": 546,
+        "emerging_rs_count": 3,
+        "evaluated": 301,
+        "failed": 0,
+        "liquid": 461,
+        "ready_waiting_activation": 3,
+        "returned": 1,
+        "selected": 301,
+        "stage1_survivors": 2,
+        "stage2_probe_overflow": 69,
+        "stage2_probes": 30,
+        "stage2_shortlist": 2
+      },
+      "selected_later_top10": 39,
+      "input_unavailable": 281,
+      "input_available_selected": 20,
+      "published_symbols": [
+        "1000PEPEUSDT"
+      ],
+      "published_later_top10": 0,
+      "capture_sha256": "553116a623e1db5dd70c0907ee0757757597f6a5e6f7d3ce4187dc26d93f7397",
+      "definition_sha256": "ba2422c1ca5ed43e25e79b1b27faa48baede81588998681929dc3029af147a70",
+      "bundle_sha256": "98eaecacd1f903fac0be48c6fd7c0b2ceada6f7bb4e2815494f1f99abee70301"
+    }
+  },
+  "replay_script_sha256": "9fd48580d85b66526e30b25e0ac7f71229455c64acc39d94604a57ae836eeef8",
+  "predictive_uplift_established": false,
+  "limitations": [
+    "281 selected symbols lack required historical inputs in this replay",
+    "20 exact-overlap hourly extensions were retrieved retrospectively",
+    "One frozen initial scan cannot reproduce subsequent four-hour discovery events",
+    "Pipeline evaluation counts include empty returns for provider failures; missing-input accounting takes precedence"
+  ],
+  "verification": {
+    "backend_tests_passed": 819,
+    "runtime_warnings_as_errors": true,
+    "ruff": "passed",
+    "mypy_source_files_passed": 91,
+    "diff_check": "passed",
+    "deployed": false
+  }
+}

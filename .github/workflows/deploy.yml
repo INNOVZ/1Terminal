@@ -124,7 +124,7 @@ jobs:
               -v alfa-terminal_atlas-state:/state \
               -v "$ATLAS_DATA_DIR:/data" \
               alpine:3.20 \
-              sh -c 'rm -f /state/*.sqlite3-shm && find /state -name "*.sqlite3-wal" -size 0 -delete && chown -R 10001:10001 /state /data && chmod -R u+rwX /state /data'
+              sh -c 'chown -R 10001:10001 /state /data && chmod -R u+rwX /state /data'
             docker compose --project-name alfa-terminal --file "$release/compose.yaml" build
             docker compose --project-name alfa-terminal --file "$release/compose.yaml" up -d --remove-orphans
 

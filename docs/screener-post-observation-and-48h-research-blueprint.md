@@ -1,5 +1,7 @@
 # Atlas Screener: Post-Observation Engineering, Vulnerability Forensics & 24h/48h Research Blueprint
 
+> Verification amendment, November 11, 2026. The engineering review found discrepancies in the original claims below. See `docs/security/2026-11-11-post-observation-upgrade-review.md` and `docs/security/2026-11-11-discovery-corrections.md` for verified behavior and correction results. Historical percentages and named-token publication claims below remain unvalidated. Current allocation is 243 core + up to 57 discovery + up to 20 watch within 320. Stage-2 admission is bounded at 45 score-ranked + 30 discovery/anomaly slots, with overflow recorded. A five-pass current checklist is required for radar publication.
+
 > **Document Classification:** Canonical High-Order Engineering & Research Reference (Human + Coding Agent Accessible)  
 > **Baseline Observation Study:** `71346822-f686-4bb1-99ec-0f56ef8f0ea1` (Nov 8, 2026 13:50 UTC – Nov 10, 2026 14:10 UTC, 577 5-minute snapshots)  
 > **Active Strategy & Lifecycle Versions:** `screener_discovery_mode="discovery_v2"`, `radar_lifecycle_version="radar-v2"`, Research Challenger Policy `discovery-v2-full336-rvol4h-watch20`  

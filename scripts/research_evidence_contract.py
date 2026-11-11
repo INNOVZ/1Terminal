@@ -293,9 +293,9 @@ async def verify_bundle(bundle):
     if bundle["schema"] == DISCOVERY_SCHEMA:
         from scripts.research_discovery import POLICY as DISCOVERY_POLICY
 
-        if bundle.get("research_policy") != DISCOVERY_POLICY or len(bundle["supplemental"]) > 420:
+        if bundle.get("research_policy") != DISCOVERY_POLICY or len(bundle["supplemental"]) > DISCOVERY_POLICY["max_supplemental_calls"]:
             raise ReplayUnavailable("invalid_discovery_capture_policy")
-        if sum(c.method == "derivatives_snapshot" for c in bundle["supplemental"]) > 60:
+        if sum(c.method == "derivatives_snapshot" for c in bundle["supplemental"]) > DISCOVERY_POLICY["max_supplemental_derivatives"]:
             raise ReplayUnavailable("discovery_derivative_budget_exceeded")
         cohort_ids = {i.id for i in record.cohort}
         for call in bundle["supplemental"]:

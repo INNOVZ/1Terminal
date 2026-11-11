@@ -72,21 +72,11 @@ class WatchlistService:
                 updated_at TEXT NOT NULL
             )
         """
-        with self._lock:
-            try:
-                with self._get_connection() as conn:
-                    conn.execute(create_sql)
-                    conn.commit()
-            except sqlite3.OperationalError:
-                # Recover from truncated WAL/SHM sidecar files left behind by an unclean container stop or ENOSPC
-                for suffix in ("-shm", "-wal"):
-                    sidecar = Path(f"{self._db_path}{suffix}")
-                    with contextlib.suppress(OSError):
-                        if sidecar.exists() and (suffix == "-shm" or sidecar.stat().st_size == 0):
-                            sidecar.unlink()
-                with self._get_connection() as conn:
-                    conn.execute(create_sql)
-                    conn.commit()
+        # SQLite owns WAL recovery and shared-memory coordination. A failed open
+        # must preserve sidecars that another process may still be using.
+        with self._lock, self._get_connection() as conn:
+            conn.execute(create_sql)
+            conn.commit()
 
     def _seed_if_empty(self) -> None:
         with self._lock, self._get_connection() as conn:

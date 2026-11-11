@@ -195,7 +195,7 @@ async def capture_evidence(
     port, macro, settings, *, max_symbols, max_supplemental=60, on_control=None,
     discovery_v2=False,
 ):
-    if not 1 <= max_symbols <= 320 or not 0 <= max_supplemental <= 60:
+    if not 1 <= max_symbols <= 320 or not 0 <= max_supplemental <= (90 if discovery_v2 else 60):
         raise ValueError("invalid capture selection budget")
     captured = await capture_control(
         port,
@@ -252,7 +252,7 @@ async def capture_evidence(
                     ):
                         raise ReplayUnavailable("unexpected_discovery_candle_request")
                     derivative_count = sum(c.method == "derivatives_snapshot" for c in supplemental)
-                    if len(supplemental) >= 420 or (method == "derivatives_snapshot" and derivative_count >= max_supplemental):
+                    if len(supplemental) >= 450 or (method == "derivatives_snapshot" and derivative_count >= max_supplemental):
                         raise ReplayUnavailable("discovery_supplemental_budget_exhausted")
                     index = port.counts.get(digest((method, arguments)), 0)
                     try:
@@ -354,7 +354,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute-public-capture", action="store_true", required=True)
     parser.add_argument("--max-symbols", type=int, required=True)
-    parser.add_argument("--max-supplemental", type=int, default=60)
+    parser.add_argument("--max-supplemental", type=int)
     parser.add_argument("--discovery-v2", action="store_true",
                         help="Capture corrected features and bounded discovery watch pool")
     parser.add_argument("--max-attempts", type=int)
@@ -363,7 +363,9 @@ def main():
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output exists")
-    if not 1 <= args.max_symbols <= 320 or not 0 <= args.max_supplemental <= 60:
+    if args.max_supplemental is None:
+        args.max_supplemental = 90 if args.discovery_v2 else 60
+    if not 1 <= args.max_symbols <= 320 or not 0 <= args.max_supplemental <= (90 if args.discovery_v2 else 60):
         parser.error("invalid symbol budget")
     if args.discovery_v2 and args.max_symbols != 320:
         parser.error("discovery-v2 requires the explicit 320-symbol ceiling")
