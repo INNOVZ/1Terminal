@@ -356,3 +356,22 @@ def test_discovery_flow_tolerance_requires_confirmation(oi7d, taker, expected):
                                                bb_inside_kc_4h=False, bb_bandwidth_4h=Decimal("0.30")),
                                         SetupLabel.MOMENTUM_EMERGING_LONG)
     assert no_ignition["L6"] is False
+
+
+def test_discovery_screener_handles_unaligned_temporal_features_without_note_keyword_collision(settings):
+    from algotrader.domain.scan_observations import ScanDecisionJournal
+
+    journal = ScanDecisionJournal()
+    challenger = DiscoveryScreener(settings, evaluated_at=datetime(2026, 11, 11, 4, tzinfo=UTC), journal=journal)
+    hourly = trending_candles(count=24)
+    btc = trending_candles(count=23)
+    temporal = temporal_features(hourly, btc)
+    assert temporal["available"] is False and "reason" in temporal
+    temporal_reason = str(temporal.get("reason", "computed"))
+    temporal_details = {k: v for k, v in temporal.items() if k != "reason"}
+    challenger._note("COINUSDT", "temporal_features", temporal_reason, **temporal_details)
+    snap = journal.snapshot()
+    assert snap[-1]["stage"] == "temporal_features"
+    assert snap[-1]["reason"] == "unaligned_or_missing_closed_history"
+
+

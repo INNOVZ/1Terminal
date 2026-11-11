@@ -847,7 +847,9 @@ class CryptoOpportunityScreener:
                 self._emerging_symbols.add(inst.id.symbol)
             if temporal.get("vvi_ignition") is True:
                 self._vvi_symbols.add(inst.id.symbol)
-            self._note(inst.id.symbol, "temporal_features", "computed", **temporal)
+            temporal_reason = str(temporal.get("reason", "computed"))
+            temporal_details = {k: v for k, v in temporal.items() if k != "reason"}
+            self._note(inst.id.symbol, "temporal_features", temporal_reason, **temporal_details)
 
         # Regime classification
         regime = self._classify_regime(snap_1h, ema20_4h, ema50_4h)
