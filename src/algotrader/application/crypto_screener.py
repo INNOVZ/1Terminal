@@ -1496,8 +1496,14 @@ class CryptoOpportunityScreener:
         is_deriv_flow_ok = bool(
             gate_details.get("L6", True)
             and derivatives is not None
-            and oi_change_7d is not None
-            and oi_change_7d >= Decimal("0.0")
+            and (
+                (oi_change_7d is not None and oi_change_7d >= Decimal("0.0"))
+                or (
+                    self._feature_contract == "discovery_v2"
+                    and oi_delta_24h_val is not None
+                    and oi_delta_24h_val >= Decimal("0.020")
+                )
+            )
         )
         checklist_verification = ChecklistVerification(
             value_acceptance=va_accepted,
@@ -1595,11 +1601,20 @@ class CryptoOpportunityScreener:
                 is_deriv_flow_ok,
                 (
                     "Missing/Degraded derivatives telemetry"
-                    if (derivatives is None or oi_change_7d is None)
+                    if (derivatives is None or (oi_change_7d is None and oi_delta_24h_val is None))
                     else (
-                        f"7d OI Bleeding ({float(oi_change_7d*100):+.1f}%), funding {float((funding or Decimal('0'))*10000):+.2f} bps"
-                        if oi_change_7d < Decimal("0.0")
-                        else f"7d OI {float(oi_change_7d*100):+.1f}%, funding {float((funding or Decimal('0'))*10000):+.2f} bps"
+                        f"24h OI {float(oi_delta_24h_val*100):+.1f}% (7d {float((oi_change_7d or Decimal('0'))*100):+.1f}%), funding {float((funding or Decimal('0'))*10000):+.2f} bps"
+                        if (
+                            self._feature_contract == "discovery_v2"
+                            and (oi_change_7d is None or oi_change_7d < Decimal("0.0"))
+                            and oi_delta_24h_val is not None
+                            and oi_delta_24h_val >= Decimal("0.020")
+                        )
+                        else (
+                            f"7d OI Bleeding ({float((oi_change_7d or Decimal('0'))*100):+.1f}%), funding {float((funding or Decimal('0'))*10000):+.2f} bps"
+                            if (oi_change_7d is not None and oi_change_7d < Decimal("0.0"))
+                            else f"7d OI {float((oi_change_7d or Decimal('0'))*100):+.1f}%, funding {float((funding or Decimal('0'))*10000):+.2f} bps"
+                        )
                     )
                 ),
             ),

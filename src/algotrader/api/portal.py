@@ -285,12 +285,30 @@ async def _do_crypto_screen(
             if isinstance(_screener_cache, dict)
             else []
         )
-        retained_prior = await reconcile_radar_cohort(
+        raw_retained_prior = await reconcile_radar_cohort(
             prior_opportunities=prior_opps,
             seen_bases=set(),
             futures=futures,
             events=radar_events,
         )
+        retained_prior: list[dict[str, Any]] = []
+        for p in raw_retained_prior:
+            failed_g = p.get("failed_gates") or []
+            if failed_g:
+                radar_events.append(
+                    {
+                        "symbol": p.get("symbol"),
+                        "at": now.isoformat(),
+                        "state": "INVALIDATED",
+                        "retained": False,
+                        "reason": "radar_gates_degraded",
+                        "failed_gates": list(failed_g),
+                        "first_seen_at": p.get("first_seen_at") or p.get("evaluated_at"),
+                        "candidate": {k: v for k, v in p.items() if k != "candles"},
+                    }
+                )
+            else:
+                retained_prior.append(p)
 
         macro_narrative = (
             opportunities[0].macro_narrative
@@ -525,7 +543,30 @@ seconds_until_next_8h_cycle = seconds_until_next_cycle
 
 
 async def _screener_cron_loop(interval_hours: int = 4) -> None:
-    global _last_cron_run, _next_cron_run
+    global _last_cron_run, _next_cron_run, _screener_task
+    # If cache on startup is stale (>interval_hours) or lacks radar-v2 lifecycle metadata, refresh immediately
+    now_init = datetime.now(UTC)
+    cache_age_hours = (
+        (now_init - _cache_timestamp).total_seconds() / 3600.0
+        if _cache_timestamp is not None
+        else 999.0
+    )
+    if (
+        not _screener_cache
+        or cache_age_hours >= float(interval_hours)
+        or _screener_cache.get("radar_lifecycle_version") != "radar-v2"
+    ):
+        try:
+            async with _screener_task_lock:
+                if _screener_task is None or _screener_task.done():
+                    _screener_task = asyncio.create_task(
+                        _do_crypto_screen(mode="all", min_score=50.0, max_symbols=320)
+                    )
+            if _screener_task:
+                await _screener_task
+        except Exception as init_exc:
+            print(f"❌ [Cron] Initial startup refresh error: {init_exc}")
+
     while True:
         try:
             delay = seconds_until_next_cycle(
