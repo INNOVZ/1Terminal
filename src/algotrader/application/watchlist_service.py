@@ -48,34 +48,45 @@ class WatchlistService:
             conn.close()
 
     def _ensure_table(self) -> None:
-        with self._lock, self._get_connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS portal_watchlist (
-                    symbol TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    sector TEXT NOT NULL,
-                    stage TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    current_price TEXT NOT NULL,
-                    trigger_price TEXT NOT NULL,
-                    support_price TEXT NOT NULL,
-                    invalidation_price TEXT NOT NULL,
-                    target_1 TEXT NOT NULL,
-                    target_2 TEXT NOT NULL,
-                    distance_to_trigger_pct TEXT NOT NULL,
-                    score TEXT NOT NULL,
-                    thesis TEXT NOT NULL,
-                    checklist_passed INTEGER NOT NULL,
-                    checklist_total INTEGER NOT NULL,
-                    priority TEXT NOT NULL,
-                    notes TEXT NOT NULL,
-                    added_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """
+        create_sql = """
+            CREATE TABLE IF NOT EXISTS portal_watchlist (
+                symbol TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                sector TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                current_price TEXT NOT NULL,
+                trigger_price TEXT NOT NULL,
+                support_price TEXT NOT NULL,
+                invalidation_price TEXT NOT NULL,
+                target_1 TEXT NOT NULL,
+                target_2 TEXT NOT NULL,
+                distance_to_trigger_pct TEXT NOT NULL,
+                score TEXT NOT NULL,
+                thesis TEXT NOT NULL,
+                checklist_passed INTEGER NOT NULL,
+                checklist_total INTEGER NOT NULL,
+                priority TEXT NOT NULL,
+                notes TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
-            conn.commit()
+        """
+        with self._lock:
+            try:
+                with self._get_connection() as conn:
+                    conn.execute(create_sql)
+                    conn.commit()
+            except sqlite3.OperationalError:
+                # Recover from truncated WAL/SHM sidecar files left behind by an unclean container stop or ENOSPC
+                for suffix in ("-shm", "-wal"):
+                    sidecar = Path(f"{self._db_path}{suffix}")
+                    with contextlib.suppress(OSError):
+                        if sidecar.exists() and (suffix == "-shm" or sidecar.stat().st_size == 0):
+                            sidecar.unlink()
+                with self._get_connection() as conn:
+                    conn.execute(create_sql)
+                    conn.commit()
 
     def _seed_if_empty(self) -> None:
         with self._lock, self._get_connection() as conn:

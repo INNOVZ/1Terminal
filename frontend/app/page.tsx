@@ -424,7 +424,7 @@ function RadarPageContent() {
       if (data && data.is_scanning) {
         setIsScanning(true);
         let pollAttempts = 0;
-        const maxPollAttempts = 40; // Max 80 seconds
+        const maxPollAttempts = 120; // Max 240 seconds for 320-symbol discovery_v2 scan
         let finalData: ScreenerResponse | null = null;
         while (pollAttempts < maxPollAttempts) {
           await new Promise((r) => setTimeout(r, 2000));
@@ -444,13 +444,16 @@ function RadarPageContent() {
         }
         if (finalData) {
           data = finalData;
+          setIsScanning(false);
         }
       }
 
-      // Apply newly verified live scan data (never intermediate cached data)
+      // Apply newly verified live scan data (preserve existing state on transient network error or active scan)
       if (data && Array.isArray(data.opportunities) && data.opportunities.length > 0) {
+        setIsScanning(false);
         await applyScreenerData(data);
-      } else {
+      } else if (data && !data.is_scanning) {
+        setIsScanning(false);
         setOpportunities([]);
         setActiveOpportunity(null);
         setActiveCandle(null);
@@ -860,7 +863,7 @@ function RadarPageContent() {
   ]);
 
   if (!activeOpportunity) {
-    if (loading) {
+    if (loading || isScanning) {
       return (
         <div
           style={{
