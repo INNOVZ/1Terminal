@@ -78,7 +78,7 @@ def normalized(value):
     return value
 
 
-async def verify_call(call, frame, receipts, decision, *, acquisition_freshness=False):
+async def verify_call(call, frame, receipts, decision, *, acquisition_freshness=False, candle_minimums=None):
     if frame.get("call_sha256") != digest(call) or call.error or frame.get("error"):
         raise ReplayUnavailable("failed_or_unbound_evidence_call")
     start, end = timestamp(frame["started_at"]), timestamp(frame["available_at"])
@@ -108,7 +108,12 @@ async def verify_call(call, frame, receipts, decision, *, acquisition_freshness=
         if partial and partial != [len(call.result) - 1]:
             raise ReplayUnavailable("non_tail_partial_candle")
         closed = tuple(c for c in call.result if c.closed)
-        _candles(replace(call, result=closed), end, minimums={"1h": 239, "4h": 479, "1w": 15})
+        if not (candle_minimums and call.arguments.get("interval") == "1w" and not closed):
+            _candles(
+                replace(call, result=closed),
+                end,
+                minimums=candle_minimums or {"1h": 239, "4h": 479, "1w": 15},
+            )
     elif call.method in ("quotes", "instruments"):
         proof = {
             "origin": "recorded_public",
@@ -335,6 +340,7 @@ async def verify_bundle(bundle):
                     bundle["receipts"],
                     end,
                     acquisition_freshness=acquisition_freshness,
+                    candle_minimums={"1h": 1, "4h": 1, "1w": 1} if bundle["schema"] == DISCOVERY_SCHEMA else None,
                 )
             except ReplayUnavailable as exc:
                 raise ReplayUnavailable(f"{call.method}:{exc}") from exc

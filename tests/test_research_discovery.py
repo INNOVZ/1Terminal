@@ -203,6 +203,26 @@ async def test_valid_short_history_stays_explicitly_unavailable_per_symbol():
     assert all(r["state"] == "feature_unavailable" for r in result["discovery_observations"])
 
 
+async def test_v4_accepts_newly_listed_symbol_with_short_4h_and_1w_histories():
+    def newly_listed_history(request):
+        if request.url.path.endswith("klines"):
+            params = dict(request.url.params)
+            if params.get("interval") == "4h":
+                params["limit"] = "104"
+                request = httpx.Request("GET", request.url.copy_with(params=params))
+            elif params.get("interval") == "1w":
+                params["limit"] = "3"
+                request = httpx.Request("GET", request.url.copy_with(params=params))
+        return public_response(request)
+
+    args = SimpleNamespace(max_attempts=200, deadline_seconds=60, max_symbols=320,
+                           max_supplemental=60, discovery_v2=True)
+    bundle = await execute(args, transport=httpx.MockTransport(newly_listed_history), macro_provider=Macro())
+    comparison = await compare_bundle(bundle)
+    assert comparison["status"] == "complete"
+    assert comparison["discovery_v2"]["status"] == "complete"
+
+
 def test_v4_cli_requires_full_explicit_budget_before_any_network(tmp_path):
     result = subprocess.run([sys.executable, "-m", "scripts.research_capture_evidence",
         "--execute-public-capture", "--discovery-v2", "--max-symbols", "48",
