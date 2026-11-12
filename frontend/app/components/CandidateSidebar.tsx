@@ -30,6 +30,8 @@ export interface Opportunity {
   val_price?: number | string;
   funding_rate_bps?: number | string;
   oi_change_7d_pct?: number | string;
+  oi_change_1h_pct?: number | string;
+  residual_return_24h_pct?: number | string;
   taker_ratio?: number | string;
   volume_contraction_ratio?: number | string;
   checklist?: { title: string; passed: boolean; status?: "passed" | "failed" | "unknown"; detail: string }[];
@@ -44,6 +46,7 @@ export interface Opportunity {
   resistance_absorption_score?: number | string;
   breakout_readiness_status?: "BREAKOUT_CONFIRMED" | "RETEST_ONLY_WAIT_FOR_DIP" | "HIGH_REJECTION_RISK" | string;
   tick_size?: string | number;
+  is_discovery_tier?: boolean;
   radar_status?: "FRESH_COIL" | "AT_ENTRY_ZONE" | "IN_ACTIVE_TRADE" | "ACTIVE_COIL" | string;
   radar_status_label?: string;
   trade_pnl_pct?: string;
@@ -75,6 +78,170 @@ export function formatCandidatePrice(price: number, tickSize?: string | number |
   if (price < 10) return price.toFixed(3);
   if (price < 1000) return price.toFixed(2);
   return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export interface CoilGainerInsight {
+  score: number; // 0 to 5 dots
+  archetype: string;
+  shortLabel: string;
+  telemetrySummary: string;
+  actionThesis: string;
+  tooltipText: string;
+  badgeBg: string;
+  badgeColor: string;
+  badgeBorder: string;
+  insights: string[];
+}
+
+export function computeCoilToGainerProbability(opp: Opportunity): CoilGainerInsight {
+  const fundBps = parseFloat(String(opp.funding_rate_bps || "0").replace("bps", ""));
+  const oi7d = parseFloat(String(opp.oi_change_7d_pct || "0").replace("%", "").replace("+", ""));
+  const oi1h = parseFloat(String(opp.oi_change_1h_pct || "0").replace("%", "").replace("+", ""));
+  const taker4h = parseFloat(String(opp.taker_buy_sell_ratio_4h || opp.taker_ratio || "0"));
+  const taker1h = parseFloat(String(opp.taker_buy_sell_ratio_1h || "0"));
+  const vcr = parseFloat(String(opp.volume_contraction_ratio || ""));
+  const scoreNum = parseFloat(String(opp.score || "0"));
+  const passCount = opp.gates_passed !== undefined ? opp.gates_passed : (opp.checklist ? opp.checklist.filter(c => c.passed).length : 0);
+  const totalCount = opp.gates_total !== undefined ? opp.gates_total : (opp.checklist ? opp.checklist.length : 5);
+  const isAllGatesPassed = totalCount > 0 && passCount === totalCount;
+  const isBreakout = opp.breakout_readiness_status === "BREAKOUT_CONFIRMED";
+  const isSqueezeSetup = /compression|coil|accumulation|range_bottom|vcp/i.test(opp.setup_label || "");
+
+  // 1. Detect Specific Edge Archetype (matching empirical 24h-72h top gainer research)
+  let archetype = "CONSOLIDATION SQUEEZE";
+  let shortLabel = "COIL";
+  let telemetrySummary = "";
+  let actionThesis = "";
+  let badgeBg = "rgba(244, 157, 13, 0.14)";
+  let badgeColor = "#f49d0d";
+  let badgeBorder = "rgba(244, 157, 13, 0.28)";
+
+  if (fundBps <= -2.0 && oi7d >= 10.0) {
+    archetype = "SHORT-SQUEEZE FLYWHEEL";
+    shortLabel = "SQUEEZE";
+    telemetrySummary = `OI ${oi7d > 0 ? "+" : ""}${oi7d.toFixed(1)}%, Funding ${fundBps.toFixed(1)} bps`;
+    actionThesis = "Trapped short sellers paying heavy borrow fees while OI expands; high probability of explosive short-squeeze cascade.";
+    badgeBg = "rgba(239, 68, 68, 0.16)";
+    badgeColor = "var(--accent-crimson)";
+    badgeBorder = "rgba(239, 68, 68, 0.35)";
+  } else if (scoreNum >= 88.0 && (oi7d >= 4.0 || isAllGatesPassed)) {
+    archetype = "LEADERBOARD COIL SPRING";
+    shortLabel = "LEAD COIL";
+    telemetrySummary = `Score ${scoreNum.toFixed(1)}, OI ${oi7d > 0 ? "+" : ""}${oi7d.toFixed(1)}%, 5/5 Gates`;
+    actionThesis = "Prime trend leader; top-tier conviction score and institutional accumulation positioning for orderly trend continuation.";
+    badgeBg = "rgba(16, 185, 129, 0.16)";
+    badgeColor = "var(--accent-emerald)";
+    badgeBorder = "rgba(16, 185, 129, 0.35)";
+  } else if (taker1h >= 1.30 || (taker4h >= 1.05 && taker1h >= 1.10)) {
+    archetype = "BUYER ABSORPTION COIL";
+    shortLabel = "ABSORPTION";
+    telemetrySummary = `Taker 1H ${taker1h.toFixed(2)}x, 4H ${taker4h.toFixed(2)}x, OI ${oi7d > 0 ? "+" : ""}${oi7d.toFixed(1)}%`;
+    actionThesis = "Aggressive taker buyers dominating order flow; market orders lifting offers before range breakout.";
+    badgeBg = "rgba(59, 130, 246, 0.16)";
+    badgeColor = "#60a5fa";
+    badgeBorder = "rgba(59, 130, 246, 0.35)";
+  } else if (!isNaN(vcr) && vcr <= 0.45 && /bottom|accumulation/i.test(opp.setup_label || "")) {
+    archetype = "STEALTH BOTTOM COIL (NEXT NIGHT)";
+    shortLabel = "STEALTH";
+    telemetrySummary = `VCR ${vcr.toFixed(2)}, Coiled Base, Early Accumulation`;
+    actionThesis = "Extreme volume dry-up at range bottom; early quiet entry before expansion candle sparks.";
+    badgeBg = "rgba(168, 85, 247, 0.16)";
+    badgeColor = "#c084fc";
+    badgeBorder = "rgba(168, 85, 247, 0.35)";
+  } else if (taker4h >= 1.15 && scoreNum >= 78.0) {
+    archetype = "VVI IGNITION BREAKOUT";
+    shortLabel = "IGNITION";
+    telemetrySummary = `Taker 4H ${taker4h.toFixed(2)}x, Score ${scoreNum.toFixed(1)}`;
+    actionThesis = "Velocity & volume ignition confirmed; expanding momentum with aggressive buyer participation.";
+    badgeBg = "rgba(244, 157, 13, 0.16)";
+    badgeColor = "#f49d0d";
+    badgeBorder = "rgba(244, 157, 13, 0.35)";
+  } else if (opp.is_discovery_tier || /watch/i.test(opp.setup_label || "")) {
+    archetype = "MICRO-CAP SLEEPER";
+    shortLabel = "SLEEPER";
+    telemetrySummary = `Watch Pool Sleeper, Tight Bandwidth`;
+    actionThesis = "Sub-$1.5M turnover sleeper; watch for sudden volume acceleration to trigger micro-cap expansion.";
+    badgeBg = "rgba(255, 255, 255, 0.08)";
+    badgeColor = "var(--text-secondary)";
+    badgeBorder = "rgba(255, 255, 255, 0.18)";
+  } else {
+    telemetrySummary = `Score ${scoreNum.toFixed(1)}, Gates ${passCount}/${totalCount}`;
+    actionThesis = "Standard range compression; wait for directional breakout confirmation.";
+  }
+
+  // 2. Compute 5 Empirical Quantitative Pillars
+  const insights: string[] = [];
+
+  // Dot 1: Structural Squeeze / Base Compression
+  const gateVolPassed = opp.checklist?.some((c) => c.title.toLowerCase().includes("volatility") && c.passed);
+  const dot1 = (!isNaN(vcr) && vcr <= 0.95) || isSqueezeSetup || gateVolPassed || isAllGatesPassed;
+  insights.push(
+    dot1
+      ? `[✓] Base Squeeze: Volatility compressed into tight coil (${!isNaN(vcr) ? `VCR ${vcr.toFixed(2)}` : opp.setup_label})`
+      : `[✗] Base Squeeze: Wide volatility range or uncontracted volume`
+  );
+
+  // Dot 2: Open Interest Accumulation / Derivatives Fuel
+  const gateDerivPassed = opp.checklist?.some((c) => c.title.toLowerCase().includes("derivative") && c.passed);
+  const dot2 = (!isNaN(oi7d) && oi7d > 0) || (!isNaN(oi1h) && oi1h > 0) || gateDerivPassed;
+  insights.push(
+    dot2
+      ? `[✓] OI Fuel: Net accumulation in Open Interest (${!isNaN(oi7d) && oi7d !== 0 ? `7d OI ${oi7d > 0 ? "+" : ""}${oi7d.toFixed(1)}%` : "Inflecting positive"})`
+      : `[✗] OI Fuel: Declining Open Interest (7d OI ${!isNaN(oi7d) ? `${oi7d.toFixed(1)}%` : "flat"})`
+  );
+
+  // Dot 3: Active Buyer Absorption
+  const dot3 = (!isNaN(taker4h) && taker4h >= 1.01) || (!isNaN(taker1h) && taker1h >= 1.04) || Boolean(opp.orderflow_absorption);
+  insights.push(
+    dot3
+      ? `[✓] Order Flow: Active buyer taker absorption (${!isNaN(taker1h) && taker1h > 1 ? `1H ${taker1h.toFixed(2)}x` : `4H ${taker4h.toFixed(2)}x`})`
+      : `[✗] Order Flow: Passive or seller-dominated flow (Taker 4H ${taker4h > 0 ? `${taker4h.toFixed(2)}x` : "<1.0"})`
+  );
+
+  // Dot 4: Relative Momentum & Conviction
+  const resReturn = parseFloat(String(opp.residual_return_24h_pct || "0").replace("%", ""));
+  const gateMomPassed = opp.checklist?.some((c) => c.title.toLowerCase().includes("momentum") && c.passed);
+  const dot4 = scoreNum >= 78 || gateMomPassed || (!isNaN(resReturn) && resReturn > 0);
+  insights.push(
+    dot4
+      ? `[✓] Relative Momentum: Outperforming BTC / momentum verified (Score ${scoreNum.toFixed(1)})`
+      : `[✗] Relative Momentum: Sub-threshold momentum or negative alpha vs BTC`
+  );
+
+  // Dot 5: Squeeze Asymmetry & Gate Verification
+  const dot5 = (fundBps <= 1.0) || isBreakout || isAllGatesPassed;
+  insights.push(
+    dot5
+      ? `[✓] Squeeze Asymmetry: ${fundBps < 0 ? `Trapped shorts (${fundBps.toFixed(1)} bps funding)` : "Uncrowded funding + verified gates"}`
+      : `[✗] Squeeze Asymmetry: Crowded long funding (${fundBps.toFixed(1)} bps) or gate drift present`
+  );
+
+  const passedDots = [dot1, dot2, dot3, dot4, dot5].filter(Boolean).length;
+
+  const tooltipText = [
+    `TOP GAINER PROBABILITY: ${passedDots}/5 DOTS (${passedDots >= 4 ? "HIGH PROBABILITY" : passedDots >= 3 ? "MODERATE" : "WATCH"})`,
+    `Edge Setup: ${archetype}`,
+    `Telemetry: ${telemetrySummary}`,
+    "",
+    `24h–72h TRADE THESIS:`,
+    actionThesis,
+    "",
+    `TELEMETRY PILLARS:`,
+    ...insights,
+  ].join("\n");
+
+  return {
+    score: passedDots,
+    archetype,
+    shortLabel,
+    telemetrySummary,
+    actionThesis,
+    tooltipText,
+    badgeBg,
+    badgeColor,
+    badgeBorder,
+    insights,
+  };
 }
 
 interface CandidateCardProps {
@@ -122,8 +289,7 @@ const CandidateCard = memo(function CandidateCard({
 
   const currentPrice = price !== undefined && !isNaN(price) && price > 0 ? price : Number(opp.current_price || 0);
   const formattedPrice = formatCandidatePrice(currentPrice, opp.tick_size);
-  const entryNum = Number(opp.suggested_entry || opp.pullback_entry || 0);
-  const formattedEntry = entryNum > 0 ? formatCandidatePrice(entryNum, opp.tick_size) : null;
+  const coilInfo = computeCoilToGainerProbability(opp);
 
   return (
     <div
@@ -298,50 +464,112 @@ const CandidateCard = memo(function CandidateCard({
         )}
       </div>
 
-      {/* Bottom Line: Status text on left + Entry on right (no badge box) */}
-      {(opp.radar_status_label || formattedEntry) && (
+      {/* Bottom Line: Coil-to-Top-Gainer 5-Dot Indicator on left + Fresh Coil Status on right */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginTop: "7px",
+          paddingTop: "6px",
+          borderTop: "1px solid rgba(255, 255, 255, 0.06)",
+          gap: "8px",
+          fontSize: "10.5px",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        {/* 5 Dots Top Gainer Coil Signal on the left (replaces entry area) */}
         <div
           style={{
             display: "flex",
-            justifyContent: "space-between",
             alignItems: "center",
-            marginTop: "7px",
-            paddingTop: "6px",
-            borderTop: "1px solid rgba(255, 255, 255, 0.06)",
-            gap: "8px",
-            fontSize: "10.5px",
-            fontFamily: "var(--font-mono)",
+            gap: "5px",
+            minWidth: 0,
+            overflow: "hidden",
           }}
+          title={coilInfo.tooltipText}
         >
+          <div style={{ display: "flex", alignItems: "center", gap: "2.5px", flexShrink: 0 }}>
+            {[1, 2, 3, 4, 5].map((idx) => {
+              const active = idx <= coilInfo.score;
+              return (
+                <span
+                  key={idx}
+                  style={{
+                    display: "inline-block",
+                    width: "5px",
+                    height: "5px",
+                    borderRadius: "50%",
+                    background: active
+                      ? coilInfo.score >= 4
+                        ? "var(--accent-emerald)"
+                        : coilInfo.score >= 3
+                          ? "#f49d0d"
+                          : "var(--accent-crimson)"
+                      : "rgba(255, 255, 255, 0.15)",
+                    boxShadow: active
+                      ? coilInfo.score >= 4
+                        ? "0 0 5px rgba(16, 185, 129, 0.7)"
+                        : "0 0 4px rgba(244, 157, 13, 0.6)"
+                      : "none",
+                    transition: "all 0.15s ease",
+                  }}
+                />
+              );
+            })}
+          </div>
           <span
             style={{
-              fontWeight: 700,
-              whiteSpace: "nowrap",
+              fontSize: "9.5px",
+              fontWeight: 800,
+              fontFamily: "var(--font-mono)",
               color:
-                opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
+                coilInfo.score >= 4
                   ? "var(--accent-emerald)"
-                  : passCount < totalCount
+                  : coilInfo.score >= 3
                     ? "#f49d0d"
-                    : "#60a5fa",
+                    : "var(--text-secondary)",
+              flexShrink: 0,
             }}
           >
-            {(opp.radar_status_label || "ACTIVE SETUP").replace(/^[^\w\s]+\s*/, "")}
+            {coilInfo.score}/5
           </span>
-          {formattedEntry && (
-            <span
-              style={{
-                color: "var(--text-secondary)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Entry:{" "}
-              <strong style={{ color: "var(--text-primary)" }}>
-                ${formattedEntry}
-              </strong>
-            </span>
-          )}
+          <span
+            style={{
+              fontSize: "8.5px",
+              fontWeight: 800,
+              letterSpacing: "0.03em",
+              padding: "1px 4px",
+              borderRadius: "3px",
+              background: coilInfo.badgeBg,
+              color: coilInfo.badgeColor,
+              border: `1px solid ${coilInfo.badgeBorder}`,
+              whiteSpace: "nowrap",
+              textOverflow: "ellipsis",
+              overflow: "hidden",
+            }}
+          >
+            {coilInfo.shortLabel}
+          </span>
         </div>
-      )}
+
+        {/* Fresh Coil Status on the right */}
+        <span
+          style={{
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            color:
+              opp.radar_status === "IN_ACTIVE_TRADE" || opp.radar_status === "AT_ENTRY_ZONE"
+                ? "var(--accent-emerald)"
+                : passCount < totalCount
+                  ? "#f49d0d"
+                  : "#60a5fa",
+          }}
+        >
+          {(opp.radar_status_label || "FRESH COIL").replace(/^[^\w\s]+\s*/, "")}
+        </span>
+      </div>
     </div>
   );
 });

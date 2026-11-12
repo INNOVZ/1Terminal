@@ -35,8 +35,17 @@ coverage/
 *.sqlite3
 atlas_state.sqlite3
 data/research/
+data/radar_events/
 data/testnet_trades.json
 data/testnet_watchlist.json
+
+# Keys and raw evidence dumps
+docs/deploy/instance_ssh_keys.txt
+docs/security/evidence/*pre-gainer-raw*
+docs/security/evidence/*pre-gainer-analysis.json
+*.tar
+*.tar.gz
+docs/deploy/alfa2-research-release-20261108/
 
 # Node.js & Next.js Frontend
 node_modules/

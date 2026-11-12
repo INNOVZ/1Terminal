@@ -1,0 +1,27 @@
+{
+  "version": "paired-prospective-v2",
+  "input_contract": "atlas-public-evidence-v3",
+  "discovery_input_contract": "atlas-public-evidence-v4",
+  "challenger": "quote-funding-carry-v1-raw-rate-unchanged-budgets",
+  "rank_contract": "paired-rank-bounds-v3",
+  "interval_seconds": 300,
+  "lateness_seconds": 30,
+  "request_deadline_seconds": 15,
+  "horizons_hours": [
+    24,
+    48
+  ],
+  "max_enrollment_delay_seconds": 600,
+  "reference_size": 10,
+  "radar_fresh_limit": 16,
+  "false_positive_definition": "nonpositive_sampled_endpoint_return; unknown excluded",
+  "early_detection_definition": "issued_before_first_observed_top10_and_outside_at_anchor",
+  "miss_definition": "observed_top10_symbol_absent_from_frozen_long_arm",
+  "price_path_definition": "five_minute_samples_not_intrabar_extremes_or_executed_returns",
+  "universe_definition": "frozen_original_eligible_canonical_usdm_cohort",
+  "min_free_bytes": 2147483648,
+  "max_study_bytes": 2147483648,
+  "report_execution": "independent_worker_separate_lock",
+  "coverage_semantics": "observed_missed_failed_absent_v2",
+  "max_transition_context_age_seconds": 28800
+}

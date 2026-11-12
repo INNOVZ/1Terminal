@@ -1,0 +1,59 @@
+name: atlas-paired-study
+services:
+  observation:
+    profiles: [observation]
+    image: ${ATLAS_PAIRED_IMAGE:?Set the verified immutable research image digest}
+    pull_policy: never
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.5
+    restart: "no"
+    environment:
+      ATLAS_RESEARCH_ENABLED: ${ATLAS_PAIRED_COLLECTION_ENABLED:-false}
+    command: [python, -m, scripts.research_prospective, run, --study, /study, --execute-public-collection]
+    volumes:
+      - type: bind
+        source: ${ATLAS_PAIRED_STUDY_DIR:?Set only the new paired study directory}
+        target: /study
+    healthcheck:
+      test: [CMD, python, -m, scripts.research_prospective, health, --study, /study]
+      interval: 60s
+      timeout: 15s
+      retries: 2
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+  reporting:
+    profiles: [observation]
+    image: ${ATLAS_PAIRED_IMAGE:?Set the verified immutable research image digest}
+    pull_policy: never
+    network_mode: none
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.25
+    restart: "on-failure:3"
+    environment:
+      ATLAS_RESEARCH_ENABLED: ${ATLAS_PAIRED_COLLECTION_ENABLED:-false}
+    command: [python, -m, scripts.research_prospective, reports, --study, /study, --execute-public-collection]
+    volumes:
+      - type: bind
+        source: ${ATLAS_PAIRED_STUDY_DIR:?Set only the new paired study directory}
+        target: /study
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
