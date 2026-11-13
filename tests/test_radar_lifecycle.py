@@ -784,3 +784,82 @@ def test_breakout_without_retest_computes_pnl_from_breakout_trigger() -> None:
     assert decision.state is RadarLifecycleState.IN_ACTIVE_TRADE
     # (104.04 - 102.00) / 102.00 * 100 = 2.0% (not ~9.5% from unfilled 95.00 retest_entry)
     assert decision.pnl_from_entry_pct == Decimal("2.0")
+
+
+def test_wait_for_retest_only_ignores_breakout_touch() -> None:
+    now = datetime(2026, 11, 7, 7, 0, tzinfo=UTC)
+    candidate = {
+        "symbol": "RETUSDT",
+        "direction": "long",
+        "execution_mode": "WAIT_FOR_RETEST_ONLY",
+        "suggested_entry": "100.00",
+        "breakout_trigger": "104.00",
+        "suggested_stop": "90.00",
+        "suggested_targets": ["112.00", "120.00", "130.00"],
+        "poc_price": "99.00",
+        "val_price": "95.00",
+        "vah_price": "103.00",
+        "evaluated_at": (now - timedelta(hours=4)).isoformat(),
+    }
+    candles = [
+        {
+            "time": int((now - timedelta(hours=1)).timestamp()),
+            "open": 101.0,
+            "high": 106.0,
+            "low": 101.0,
+            "close": 105.0,
+            "volume": 5000,
+        },
+    ]
+    decision = evaluate_radar_candidate_lifecycle(
+        candidate,
+        current_price=Decimal("105.0"),
+        recent_candles_1h=candles,
+        now=now,
+    )
+    assert decision.triggered_at is None
+    assert decision.state is not RadarLifecycleState.IN_ACTIVE_TRADE
+
+
+def test_breakout_episode_does_not_switch_return_basis_on_later_retest() -> None:
+    now = datetime(2026, 11, 7, 7, 0, tzinfo=UTC)
+    candidate = {
+        "symbol": "LOCKUSDT",
+        "direction": "long",
+        "execution_mode": "RETEST_ACCUMULATION",
+        "suggested_entry": "100.00",
+        "breakout_trigger": "104.00",
+        "suggested_stop": "90.00",
+        "suggested_targets": ["112.00", "120.00", "130.00"],
+        "poc_price": "99.00",
+        "val_price": "95.00",
+        "vah_price": "103.00",
+        "evaluated_at": (now - timedelta(hours=4)).isoformat(),
+    }
+    candles = [
+        {
+            "time": int((now - timedelta(hours=2)).timestamp()),
+            "open": 101.0,
+            "high": 106.0,
+            "low": 101.0,
+            "close": 105.0,
+            "volume": 5000,
+        },
+        {
+            "time": int((now - timedelta(hours=1)).timestamp()),
+            "open": 103.0,
+            "high": 103.5,
+            "low": 99.0,
+            "close": 103.0,
+            "volume": 4000,
+        },
+    ]
+    decision = evaluate_radar_candidate_lifecycle(
+        candidate,
+        current_price=Decimal("103.0"),
+        recent_candles_1h=candles,
+        now=now,
+    )
+    assert decision.state is RadarLifecycleState.IN_ACTIVE_TRADE
+    # Locked to breakout_trigger (104.00): (103.0 - 104.0) / 104.0 = -1.0%, NOT +3.0% from 100.00
+    assert decision.pnl_from_entry_pct == Decimal("-1.0")

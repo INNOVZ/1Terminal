@@ -852,8 +852,11 @@ def volume_profile(
     max_high = max(highs)
     total_vol = sum(vols)
     if max_high <= min_low or bins <= 0:
-        d_max = Decimal(str(round(max_high, 8)))
-        d_min = Decimal(str(round(min_low, 8)))
+        d_max = Decimal(str(max_high))
+        d_min = Decimal(str(min_low))
+        if tick_size is not None and tick_size > ZERO:
+            d_max = normalize_price(d_max, tick_size)
+            d_min = normalize_price(d_min, tick_size)
         d_vol = Decimal(str(round(total_vol, 2)))
         return VolumeProfile(d_max, d_max, d_min, d_vol, d_vol)
 
@@ -861,15 +864,20 @@ def volume_profile(
     inv_bin_width = 1.0 / bin_width
     bin_volumes = [0.0] * bins
     bin_mids = [min_low + (float(i) + 0.5) * bin_width for i in range(bins)]
+    eps = max(1e-18, (max_high - min_low) * 1e-12)
 
     for c_low, c_high, c_close, c_vol in zip(lows, highs, closes, vols, strict=False):
         if c_vol <= 0.0:
             continue
-        span = max(c_high - c_low, 1e-8)
+        if c_high <= c_low:
+            flat_idx = min(bins - 1, max(0, int((c_low - min_low) * inv_bin_width)))
+            bin_volumes[flat_idx] += c_vol
+            continue
+        span = max(c_high - c_low, eps)
         tp = (c_high + c_low + c_close) / 3.0
         tp = max(c_low, min(c_high, tp))
-        left_span = max(tp - c_low, 1e-8)
-        right_span = max(c_high - tp, 1e-8)
+        left_span = max(tp - c_low, eps)
+        right_span = max(c_high - tp, eps)
         inv_left = 1.0 / (span * left_span)
         inv_right = 1.0 / (span * right_span)
 
@@ -915,10 +923,10 @@ def volume_profile(
         else:
             break
 
-    poc_price = Decimal(str(round(bin_mids[poc_idx], 8)))
+    poc_price = Decimal(f"{bin_mids[poc_idx]:.12g}")
     poc_volume = Decimal(str(round(bin_volumes[poc_idx], 2)))
-    vah_price = Decimal(str(round(bin_mids[max(va_indices)], 8)))
-    val_price = Decimal(str(round(bin_mids[min(va_indices)], 8)))
+    vah_price = Decimal(f"{bin_mids[max(va_indices)]:.12g}")
+    val_price = Decimal(f"{bin_mids[min(va_indices)]:.12g}")
     if tick_size is not None and tick_size > ZERO:
         poc_price = normalize_price(poc_price, tick_size)
         vah_price = max(poc_price, normalize_price(vah_price, tick_size))
@@ -928,7 +936,11 @@ def volume_profile(
 
     vp_bins = tuple(
         VolumeProfileBin(
-            price=Decimal(str(round(bin_mids[i], 8))),
+            price=(
+                normalize_price(Decimal(f"{bin_mids[i]:.12g}"), tick_size)
+                if (tick_size is not None and tick_size > ZERO)
+                else Decimal(f"{bin_mids[i]:.12g}")
+            ),
             volume=Decimal(str(round(bin_volumes[i], 2))),
         )
         for i in range(bins)

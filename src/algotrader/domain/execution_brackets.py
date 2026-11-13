@@ -88,15 +88,13 @@ def build_long_bracket(
         raw_t3 = max(high_30d, vah_30d + Decimal("1.5") * atr)
     elif (close <= vah_30d * Decimal("1.005")) and (room_vah_to_ceiling >= Decimal("1.5")):
         # Case A — VAH Breakout Into 30d Ceiling (respect immediate 72h compression high)
-        capped_comp_high = min(local_compression_high_4h, close * Decimal("1.10"))
-        raw_breakout_trigger = max(vah_30d, capped_comp_high) + Decimal("0.08") * atr
+        raw_breakout_trigger = max(vah_30d, local_compression_high_4h) + Decimal("0.08") * atr
         raw_t1 = high_30d
         raw_t2 = swing_low_4h + Decimal("1.272") * swing_range
         raw_t3 = swing_low_4h + Decimal("1.618") * swing_range
     else:
-        # Case B — 30d Ceiling Breakout (cap outlier 72h wick distance)
-        capped_comp_high = min(local_compression_high_4h, close * Decimal("1.10"))
-        raw_breakout_trigger = max(capped_comp_high, vah_30d) + Decimal("0.05") * atr
+        # Case B — 30d Ceiling Breakout
+        raw_breakout_trigger = max(local_compression_high_4h, vah_30d) + Decimal("0.05") * atr
         if (high_30d - raw_breakout_trigger) < Decimal("1.5") * atr:
             raw_t1 = max(high_30d + Decimal("1.5") * atr, swing_low_4h + Decimal("1.272") * swing_range)
             raw_t2 = swing_low_4h + Decimal("1.618") * swing_range
@@ -137,20 +135,13 @@ def build_long_bracket(
     else:
         execution_mode = "RETEST_ACCUMULATION"
 
-    # Invariant 2: Minimum Structural Stop Distance for Retest Entry (with bounded max risk)
+    # Invariant 2: Minimum Structural Stop Distance & Clearance below VAL / Swing Low
     min_retest_risk = max(Decimal("1.20") * atr, retest_entry * Decimal("0.035"))
-    max_retest_risk = max(Decimal("4.50") * atr, retest_entry * Decimal("0.120"))
     raw_stop = min(
         swing_low_4h - Decimal("0.80") * atr,
         effective_val - Decimal("0.60") * atr,
         retest_entry - min_retest_risk,
     )
-    # Cap runaway stops while preserving VAL - 0.20*ATR & min_retest_risk structural clearance
-    structural_stop_cap = min(
-        retest_entry - min_retest_risk,
-        max(retest_entry - max_retest_risk, effective_val - Decimal("0.20") * atr),
-    )
-    raw_stop = max(raw_stop, structural_stop_cap)
 
     retest_stop = floor_to_increment(raw_stop, tick_size)
     if retest_stop >= retest_entry:
@@ -301,7 +292,6 @@ def build_short_bracket(
     raw_breakdown_trigger = local_consolidation_low_4h - Decimal("0.05") * atr
     if raw_breakdown_trigger >= close:
         raw_breakdown_trigger = close - Decimal("0.10") * atr
-    raw_breakdown_trigger = max(raw_breakdown_trigger, close * Decimal("0.975"))
 
     # Invariant 2: Symmetric structural stop distance for SHORT setup
     min_short_risk = max(Decimal("1.20") * atr, raw_retest_entry * Decimal("0.035"))

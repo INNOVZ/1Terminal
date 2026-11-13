@@ -43,6 +43,7 @@ from algotrader.domain.execution_brackets import (
 from algotrader.domain.indicators import (
     IndicatorSnapshot,
     adx,
+    atr,
     bollinger_bands,
     confirmed_macd_divergences,
     confirmed_rsi_divergences,
@@ -1084,6 +1085,7 @@ class CryptoOpportunityScreener:
         ema50_4h = ema(closes_4h, 50)[-1] if len(closes_4h) >= 50 else ema20_4h
         ema200_4h = ema(closes_4h, 200)[-1] if len(closes_4h) >= 200 else ema(closes_4h, len(closes_4h))[-1]
         rsi_4h = rsi(closes_4h, 14)[-1]
+        atr14_4h = atr(closed_4h, 14)[-1]
 
         # Returns & Excursions
         ret_24h = _return_over(closed_1h, 24)
@@ -1266,7 +1268,7 @@ class CryptoOpportunityScreener:
             ema50_4h=ema50_4h,
             poc_30d=poc_price,
             vah_30d=vah_price,
-            atr14_4h=atr14,
+            atr14_4h=atr14_4h,
             vcr_4h=vol_contraction_ratio,
             oi_delta_7d=oi_change_7d,
             oi_delta_4h=oi_delta_4h_val,
@@ -1363,7 +1365,7 @@ class CryptoOpportunityScreener:
             ema20_1h=snap_1h.ema20,
             ema200_4h=ema200_4h,
             low_24h=low_24h,
-            atr14_4h=atr14,
+            atr14_4h=atr14_4h,
             vcr_4h=vol_contraction_ratio,
             ema20_4h=ema20_4h,
             excursion_72h=exc_72h,
@@ -1449,7 +1451,7 @@ class CryptoOpportunityScreener:
             close=close,
             ema50_4h=ema50_4h,
             poc_30d=poc_price,
-            atr14_4h=atr14,
+            atr14_4h=atr14_4h,
             local_compression_high_4h=local_swing_high_4h,
             swing_low_4h=swing_low_4h,
             high_30d=high_30d,
@@ -1784,6 +1786,7 @@ class CryptoOpportunityScreener:
 
         ema20_4h = ema(closes_4h, 20)[-1]
         ema50_4h = ema(closes_4h, 50)[-1] if len(closes_4h) >= 50 else ema20_4h
+        atr14_4h = atr(closed_4h, 14)[-1]
 
         # 1. 30-Day VPVR Window (180 4H bars = 720 hours = 30 days)
         vpvr_window = closed_4h[-180:] if len(closed_4h) >= 180 else (closed_4h if closed_4h else closed_1h[-720:])
@@ -1922,7 +1925,7 @@ class CryptoOpportunityScreener:
             high_30d=high_30d,
             ema50_4h=ema50_4h,
             poc_30d=poc_price,
-            atr14_4h=atr14,
+            atr14_4h=atr14_4h,
             has_bearish_div=has_bearish_divergence,
             rsi_4h=rsi_4h,
             rsi_1d=rsi_1d,
@@ -1958,7 +1961,7 @@ class CryptoOpportunityScreener:
             low_30d=low_30d,
             days_since_30d_high=days_since_30d_high,
             ema20_4h=ema20_4h,
-            atr14_4h=atr14,
+            atr14_4h=atr14_4h,
             ret_24h=ret_24h,
             rsi_1h=snap_1h.rsi14,
             rsi_4h=rsi_4h,
@@ -1990,7 +1993,7 @@ class CryptoOpportunityScreener:
             close=close,
             ema50_4h=ema50_4h,
             poc_30d=poc_price,
-            atr14_4h=atr14,
+            atr14_4h=atr14_4h,
             local_consolidation_low_4h=local_consolidation_low_4h,
             swing_high_4h=swing_high_4h,
             low_30d=low_30d,

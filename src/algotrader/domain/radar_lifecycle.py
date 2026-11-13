@@ -430,26 +430,36 @@ def evaluate_radar_candidate_lifecycle(
 
     # 4. Classify Active Trade State (AT_ENTRY_ZONE vs IN_ACTIVE_TRADE vs ACTIVE_COIL)
     # Trigger is an observed setup event, never an assertion of an executed fill.
+    execution_mode = str(candidate.get("execution_mode", "")).upper()
+    allow_breakout_trigger = execution_mode != "WAIT_FOR_RETEST_ONLY"
+    allow_retest_trigger = execution_mode != "CEILING_BREAKOUT"
+
     prior_trigger = _parse_iso(candidate.get("radar_triggered_at"))
     triggered_at = (
         prior_trigger if prior_trigger and evaluated_at <= prior_trigger <= ref_now else None
     )
-    trigger_entry_basis: Decimal | None = entry
-    retest_observed = False
-    breakout_observed = False
+    raw_prior_basis = str(candidate.get("radar_trigger_basis", "")).lower()
+    first_trigger_basis: str | None = (
+        raw_prior_basis if (triggered_at is not None and raw_prior_basis in ("retest", "breakout")) else None
+    )
     deadline = evaluated_at + timedelta(hours=max_age_hours)
     for c in sorted(post_scan_candles, key=lambda c: int(c["time"])):
         if int(c["time"]) > int(deadline.timestamp()):
             continue
         high, low, close = (_to_dec(c.get(k)) for k in ("high", "low", "close"))
-        breakout = trigger is not None and (
-            (not is_short and high is not None and high >= trigger)
-            or (is_short and low is not None and low <= trigger)
+        breakout = (
+            allow_breakout_trigger
+            and trigger is not None
+            and (
+                (not is_short and high is not None and high >= trigger)
+                or (is_short and low is not None and low <= trigger)
+            )
         )
         # A retest requires the entire candle to open after discovery and close
         # favorably after touching entry; this is an observation, not a fill model.
         retest = (
-            entry is not None
+            allow_retest_trigger
+            and entry is not None
             and high is not None
             and low is not None
             and close is not None
@@ -458,23 +468,28 @@ def evaluate_radar_candidate_lifecycle(
                 or (is_short and high >= entry and close <= entry * Decimal("0.982"))
             )
         )
-        if retest:
-            retest_observed = True
-        if breakout:
-            breakout_observed = True
-        if triggered_at is None and (breakout or retest):
-            triggered_at = datetime.fromtimestamp(int(c["time"]), UTC)
+        if breakout or retest:
+            if triggered_at is None:
+                triggered_at = datetime.fromtimestamp(int(c["time"]), UTC)
+            if first_trigger_basis is None:
+                first_trigger_basis = "retest" if retest else "breakout"
+            break
     if (
         triggered_at is None
         and ref_now < deadline
+        and allow_breakout_trigger
         and trigger is not None
         and ((not is_short and current_price >= trigger) or (is_short and current_price <= trigger))
     ):
         triggered_at = ref_now
-        breakout_observed = True
+        if first_trigger_basis is None:
+            first_trigger_basis = "breakout"
 
-    if breakout_observed and not retest_observed and trigger is not None and trigger > Decimal("0"):
-        trigger_entry_basis = trigger
+    trigger_entry_basis: Decimal | None = (
+        trigger
+        if (first_trigger_basis == "breakout" and trigger is not None and trigger > Decimal("0"))
+        else entry
+    )
 
     pnl_pct: Decimal | None = None
     if trigger_entry_basis is not None and trigger_entry_basis > Decimal("0"):

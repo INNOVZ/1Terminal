@@ -343,9 +343,9 @@ def test_below_poc_ceiling_breakout_target1_never_inverts_below_entry() -> None:
     assert bracket.r_t1 > Decimal("0")
 
 
-def test_ceiling_breakout_uses_handle_low_4h_and_retest_stop_bounded() -> None:
+def test_ceiling_breakout_uses_handle_low_4h_and_retest_stop_preserves_val_clearance() -> None:
     """CEILING_BREAKOUT anchors handle stop to handle_low_4h rather than 7d swing_low_4h,
-    and RETEST_ACCUMULATION bounds runaway stops from deep swing lows.
+    and RETEST_ACCUMULATION preserves structural clearance below VAL and swing_low_4h.
     """
     tick = Decimal("0.01")
     handle_bracket = build_long_bracket(
@@ -372,13 +372,44 @@ def test_ceiling_breakout_uses_handle_low_4h_and_retest_stop_bounded() -> None:
         poc_30d=Decimal("99.00"),
         atr14_4h=Decimal("2.00"),
         local_compression_high_4h=Decimal("104.00"),
-        swing_low_4h=Decimal("70.00"),
+        swing_low_4h=Decimal("60.00"),
         high_30d=Decimal("108.00"),
         vah_30d=Decimal("106.00"),
-        val_30d=Decimal("95.00"),
+        val_30d=Decimal("70.00"),
         tick_size=tick,
         resistance_absorption_score=Decimal("55.0"),
     )
     assert retest_bracket.execution_mode == "RETEST_ACCUMULATION"
-    assert retest_bracket.invalidation_stop <= Decimal("95.00") - Decimal("0.20") * Decimal("2.00")
-    assert retest_bracket.invalidation_stop > Decimal("80.00")
+    assert retest_bracket.invalidation_stop <= Decimal("70.00") - Decimal("0.60") * Decimal("2.00")
+    assert retest_bracket.invalidation_stop <= Decimal("60.00") - Decimal("0.80") * Decimal("2.00")
+
+
+def test_triggers_never_move_inside_structural_resistance_or_support() -> None:
+    tick = Decimal("0.01")
+    long_bracket = build_long_bracket(
+        close=Decimal("100.00"),
+        ema50_4h=Decimal("98.00"),
+        poc_30d=Decimal("99.00"),
+        atr14_4h=Decimal("2.00"),
+        local_compression_high_4h=Decimal("125.00"),
+        swing_low_4h=Decimal("95.00"),
+        high_30d=Decimal("130.00"),
+        vah_30d=Decimal("105.00"),
+        val_30d=Decimal("96.00"),
+        tick_size=tick,
+    )
+    assert long_bracket.breakout_trigger > Decimal("125.00")
+
+    short_bracket = build_short_bracket(
+        close=Decimal("100.00"),
+        ema50_4h=Decimal("102.00"),
+        poc_30d=Decimal("103.00"),
+        atr14_4h=Decimal("2.00"),
+        local_consolidation_low_4h=Decimal("90.00"),
+        swing_high_4h=Decimal("105.00"),
+        low_30d=Decimal("80.00"),
+        vah_30d=Decimal("106.00"),
+        val_30d=Decimal("94.00"),
+        tick_size=tick,
+    )
+    assert short_bracket.breakout_trigger < Decimal("90.00")

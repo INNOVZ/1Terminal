@@ -238,3 +238,56 @@ def test_volume_profile_tick_size_snapping() -> None:
     assert vp.val_price % tick == Decimal("0")
     assert vp.val_price <= vp.poc_price <= vp.vah_price
 
+
+def test_volume_profile_flat_candle_mass_conservation() -> None:
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    candles = [
+        Candle(
+            opened_at=base,
+            closed_at=base + timedelta(hours=4),
+            open=Decimal("100"),
+            high=Decimal("100"),
+            low=Decimal("100"),
+            close=Decimal("100"),
+            volume=Decimal("900"),
+            quote_volume=Decimal("900"),
+        ),
+        Candle(
+            opened_at=base + timedelta(hours=4),
+            closed_at=base + timedelta(hours=8),
+            open=Decimal("90"),
+            high=Decimal("110"),
+            low=Decimal("90"),
+            close=Decimal("105"),
+            volume=Decimal("100"),
+            quote_volume=Decimal("100"),
+        ),
+    ]
+    vp = volume_profile(candles, bins=50)
+    assert vp.total_volume == Decimal("1000")
+    assert sum(b.volume for b in vp.bins) == Decimal("1000")
+    assert Decimal("99") <= vp.poc_price <= Decimal("101")
+
+
+def test_volume_profile_tiny_price_precision() -> None:
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    candles = [
+        Candle(
+            opened_at=base + timedelta(hours=4 * i),
+            closed_at=base + timedelta(hours=4 * (i + 1)),
+            open=Decimal("0.0000000015"),
+            high=Decimal("0.0000000030"),
+            low=Decimal("0.0000000010"),
+            close=Decimal("0.0000000020"),
+            volume=Decimal("1000000"),
+            quote_volume=Decimal("1000"),
+        )
+        for i in range(5)
+    ]
+    tick = Decimal("0.0000000001")
+    vp = volume_profile(candles, bins=50, tick_size=tick)
+    assert vp.poc_price > Decimal("0")
+    assert vp.val_price > Decimal("0")
+    assert vp.vah_price > Decimal("0")
+    assert vp.val_price <= vp.poc_price <= vp.vah_price
+
