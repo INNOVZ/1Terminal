@@ -248,6 +248,9 @@ async def reconcile_radar_cohort(
                         "retained": decision.retained,
                         "reason": decision.reason,
                         "triggered_at": decision.triggered_at,
+                        "trigger_basis": decision.trigger_basis,
+                        "trigger_entry": str(decision.trigger_entry_price) if decision.trigger_entry_price is not None else None,
+                        "trigger_stop": str(decision.trigger_stop_price) if decision.trigger_stop_price is not None else None,
                         "candidate": {k: v for k, v in updated.items() if k != "candles"},
                         "observed_price": str(live_price),
                         "checklist": list(decision.updated_checklist),
@@ -265,6 +268,13 @@ async def reconcile_radar_cohort(
             updated["radar_checked_at"] = checked_at.isoformat()
             if decision.triggered_at:
                 updated["radar_triggered_at"] = decision.triggered_at
+                updated["radar_trigger_basis"] = decision.trigger_basis
+                for key, value in (("radar_trigger_entry", decision.trigger_entry_price),
+                                   ("radar_trigger_stop", decision.trigger_stop_price)):
+                    if value is None:
+                        updated.pop(key, None)
+                    else:
+                        updated[key] = str(value)
             updated["current_price"] = str(live_price)
             updated["candles"] = candles_payload
             updated["radar_status"] = decision.state.value
@@ -276,6 +286,8 @@ async def reconcile_radar_cohort(
                 updated["checklist"] = [dict(item) for item in decision.updated_checklist]
             if decision.pnl_from_entry_pct is not None:
                 updated["trade_pnl_pct"] = str(decision.pnl_from_entry_pct)
+            else:
+                updated.pop("trade_pnl_pct", None)
             return updated
         except Exception:
             return unavailable(prev, "market_refresh_failed")

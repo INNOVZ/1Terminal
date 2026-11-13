@@ -863,3 +863,111 @@ def test_breakout_episode_does_not_switch_return_basis_on_later_retest() -> None
     assert decision.state is RadarLifecycleState.IN_ACTIVE_TRADE
     # Locked to breakout_trigger (104.00): (103.0 - 104.0) / 104.0 = -1.0%, NOT +3.0% from 100.00
     assert decision.pnl_from_entry_pct == Decimal("-1.0")
+
+
+@pytest.mark.asyncio
+async def test_service_persists_trigger_prices_through_json_reload_and_later_retest():
+    import json
+
+    at = datetime(2026, 11, 13, tzinfo=UTC)
+    inst = make_instrument(symbol="LOCKUSDT")
+    candidate = {
+        "symbol": inst.id.symbol, "direction": "long", "execution_mode": "RETEST_ACCUMULATION",
+        "evaluated_at": at.isoformat(), "suggested_entry": "100", "suggested_stop": "90",
+        "breakout_trigger": "104", "breakout_stop": "101", "retest_stop": "90",
+        "poc_price": "98", "val_price": "94", "vah_price": "110",
+        "suggested_targets": ["120", "130", "140"],
+    }
+
+    class Provider:
+        now = at + timedelta(hours=2, minutes=30)
+        price = Decimal("105")
+        fail_candles = False
+
+        async def instruments(self):
+            return [inst]
+
+        async def quotes(self, instruments):
+            return [Quote(inst.id, self.price, self.price, self.price, Decimal("10000000"), observed_at=self.now)]
+
+        async def candles(self, instrument, interval, limit):
+            if self.fail_candles:
+                raise TimeoutError("quote must still enforce the locked stop")
+            hours = 1 if interval == "1h" else 4
+            end = self.now.replace(minute=0, second=0, microsecond=0)
+            if hours == 4:
+                end -= timedelta(hours=end.hour % 4)
+            result = []
+            for index in range(limit):
+                closed_at = end - timedelta(hours=hours * (limit - index - 1))
+                low, high, close = Decimal("97"), Decimal("99"), Decimal("98")
+                if hours == 1 and closed_at == at + timedelta(hours=3):
+                    low, high, close = Decimal("99"), Decimal("106"), Decimal("103")
+                result.append(Candle(closed_at-timedelta(hours=hours), closed_at,
+                                     close, high, low, close, Decimal("1000"), Decimal("98000")))
+            return result
+
+        async def derivatives_snapshot(self, instrument):
+            from types import SimpleNamespace
+            return SimpleNamespace(observed_at=self.now, degraded_telemetry=False,
+                                   open_interest_change_7d=Decimal("0.10"), funding_rate=Decimal("0.0001"),
+                                   taker_buy_sell_ratio=Decimal("1.20"))
+
+    provider = Provider()
+    first = (await reconcile_radar_cohort([candidate], set(), provider, provider.now))[0]
+    assert first["radar_trigger_basis"] == "breakout"
+    assert first["radar_trigger_entry"] == "104"
+    assert first["radar_trigger_stop"] == "101"
+    assert first["trade_pnl_pct"] == "1.0"
+    restored = json.loads(json.dumps(first))
+    restored.update(suggested_entry="90", suggested_stop="120", breakout_trigger="130")
+    provider.now = at + timedelta(hours=3, minutes=30)
+    provider.price = Decimal("103")
+    second = (await reconcile_radar_cohort([restored], set(), provider, provider.now))[0]
+    assert second["radar_triggered_at"] == first["radar_triggered_at"]
+    assert second["radar_trigger_basis"] == "breakout"
+    assert second["radar_trigger_entry"] == "104"
+    assert second["radar_trigger_stop"] == "101"
+    assert second["trade_pnl_pct"] == "-1.0"
+    legacy = dict(second, trade_pnl_pct="99.0")
+    for key in ("radar_trigger_basis", "radar_trigger_entry", "radar_trigger_stop"):
+        legacy.pop(key)
+    legacy["suggested_stop"] = "90"
+    unknown = (await reconcile_radar_cohort([legacy], set(), provider, provider.now))[0]
+    assert unknown["radar_trigger_basis"] == "unknown"
+    assert "trade_pnl_pct" not in unknown
+    provider.price = Decimal("100")
+    provider.fail_candles = True
+    events = []
+    assert await reconcile_radar_cohort([second], set(), provider, provider.now, events) == []
+    assert events[0]["reason"] == "long_stop_loss_breached"
+
+
+@pytest.mark.parametrize("direction", ["long", "short"])
+@pytest.mark.parametrize("later_wick", [False, True])
+def test_new_breakout_enforces_mode_stop_on_first_evaluation(direction, later_wick):
+    at = datetime(2026, 11, 13, tzinfo=UTC)
+    is_short = direction == "short"
+    candidate = {
+        "direction": direction, "execution_mode": "CEILING_BREAKOUT",
+        "evaluated_at": at.isoformat(), "suggested_entry": "100",
+        "suggested_stop": "110" if is_short else "90",
+        "breakout_trigger": "96" if is_short else "104",
+        "breakout_stop": "99" if is_short else "101",
+    }
+    candles = [{"time": int((at + timedelta(hours=2)).timestamp()),
+                "high": "98" if is_short else "106", "low": "94" if is_short else "102",
+                "close": "95" if is_short else "105"}]
+    if later_wick:
+        candles.append({"time": int((at + timedelta(hours=3)).timestamp()),
+                        "high": "100" if is_short else "106", "low": "94" if is_short else "100",
+                        "close": "95" if is_short else "105"})
+    price = ("95" if is_short else "105") if later_wick else "100"
+    decision = evaluate_radar_candidate_lifecycle(
+        candidate, current_price=Decimal(price), recent_candles_1h=candles,
+        now=at + timedelta(hours=4),
+    )
+    assert decision.retained is False
+    assert decision.reason == ("short_stop_loss_breached" if is_short else "long_stop_loss_breached")
+    assert decision.trigger_basis == "breakout"
+    assert decision.trigger_stop_price == Decimal(candidate["breakout_stop"])

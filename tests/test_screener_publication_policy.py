@@ -122,3 +122,23 @@ async def test_entry_points_preserve_runtime_publication_order(
     assert result["screening_policy_version"] == SCREENING_POLICY_VERSION
     assert result["scan_id"] == "fixture-scan"
     assert result["scan_archive"]["status"] == "saved"
+
+
+@pytest.mark.parametrize("stop", [Decimal("-0.60"), Decimal("0"), Decimal("101"), Decimal("NaN"), Decimal("Infinity")])
+@pytest.mark.parametrize("enforce_quality", [False, True])
+async def test_invalid_execution_prices_cannot_publish_through_screen(settings, monkeypatch, stop, enforce_quality):
+    from algotrader.domain.screener_policy import publication_rejection_reasons
+
+    opportunity = replace(_opportunity(Direction.LONG), suggested_stop=stop,
+                          suggested_targets=(Decimal("110"), Decimal("120"), Decimal("130")),
+                          risk_reward_ratio=Decimal("2.5"))
+    assert publication_rejection_reasons(opportunity) == ("invalid_execution_prices",)
+    market = SimpleNamespace(
+        instruments=AsyncMock(return_value=[opportunity.instrument]),
+        quotes=AsyncMock(return_value=[Quote(opportunity.instrument.id, Decimal("100"), Decimal("100"),
+                                            Decimal("100"), Decimal("5000000"))]),
+    )
+    macro = SimpleNamespace(get_context=AsyncMock(return_value=SimpleNamespace(narrative=lambda: "neutral", coi_score=None)))
+    screener = CryptoOpportunityScreener(settings, macro_provider=macro)
+    monkeypatch.setattr(screener, "_evaluate_single", AsyncMock(return_value=[opportunity]))
+    assert await screener.screen(market, min_score=Decimal("10"), enforce_quality=enforce_quality) == []

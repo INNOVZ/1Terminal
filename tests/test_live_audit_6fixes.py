@@ -240,8 +240,8 @@ def test_fix4_veto_crashing_1h_oi_and_below_val() -> None:
     assert details_val["L4"] is False
 
 
-def test_fix5_cap_trigger_and_targets_at_poc_when_close_below_poc() -> None:
-    """Fix 5: When Close < 30d_POC, immediate overhead resistance is POC (Target 1), trigger is capped, R:R is capped at 5.0."""
+def test_fix5_structural_trigger_and_retest_targets_when_close_below_poc() -> None:
+    """Below-POC retest targets retain POC while the breakout trigger clears the actual pivot."""
     close = Decimal("0.3032")
     poc = Decimal("0.3346")
     vah = Decimal("0.4373")
@@ -262,8 +262,9 @@ def test_fix5_cap_trigger_and_targets_at_poc_when_close_below_poc() -> None:
         val_30d=val,
     )
 
-    # Breakout trigger capped at <= close * 1.08 = 0.3274
-    assert bracket.breakout_trigger <= (close * Decimal("1.08")).quantize(Decimal("0.0001"))
+    # A separate breakout observation must clear the structural pivot and POC.
+    assert bracket.breakout_trigger > max(local_high, poc)
+    assert bracket.breakout_trigger == Decimal("0.3508")
     # Target 1 is POC ($0.3346), Target 2 is VAH ($0.4373)
     assert bracket.t1 == poc
     assert bracket.t2 == vah

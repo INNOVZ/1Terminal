@@ -40,6 +40,9 @@ class RadarLifecycleDecision:
     failed_gates: tuple[str, ...] = ()
     updated_checklist: tuple[dict[str, Any], ...] = ()
     triggered_at: str | None = None
+    trigger_basis: str | None = None
+    trigger_entry_price: Decimal | None = None
+    trigger_stop_price: Decimal | None = None
 
 
 def _to_dec(value: Any) -> Decimal | None:
@@ -320,6 +323,26 @@ def evaluate_radar_candidate_lifecycle(
     val = _to_dec(candidate.get("val_price")) or _to_dec(candidate.get("val_30d"))
     vah = _to_dec(candidate.get("vah_price")) or _to_dec(candidate.get("vah_30d"))
 
+    evaluated_at = _parse_iso(candidate.get("first_seen_at")) or _parse_iso(
+        candidate.get("evaluated_at")
+    )
+    prior_trigger = _parse_iso(candidate.get("radar_triggered_at"))
+    triggered_at = (
+        prior_trigger if prior_trigger and evaluated_at is not None
+        and evaluated_at <= prior_trigger <= ref_now else None
+    )
+    raw_prior_basis = str(candidate.get("radar_trigger_basis", "")).lower()
+    locked_entry = _to_dec(candidate.get("radar_trigger_entry"))
+    locked_stop = _to_dec(candidate.get("radar_trigger_stop"))
+    has_locked_reference = (
+        triggered_at is not None and raw_prior_basis in ("retest", "breakout")
+        and locked_entry is not None and locked_stop is not None
+        and locked_entry > 0 and locked_stop > 0
+        and (locked_stop > locked_entry if is_short else locked_stop < locked_entry)
+    )
+    if has_locked_reference:
+        stop = locked_stop
+
     raw_targets = candidate.get("suggested_targets") or ()
     targets: list[Decimal] = []
     if isinstance(raw_targets, (list, tuple)):
@@ -342,9 +365,6 @@ def evaluate_radar_candidate_lifecycle(
             current_price=current_price,
         )
 
-    evaluated_at = _parse_iso(candidate.get("first_seen_at")) or _parse_iso(
-        candidate.get("evaluated_at")
-    )
     eval_epoch = int(evaluated_at.timestamp()) if evaluated_at else 0
 
     invalid_discovery = evaluated_at is None or evaluated_at > ref_now
@@ -358,9 +378,16 @@ def evaluate_radar_candidate_lifecycle(
         and (_to_dec(c.get("low")) or Decimal("0")) > 0
     ]
 
+    # Locked stops apply after the observed trigger. An overlapping candle cannot
+    # establish whether its wick preceded that observation.
+    stop_candles = post_scan_candles
+    if has_locked_reference and triggered_at is not None:
+        stop_candles = [c for c in post_scan_candles
+                        if int(c.get("opened_time", int(c["time"]) - 3600)) >= triggered_at.timestamp()]
+
     # 1. Hard Stop-Loss Invalidation Check (Spot Price + Post-Scan Candle Extremes)
     if not is_short:
-        post_lows = _extract_decimals_from_candles(post_scan_candles, "low")
+        post_lows = _extract_decimals_from_candles(stop_candles, "low")
         min_low_since_scan = min(post_lows) if post_lows else current_price
         if current_price <= stop or min_low_since_scan <= stop:
             return RadarLifecycleDecision(
@@ -385,10 +412,11 @@ def evaluate_radar_candidate_lifecycle(
                 current_price=current_price,
             )
     else:
-        post_highs = _extract_decimals_from_candles(post_scan_candles, "high")
+        post_highs = _extract_decimals_from_candles(stop_candles, "high")
         max_high_since_scan = max(post_highs) if post_highs else current_price
         # For shorts, also enforce a tight 6% squeeze cap above entry if stop is wide
-        effective_short_stop = min(stop, entry * Decimal("1.06")) if entry else stop
+        stop_entry = locked_entry if has_locked_reference else entry
+        effective_short_stop = min(stop, stop_entry * Decimal("1.06")) if stop_entry else stop
         if current_price >= effective_short_stop or max_high_since_scan >= effective_short_stop:
             return RadarLifecycleDecision(
                 retained=False,
@@ -434,46 +462,40 @@ def evaluate_radar_candidate_lifecycle(
     allow_breakout_trigger = execution_mode != "WAIT_FOR_RETEST_ONLY"
     allow_retest_trigger = execution_mode != "CEILING_BREAKOUT"
 
-    prior_trigger = _parse_iso(candidate.get("radar_triggered_at"))
-    triggered_at = (
-        prior_trigger if prior_trigger and evaluated_at <= prior_trigger <= ref_now else None
-    )
-    raw_prior_basis = str(candidate.get("radar_trigger_basis", "")).lower()
-    first_trigger_basis: str | None = (
-        raw_prior_basis if (triggered_at is not None and raw_prior_basis in ("retest", "breakout")) else None
-    )
+    first_trigger_basis = raw_prior_basis if has_locked_reference else None
     deadline = evaluated_at + timedelta(hours=max_age_hours)
-    for c in sorted(post_scan_candles, key=lambda c: int(c["time"])):
-        if int(c["time"]) > int(deadline.timestamp()):
-            continue
-        high, low, close = (_to_dec(c.get(k)) for k in ("high", "low", "close"))
-        breakout = (
-            allow_breakout_trigger
-            and trigger is not None
-            and (
-                (not is_short and high is not None and high >= trigger)
-                or (is_short and low is not None and low <= trigger)
+    # Previously triggered legacy episodes with no saved basis stay unknown.
+    # New episodes select their basis once and persist it through the service.
+    if triggered_at is None:
+        for c in sorted(post_scan_candles, key=lambda c: int(c["time"])):
+            if int(c["time"]) > int(deadline.timestamp()):
+                continue
+            high, low, close = (_to_dec(c.get(k)) for k in ("high", "low", "close"))
+            breakout = (
+                allow_breakout_trigger
+                and trigger is not None
+                and (
+                    (not is_short and high is not None and high >= trigger)
+                    or (is_short and low is not None and low <= trigger)
+                )
             )
-        )
-        # A retest requires the entire candle to open after discovery and close
-        # favorably after touching entry; this is an observation, not a fill model.
-        retest = (
-            allow_retest_trigger
-            and entry is not None
-            and high is not None
-            and low is not None
-            and close is not None
-            and (
-                (not is_short and low <= entry and close >= entry * Decimal("1.018"))
-                or (is_short and high >= entry and close <= entry * Decimal("0.982"))
+            # A retest requires the entire candle to open after discovery and close
+            # favorably after touching entry; this is an observation, not a fill model.
+            retest = (
+                allow_retest_trigger
+                and entry is not None
+                and high is not None
+                and low is not None
+                and close is not None
+                and (
+                    (not is_short and low <= entry and close >= entry * Decimal("1.018"))
+                    or (is_short and high >= entry and close <= entry * Decimal("0.982"))
+                )
             )
-        )
-        if breakout or retest:
-            if triggered_at is None:
+            if breakout or retest:
                 triggered_at = datetime.fromtimestamp(int(c["time"]), UTC)
-            if first_trigger_basis is None:
                 first_trigger_basis = "retest" if retest else "breakout"
-            break
+                break
     if (
         triggered_at is None
         and ref_now < deadline
@@ -482,14 +504,42 @@ def evaluate_radar_candidate_lifecycle(
         and ((not is_short and current_price >= trigger) or (is_short and current_price <= trigger))
     ):
         triggered_at = ref_now
-        if first_trigger_basis is None:
-            first_trigger_basis = "breakout"
+        first_trigger_basis = "breakout"
 
-    trigger_entry_basis: Decimal | None = (
-        trigger
-        if (first_trigger_basis == "breakout" and trigger is not None and trigger > Decimal("0"))
-        else entry
-    )
+    trigger_entry_basis = locked_entry if has_locked_reference else None
+    trigger_stop_basis = locked_stop if has_locked_reference else None
+    if first_trigger_basis is not None and not has_locked_reference:
+        trigger_entry_basis = trigger if first_trigger_basis == "breakout" else entry
+        trigger_stop_basis = _to_dec(candidate.get(f"{first_trigger_basis}_stop")) or stop
+        if (trigger_entry_basis is None or trigger_stop_basis is None
+                or trigger_entry_basis <= 0 or trigger_stop_basis <= 0
+                or (trigger_stop_basis <= trigger_entry_basis if is_short
+                    else trigger_stop_basis >= trigger_entry_basis)):
+            first_trigger_basis = None
+            trigger_entry_basis = trigger_stop_basis = None
+
+    # A newly observed trigger must enforce its own stop in this evaluation too.
+    if not has_locked_reference and triggered_at is not None and trigger_stop_basis is not None:
+        after_trigger = [c for c in post_scan_candles
+                         if int(c.get("opened_time", int(c["time"]) - 3600)) >= triggered_at.timestamp()]
+        effective_stop = trigger_stop_basis
+        if is_short and trigger_entry_basis is not None:
+            effective_stop = min(effective_stop, trigger_entry_basis * Decimal("1.06"))
+        extremes = _extract_decimals_from_candles(after_trigger, "high" if is_short else "low")
+        stopped = (max([current_price, *extremes]) >= effective_stop if is_short
+                   else min([current_price, *extremes]) <= effective_stop)
+        if stopped:
+            return RadarLifecycleDecision(
+                retained=False,
+                state=RadarLifecycleState.INVALIDATED,
+                label="SHORT SQUEEZED" if is_short else "STOP HIT",
+                reason="short_stop_loss_breached" if is_short else "long_stop_loss_breached",
+                current_price=current_price,
+                triggered_at=triggered_at.isoformat(),
+                trigger_basis=first_trigger_basis,
+                trigger_entry_price=trigger_entry_basis,
+                trigger_stop_price=trigger_stop_basis,
+            )
 
     pnl_pct: Decimal | None = None
     if trigger_entry_basis is not None and trigger_entry_basis > Decimal("0"):
@@ -542,6 +592,9 @@ def evaluate_radar_candidate_lifecycle(
             failed_gates=failed_gates,
             updated_checklist=updated_checklist,
             triggered_at=triggered_at.isoformat(),
+            trigger_basis=first_trigger_basis or "unknown",
+            trigger_entry_price=trigger_entry_basis,
+            trigger_stop_price=trigger_stop_basis,
         )
     at_entry_shelf = any(
         level is not None and level > 0 and abs(current_price - level) / level <= tolerance

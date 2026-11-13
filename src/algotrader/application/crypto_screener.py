@@ -37,8 +37,10 @@ from algotrader.domain.discovery_features import (
     discovery_watch_selection,
 )
 from algotrader.domain.execution_brackets import (
+    InvalidExecutionBracket,
     build_long_bracket,
     build_short_bracket,
+    valid_execution_prices,
 )
 from algotrader.domain.indicators import (
     IndicatorSnapshot,
@@ -632,6 +634,9 @@ class CryptoOpportunityScreener:
                 self._note(symbol, "stage2", "enrichment_unavailable_or_no_setup")
             if isinstance(enriched, CryptoOpportunity):
                 opp = enriched
+                if not valid_execution_prices(opp.direction, opp.suggested_entry, opp.suggested_stop, opp.suggested_targets):
+                    self._note(symbol, "publication", "publication:invalid_execution_prices")
+                    continue
                 self._note(symbol, "pre_publication", "evaluated", candidate=opp.as_dict())
                 eff_score = opp.conviction if opp.conviction is not None else opp.score
                 if min_score is not None:
@@ -1447,20 +1452,24 @@ class CryptoOpportunityScreener:
             return None
 
         # 5-Level Execution Bracket (Normalized with tick_size and Execution Mode Split)
-        bracket = build_long_bracket(
-            close=close,
-            ema50_4h=ema50_4h,
-            poc_30d=poc_price,
-            atr14_4h=atr14_4h,
-            local_compression_high_4h=local_swing_high_4h,
-            swing_low_4h=swing_low_4h,
-            high_30d=high_30d,
-            vah_30d=vah_price,
-            val_30d=val_price,
-            tick_size=inst.price_tick,
-            resistance_absorption_score=Decimal(str(absorption_score)),
-            handle_low_4h=handle_low_4h,
-        )
+        try:
+            bracket = build_long_bracket(
+                close=close,
+                ema50_4h=ema50_4h,
+                poc_30d=poc_price,
+                atr14_4h=atr14_4h,
+                local_compression_high_4h=local_swing_high_4h,
+                swing_low_4h=swing_low_4h,
+                high_30d=high_30d,
+                vah_30d=vah_price,
+                val_30d=val_price,
+                tick_size=inst.price_tick,
+                resistance_absorption_score=Decimal(str(absorption_score)),
+                handle_low_4h=handle_low_4h,
+            )
+        except InvalidExecutionBracket as exc:
+            self._note(inst.id.symbol, "accumulation_rejection", "invalid_execution_bracket", detail=str(exc))
+            return None
 
         # Continuous Multi-Factor Quant Scoring (5 Institutional Pillars)
         # 4H DMI values for coiled ignition inflection (Task 3)
@@ -1712,6 +1721,8 @@ class CryptoOpportunityScreener:
             atr14=atr14,
             suggested_entry=bracket.suggested_entry,
             suggested_stop=bracket.invalidation_stop,
+            retest_stop=bracket.retest_stop if bracket.retest_stop > 0 else None,
+            breakout_stop=bracket.breakout_stop if bracket.breakout_stop > 0 else None,
             suggested_targets=bracket.targets,
             risk_reward_ratio=bracket.r_t1 if close < poc_price else bracket.r_t2,
             risk_reward_target_index=1 if close < poc_price else 2,
@@ -1989,18 +2000,22 @@ class CryptoOpportunityScreener:
             return None
 
         # 10. 5-Level Execution Bracket Construction with Tick-Size Normalization
-        bracket = build_short_bracket(
-            close=close,
-            ema50_4h=ema50_4h,
-            poc_30d=poc_price,
-            atr14_4h=atr14_4h,
-            local_consolidation_low_4h=local_consolidation_low_4h,
-            swing_high_4h=swing_high_4h,
-            low_30d=low_30d,
-            vah_30d=vah_price,
-            val_30d=val_price,
-            tick_size=inst.price_tick,
-        )
+        try:
+            bracket = build_short_bracket(
+                close=close,
+                ema50_4h=ema50_4h,
+                poc_30d=poc_price,
+                atr14_4h=atr14_4h,
+                local_consolidation_low_4h=local_consolidation_low_4h,
+                swing_high_4h=swing_high_4h,
+                low_30d=low_30d,
+                vah_30d=vah_price,
+                val_30d=val_price,
+                tick_size=inst.price_tick,
+            )
+        except InvalidExecutionBracket as exc:
+            self._note(inst.id.symbol, "distribution_rejection", "invalid_execution_bracket", detail=str(exc))
+            return None
 
         # 11. Multi-Factor Scoring (0 to 100 via Continuous Short Factor Engine)
         adx_subscore = calculate_adx_subscore(
@@ -2197,6 +2212,7 @@ class CryptoOpportunityScreener:
             evaluated_at=self._evaluated_at or datetime.now(UTC),
             instrument=inst,
             direction=Direction.SHORT,
+            execution_mode=bracket.execution_mode,
             regime=CryptoMarketRegime.VOLATILITY_SQUEEZE if bb_inside_kc else CryptoMarketRegime.MEAN_REVERTING_RANGE,
             setup_label=archetype,
             score=final_score,
@@ -2205,6 +2221,8 @@ class CryptoOpportunityScreener:
             atr14=atr14,
             suggested_entry=bracket.suggested_entry,
             suggested_stop=bracket.invalidation_stop,
+            retest_stop=bracket.retest_stop if bracket.retest_stop > 0 else None,
+            breakout_stop=bracket.breakout_stop if bracket.breakout_stop > 0 else None,
             suggested_targets=bracket.targets,
             risk_reward_ratio=bracket.r_t2,
             estimated_win_rate_pct=(p_win * Decimal("100.0")).quantize(Decimal("0.1")),

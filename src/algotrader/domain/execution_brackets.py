@@ -1,11 +1,26 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
-from algotrader.domain.precision import floor_to_increment, normalize_price
+from algotrader.domain.models import Direction
+from algotrader.domain.precision import ceil_to_increment, floor_to_increment, normalize_price
 
 EPSILON = Decimal("1e-8")
+
+
+class InvalidExecutionBracket(ValueError):
+    """The structural plan cannot produce positive, ordered execution prices."""
+
+
+def valid_execution_prices(
+    direction: Direction, entry: Decimal, stop: Decimal, targets: Sequence[Decimal],
+) -> bool:
+    levels = (stop, entry, *targets) if direction is Direction.LONG else (*reversed(targets), entry, stop)
+    return bool(targets) and all(p.is_finite() and p > 0 for p in levels) and all(
+        left < right for left, right in zip(levels, levels[1:], strict=False)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,9 +95,7 @@ def build_long_bracket(
 
     if close < poc_30d:
         # Case 0 — Below POC Accumulation (between VAL and POC): Immediate overhead resistance is POC, not VAH!
-        raw_breakout_trigger = min(local_compression_high_4h, close * Decimal("1.08"))
-        if raw_breakout_trigger <= close:
-            raw_breakout_trigger = close + max(tick_size, atr * Decimal("0.05"))
+        raw_breakout_trigger = max(local_compression_high_4h, poc_30d, close) + Decimal("0.05") * atr
         raw_t1 = poc_30d
         raw_t2 = vah_30d
         raw_t3 = max(high_30d, vah_30d + Decimal("1.5") * atr)
@@ -104,9 +117,9 @@ def build_long_bracket(
             raw_t2 = swing_low_4h + Decimal("1.618") * swing_range
             raw_t3 = swing_low_4h + Decimal("2.618") * swing_range
 
-    breakout_trigger = normalize_price(raw_breakout_trigger, tick_size)
+    breakout_trigger = ceil_to_increment(raw_breakout_trigger, tick_size)
     if breakout_trigger <= close:
-        breakout_trigger = normalize_price(close + max(tick_size, atr * Decimal("0.05")), tick_size)
+        breakout_trigger = ceil_to_increment(close + tick_size, tick_size)
 
     # When close < poc_30d, Target 1 is strictly capped at poc_price unless poc is at/below trigger
     if close < poc_30d:
@@ -230,6 +243,9 @@ def build_long_bracket(
         if invalidation_stop >= suggested_entry:
             invalidation_stop = floor_to_increment(suggested_entry - tick_size, tick_size)
 
+    if not valid_execution_prices(Direction.LONG, suggested_entry, invalidation_stop, (t1, t2, t3)):
+        raise InvalidExecutionBracket("long bracket requires positive stop < entry < ordered targets")
+
     # Compute r_t1, r_t2, r_t3, asymmetric_rr strictly from unified effective_entry and risk_unit
     r_t1 = ((t1 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
     r_t2 = ((t2 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
@@ -337,7 +353,7 @@ def build_short_bracket(
 
     # Normalize with tick_size
     retest_entry = normalize_price(raw_retest_entry, tick_size)
-    breakout_trigger = normalize_price(raw_breakdown_trigger, tick_size)
+    breakout_trigger = floor_to_increment(raw_breakdown_trigger, tick_size)
     invalidation_stop = normalize_price(raw_invalidation_stop, tick_size)
     effective_entry = normalize_price(raw_effective_entry, tick_size)
     t1 = normalize_price(raw_t1, tick_size)
@@ -352,7 +368,7 @@ def build_short_bracket(
     if invalidation_stop <= retest_entry:
         invalidation_stop = normalize_price(retest_entry + tick_size, tick_size)
     if breakout_trigger >= close:
-        breakout_trigger = normalize_price(close - tick_size, tick_size)
+        breakout_trigger = floor_to_increment(close - tick_size, tick_size)
     if t1 >= breakout_trigger:
         t1 = normalize_price(breakout_trigger - tick_size, tick_size)
     if t2 >= t1:
@@ -373,6 +389,10 @@ def build_short_bracket(
 
     effective_entry = suggested_entry
     risk_unit = max(invalidation_stop - effective_entry, EPSILON)
+
+    if (breakout_trigger <= 0
+            or not valid_execution_prices(Direction.SHORT, suggested_entry, invalidation_stop, (t1, t2, t3))):
+        raise InvalidExecutionBracket("short bracket requires positive ordered targets < entry < stop")
 
     r_t1 = ((effective_entry - t1) / risk_unit).quantize(Decimal("0.01"))
     r_t2 = ((effective_entry - t2) / risk_unit).quantize(Decimal("0.01"))

@@ -37,7 +37,7 @@ portal_router = APIRouter(prefix="/api")
 # Global singleton cache for screener results & runtime
 _runtime_lock = asyncio.Lock()
 _shared_runtime: Runtime | None = None
-RADAR_PUBLICATION_VERSION = "radar-v3"
+RADAR_PUBLICATION_VERSION = "radar-v4"
 _screener_cache: dict[str, Any] = {}
 _cache_timestamp: datetime | None = None
 _cached_instruments: Any = None

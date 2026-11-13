@@ -164,6 +164,8 @@ class CryptoOpportunity:
     taker_ratio_24h: Decimal | None = None
     taker_ratio_window_hours: int | None = None
     risk_reward_target_index: int = 2
+    retest_stop: Decimal | None = None
+    breakout_stop: Decimal | None = None
 
     def as_dict(self) -> dict[str, object]:
         tick = self.instrument.price_tick
@@ -198,6 +200,8 @@ class CryptoOpportunity:
             "pullback_entry": _fmt(self.pullback_entry) if self.pullback_entry is not None else _fmt(self.suggested_entry),
             "breakout_trigger": _fmt(self.breakout_trigger) if self.breakout_trigger is not None else "N/A",
             "suggested_stop": _fmt(self.suggested_stop),
+            "retest_stop": _fmt(self.retest_stop),
+            "breakout_stop": _fmt(self.breakout_stop),
             "suggested_targets": [_fmt(t) for t in self.suggested_targets],
             "risk_reward_ratio": str(self.risk_reward_ratio),
             "risk_reward_target_index": self.risk_reward_target_index,

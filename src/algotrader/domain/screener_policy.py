@@ -4,10 +4,11 @@ from __future__ import annotations
 from decimal import Decimal
 
 from algotrader.domain.crypto_screener_models import CryptoOpportunity
+from algotrader.domain.execution_brackets import valid_execution_prices
 from algotrader.domain.models import Direction
 from algotrader.domain.scoring import OpportunityGrade
 
-SCREENING_POLICY_VERSION = "atlas-v2.7-data-contract-1"
+SCREENING_POLICY_VERSION = "atlas-v2.7-structural-brackets-2"
 COI_OVEREXTENDED_THRESHOLD = 75.0
 COI_OVERSOLD_THRESHOLD = 25.0
 COI_TIGHTENED_CONVICTION_FLOOR = Decimal("70.0")
@@ -19,6 +20,11 @@ def publication_rejection_reasons(
 ) -> tuple[str, ...]:
     """Evaluate the existing tiered quality policy without changing its thresholds."""
     reasons: list[str] = []
+    if not valid_execution_prices(
+        opportunity.direction, opportunity.suggested_entry,
+        opportunity.suggested_stop, opportunity.suggested_targets,
+    ):
+        return ("invalid_execution_prices",)
     score_floor = Decimal("71.0") if opportunity.is_discovery_tier else Decimal("68.0")
     conviction_floor = Decimal("69.0") if opportunity.is_discovery_tier else COI_STANDARD_CONVICTION_FLOOR
     effective_score = opportunity.conviction if opportunity.conviction is not None else opportunity.score

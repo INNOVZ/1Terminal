@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from algotrader.domain.execution_brackets import build_long_bracket, build_short_bracket
 from algotrader.domain.indicators import VolumeProfileBin
 from algotrader.domain.precision import decimal_places_from_tick_size
@@ -413,3 +415,40 @@ def test_triggers_never_move_inside_structural_resistance_or_support() -> None:
         tick_size=tick,
     )
     assert short_bracket.breakout_trigger < Decimal("90.00")
+
+
+@pytest.mark.parametrize("tick", [Decimal("1"), Decimal("0.01")])
+@pytest.mark.parametrize("poc", [Decimal("99"), Decimal("110")])
+def test_long_trigger_clears_structural_pivot_after_directional_rounding(tick, poc):
+    bracket = build_long_bracket(
+        close=Decimal("100"), ema50_4h=Decimal("98"), poc_30d=poc,
+        atr14_4h=Decimal("2"), local_compression_high_4h=Decimal("125"),
+        swing_low_4h=Decimal("95"), high_30d=Decimal("140"), vah_30d=Decimal("120"),
+        val_30d=Decimal("90"), tick_size=tick,
+    )
+    assert bracket.breakout_trigger > max(Decimal("125"), poc)
+    assert bracket.breakout_trigger % tick == 0
+
+
+@pytest.mark.parametrize("tick", [Decimal("1"), Decimal("0.01")])
+def test_short_trigger_clears_support_after_directional_rounding(tick):
+    bracket = build_short_bracket(
+        close=Decimal("100"), ema50_4h=Decimal("105"), poc_30d=Decimal("105"),
+        atr14_4h=Decimal("2"), local_consolidation_low_4h=Decimal("90"),
+        swing_high_4h=Decimal("106"), low_30d=Decimal("80"), vah_30d=Decimal("110"),
+        val_30d=Decimal("95"), tick_size=tick,
+    )
+    assert Decimal("0") < bracket.breakout_trigger < Decimal("90")
+    assert bracket.breakout_trigger % tick == 0
+
+
+def test_impossible_structural_stop_is_rejected_without_moving_the_structure():
+    from algotrader.domain.execution_brackets import InvalidExecutionBracket
+
+    with pytest.raises(InvalidExecutionBracket):
+        build_long_bracket(
+            close=Decimal("100"), ema50_4h=Decimal("98"), poc_30d=Decimal("99"),
+            atr14_4h=Decimal("2"), local_compression_high_4h=Decimal("125"),
+            swing_low_4h=Decimal("1"), high_30d=Decimal("130"), vah_30d=Decimal("105"),
+            val_30d=Decimal("90"), tick_size=Decimal("0.01"), resistance_absorption_score=Decimal("40"),
+        )
