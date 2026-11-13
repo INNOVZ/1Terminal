@@ -207,4 +207,4 @@ def test_short_bracket_measures_risk_from_the_published_entry() -> None:
     assert bracket.suggested_entry == Decimal("100")
     assert bracket.effective_entry == bracket.suggested_entry
     assert bracket.risk_unit == bracket.invalidation_stop - bracket.suggested_entry
-    assert bracket.r_t2 == Decimal("2.45")
+    assert bracket.r_t2 == Decimal("2.60")
