@@ -746,3 +746,41 @@ def test_final_target_after_expiry_is_not_a_retrospective_winner(lifecycle_case)
         evaluate_radar_candidate_lifecycle(c, current_price=Decimal("170"), now=now).state
         == RadarLifecycleState.EXPIRED
     )
+
+
+def test_breakout_without_retest_computes_pnl_from_breakout_trigger() -> None:
+    now = datetime(2026, 11, 7, 7, 0, tzinfo=UTC)
+    candidate = {
+        "symbol": "BRKUSDT",
+        "direction": "long",
+        "setup_label": "VCP_COMPRESSION_LONG",
+        "current_price": "100.00",
+        "suggested_entry": "95.00",
+        "breakout_trigger": "102.00",
+        "suggested_stop": "90.00",
+        "suggested_targets": ["110.00", "118.00", "126.00"],
+        "poc_price": "96.00",
+        "val_price": "92.00",
+        "vah_price": "101.00",
+        "evaluated_at": (now - timedelta(hours=4)).isoformat(),
+    }
+    candles = [
+        {
+            "time": int((now - timedelta(hours=1)).timestamp()),
+            "open": 100.5,
+            "high": 105.0,
+            "low": 99.5,  # Never touched 95.00 retest entry
+            "close": 104.04,
+            "volume": 5000,
+        },
+    ]
+    decision = evaluate_radar_candidate_lifecycle(
+        candidate,
+        current_price=Decimal("104.04"),
+        recent_candles_1h=candles,
+        now=now,
+    )
+    assert decision.retained is True
+    assert decision.state is RadarLifecycleState.IN_ACTIVE_TRADE
+    # (104.04 - 102.00) / 102.00 * 100 = 2.0% (not ~9.5% from unfilled 95.00 retest_entry)
+    assert decision.pnl_from_entry_pct == Decimal("2.0")

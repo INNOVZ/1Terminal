@@ -314,3 +314,71 @@ def test_invariant_4_high_rejection_risk_caps_setup_grade_to_grade_b() -> None:
 
     assert final_grade == OpportunityGrade.GRADE_B
     assert absorption_score <= 44.0
+
+
+def test_below_poc_ceiling_breakout_target1_never_inverts_below_entry() -> None:
+    """When close < poc_30d and local_compression_high_4h > poc_30d in CEILING_BREAKOUT mode,
+    t1 must remain strictly above effective_entry (never overwritten back to poc_30d below entry).
+    """
+    tick = Decimal("0.0001")
+    bracket = build_long_bracket(
+        close=Decimal("0.9800"),
+        ema50_4h=Decimal("0.9700"),
+        poc_30d=Decimal("1.0000"),
+        atr14_4h=Decimal("0.0200"),
+        local_compression_high_4h=Decimal("1.0300"),
+        swing_low_4h=Decimal("0.9300"),
+        handle_low_4h=Decimal("0.9600"),
+        high_30d=Decimal("1.0800"),
+        vah_30d=Decimal("1.0200"),
+        val_30d=Decimal("0.9400"),
+        tick_size=tick,
+        resistance_absorption_score=Decimal("75.0"),
+    )
+    assert bracket.execution_mode == "CEILING_BREAKOUT"
+    assert bracket.effective_entry == bracket.breakout_trigger
+    assert bracket.t1 > bracket.effective_entry
+    assert bracket.t2 > bracket.t1
+    assert bracket.t3 > bracket.t2
+    assert bracket.r_t1 > Decimal("0")
+
+
+def test_ceiling_breakout_uses_handle_low_4h_and_retest_stop_bounded() -> None:
+    """CEILING_BREAKOUT anchors handle stop to handle_low_4h rather than 7d swing_low_4h,
+    and RETEST_ACCUMULATION bounds runaway stops from deep swing lows.
+    """
+    tick = Decimal("0.01")
+    handle_bracket = build_long_bracket(
+        close=Decimal("100.00"),
+        ema50_4h=Decimal("98.00"),
+        poc_30d=Decimal("99.00"),
+        atr14_4h=Decimal("2.00"),
+        local_compression_high_4h=Decimal("101.50"),
+        swing_low_4h=Decimal("82.00"),
+        handle_low_4h=Decimal("97.50"),
+        high_30d=Decimal("108.00"),
+        vah_30d=Decimal("103.00"),
+        val_30d=Decimal("95.00"),
+        tick_size=tick,
+        resistance_absorption_score=Decimal("75.0"),
+    )
+    assert handle_bracket.execution_mode == "CEILING_BREAKOUT"
+    # Handle stop is near 97.50 - 0.40 = 97.10 (above the 82.00 base low)
+    assert handle_bracket.invalidation_stop > Decimal("95.00")
+
+    retest_bracket = build_long_bracket(
+        close=Decimal("100.00"),
+        ema50_4h=Decimal("98.00"),
+        poc_30d=Decimal("99.00"),
+        atr14_4h=Decimal("2.00"),
+        local_compression_high_4h=Decimal("104.00"),
+        swing_low_4h=Decimal("70.00"),
+        high_30d=Decimal("108.00"),
+        vah_30d=Decimal("106.00"),
+        val_30d=Decimal("95.00"),
+        tick_size=tick,
+        resistance_absorption_score=Decimal("55.0"),
+    )
+    assert retest_bracket.execution_mode == "RETEST_ACCUMULATION"
+    assert retest_bracket.invalidation_stop <= Decimal("95.00") - Decimal("0.20") * Decimal("2.00")
+    assert retest_bracket.invalidation_stop > Decimal("80.00")

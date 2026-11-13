@@ -1097,8 +1097,8 @@ class CryptoOpportunityScreener:
         exc_72h = (high_72h - low_72h) / max(low_72h, Decimal("1e-8"))
         dist_high_72h = (high_72h - close) / max(high_72h, Decimal("1e-8"))
 
-        # Base Window (up to 30 days of 4H bars)
-        base_window = closed_4h[-120:] if len(closed_4h) >= 120 else closed_4h
+        # Base & 30-Day Volume Profile Window (180 4H bars = 720 hours = 30 days)
+        base_window = closed_4h[-180:] if len(closed_4h) >= 180 else (closed_4h if closed_4h else closed_1h[-720:])
         high_30d = max(c.high for c in base_window)
         low_30d = min(c.low for c in base_window)
         if low_30d <= ZERO or high_30d <= low_30d:
@@ -1108,9 +1108,7 @@ class CryptoOpportunityScreener:
         low_24h = min(c.low for c in (closed_1h[-24:] if len(closed_1h) >= 24 else closed_1h))
         low_48h = min(c.low for c in (closed_1h[-48:] if len(closed_1h) >= 48 else closed_1h))
 
-        # 30-Day Volume Profile (using 180 4H bars = 720 hours = 30 days)
-        vp_window = closed_4h[-180:] if len(closed_4h) >= 180 else (closed_1h[-240:] if len(closed_1h) >= 240 else closed_1h)
-        vp = volume_profile(vp_window, bins=40)
+        vp = volume_profile(base_window, bins=50, tick_size=inst.price_tick)
         poc_price = vp.poc_price
         vah_price = vp.vah_price
         val_price = vp.val_price
@@ -1174,6 +1172,7 @@ class CryptoOpportunityScreener:
         # Swings & Indicators
         local_swing_high_4h = max(c.high for c in (closed_4h[-18:] if len(closed_4h) >= 18 else closed_4h))
         swing_low_4h = min(c.low for c in (closed_4h[-42:] if len(closed_4h) >= 42 else closed_4h))
+        handle_low_4h = min(c.low for c in (closed_4h[-12:] if len(closed_4h) >= 12 else closed_4h))
         macd_line_4h, macd_sig_4h, macd_hist_4h_series = macd(closes_4h)
         macd_hist_4h = macd_hist_4h_series[-1] if macd_hist_4h_series else ZERO
         macd_hist_4h_prev = macd_hist_4h_series[-2] if len(macd_hist_4h_series) >= 2 else ZERO
@@ -1458,6 +1457,7 @@ class CryptoOpportunityScreener:
             val_30d=val_price,
             tick_size=inst.price_tick,
             resistance_absorption_score=Decimal(str(absorption_score)),
+            handle_low_4h=handle_low_4h,
         )
 
         # Continuous Multi-Factor Quant Scoring (5 Institutional Pillars)
@@ -1786,8 +1786,8 @@ class CryptoOpportunityScreener:
         ema50_4h = ema(closes_4h, 50)[-1] if len(closes_4h) >= 50 else ema20_4h
 
         # 1. 30-Day VPVR Window (180 4H bars = 720 hours = 30 days)
-        vpvr_window = closed_4h[-180:] if len(closed_4h) >= 180 else (closed_1h[-240:] if len(closed_1h) >= 240 else closed_1h)
-        vp = volume_profile(vpvr_window, bins=40)
+        vpvr_window = closed_4h[-180:] if len(closed_4h) >= 180 else (closed_4h if closed_4h else closed_1h[-720:])
+        vp = volume_profile(vpvr_window, bins=50, tick_size=inst.price_tick)
         poc_price = vp.poc_price
         vah_price = vp.vah_price
         val_price = vp.val_price
@@ -2374,8 +2374,8 @@ class CryptoOpportunityScreener:
             # 2. Mandatory Value Acceptance: Price MUST be accepted at or above 30d POC
             # Tokens trading below POC (e.g. NILUSDT) have trapped overhead supply -> reject!
             if closed_4h:
-                base_window = closed_4h[-120:] if len(closed_4h) >= 120 else closed_4h
-                vp = volume_profile(base_window, bins=50)
+                base_window = closed_4h[-180:] if len(closed_4h) >= 180 else closed_4h
+                vp = volume_profile(base_window, bins=50, tick_size=inst.price_tick)
                 if close < (vp.poc_price * Decimal("0.985")):
                     return None
         else:
@@ -2746,8 +2746,8 @@ class CryptoOpportunityScreener:
         )
 
         adv_7d, adv_14d, vol_contraction_ratio = volume_contraction_metrics(closed_1h, 7, 14)
-        vp_window = closed_4h[-60:] if len(closed_4h) >= 60 else closed_4h
-        vp = volume_profile(vp_window, bins=50)
+        vp_window = closed_4h[-180:] if len(closed_4h) >= 180 else closed_4h
+        vp = volume_profile(vp_window, bins=50, tick_size=inst.price_tick)
         oi_change_7d = derivatives.open_interest_change_7d if derivatives else None
 
         if is_long:

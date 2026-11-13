@@ -429,20 +429,14 @@ def evaluate_radar_candidate_lifecycle(
     )
 
     # 4. Classify Active Trade State (AT_ENTRY_ZONE vs IN_ACTIVE_TRADE vs ACTIVE_COIL)
-    pnl_pct: Decimal | None = None
-    if entry is not None and entry > Decimal("0"):
-        raw_pnl = (
-            ((current_price - entry) / entry * Decimal("100"))
-            if not is_short
-            else ((entry - current_price) / entry * Decimal("100"))
-        )
-        pnl_pct = raw_pnl.quantize(Decimal("0.1"))
-
     # Trigger is an observed setup event, never an assertion of an executed fill.
     prior_trigger = _parse_iso(candidate.get("radar_triggered_at"))
     triggered_at = (
         prior_trigger if prior_trigger and evaluated_at <= prior_trigger <= ref_now else None
     )
+    trigger_entry_basis: Decimal | None = entry
+    retest_observed = False
+    breakout_observed = False
     deadline = evaluated_at + timedelta(hours=max_age_hours)
     for c in sorted(post_scan_candles, key=lambda c: int(c["time"])):
         if int(c["time"]) > int(deadline.timestamp()):
@@ -464,6 +458,10 @@ def evaluate_radar_candidate_lifecycle(
                 or (is_short and high >= entry and close <= entry * Decimal("0.982"))
             )
         )
+        if retest:
+            retest_observed = True
+        if breakout:
+            breakout_observed = True
         if triggered_at is None and (breakout or retest):
             triggered_at = datetime.fromtimestamp(int(c["time"]), UTC)
     if (
@@ -473,6 +471,19 @@ def evaluate_radar_candidate_lifecycle(
         and ((not is_short and current_price >= trigger) or (is_short and current_price <= trigger))
     ):
         triggered_at = ref_now
+        breakout_observed = True
+
+    if breakout_observed and not retest_observed and trigger is not None and trigger > Decimal("0"):
+        trigger_entry_basis = trigger
+
+    pnl_pct: Decimal | None = None
+    if trigger_entry_basis is not None and trigger_entry_basis > Decimal("0"):
+        raw_pnl = (
+            ((current_price - trigger_entry_basis) / trigger_entry_basis * Decimal("100"))
+            if not is_short
+            else ((trigger_entry_basis - current_price) / trigger_entry_basis * Decimal("100"))
+        )
+        pnl_pct = raw_pnl.quantize(Decimal("0.1"))
     # Expired, never-triggered setups cannot become retrospective target winners.
     if triggered_at is not None or ref_now < deadline:
         # 2. Target Completion Check (Graduated after reaching Target 2 / Target 3)

@@ -215,3 +215,26 @@ def test_volume_contraction_metrics() -> None:
     assert adv_14d > Decimal("0")
     assert ratio > Decimal("0")
 
+
+def test_volume_profile_tick_size_snapping() -> None:
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    candles = [
+        Candle(
+            opened_at=base + timedelta(hours=4 * i),
+            closed_at=base + timedelta(hours=4 * (i + 1)),
+            open=Decimal("10.0") + Decimal(i % 3) * Decimal("0.2"),
+            high=Decimal("10.8") + Decimal(i % 3) * Decimal("0.2"),
+            low=Decimal("9.8") + Decimal(i % 3) * Decimal("0.2"),
+            close=Decimal("10.3") + Decimal(i % 3) * Decimal("0.2"),
+            volume=Decimal("1000"),
+            quote_volume=Decimal("10300"),
+        )
+        for i in range(30)
+    ]
+    tick = Decimal("0.01")
+    vp = volume_profile(candles, bins=50, tick_size=tick)
+    assert vp.poc_price % tick == Decimal("0")
+    assert vp.vah_price % tick == Decimal("0")
+    assert vp.val_price % tick == Decimal("0")
+    assert vp.val_price <= vp.poc_price <= vp.vah_price
+

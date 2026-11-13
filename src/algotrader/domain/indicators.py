@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from algotrader.domain.models import Candle, Direction
+from algotrader.domain.precision import normalize_price
 
 ZERO = Decimal("0")
 HUNDRED = Decimal("100")
@@ -830,6 +831,7 @@ def volume_profile(
     candles: Sequence[Candle],
     bins: int = 50,
     value_area_pct: Decimal = Decimal("0.70"),
+    tick_size: Decimal | None = None,
 ) -> VolumeProfile:
     """Compute Fixed Range Triangular Kernel Volume Profile (POC, VAH, VAL) over candles.
 
@@ -893,16 +895,23 @@ def volume_profile(
     up = poc_idx + 1
     down = poc_idx - 1
     while cur_vol < target_vol and (up < bins or down >= 0):
-        up_vol = bin_volumes[up] if up < bins else -1.0
-        down_vol = bin_volumes[down] if down >= 0 else -1.0
-        if up_vol >= down_vol and up < bins:
-            va_indices.add(up)
-            cur_vol += up_vol
-            up += 1
+        # Standard Market Profile 2-bin step comparison avoids stalling on a single-bin LVN
+        up_pair = (bin_volumes[up] if up < bins else -1.0) + (bin_volumes[up + 1] if up + 1 < bins else 0.0)
+        down_pair = (bin_volumes[down] if down >= 0 else -1.0) + (bin_volumes[down - 1] if down - 1 >= 0 else 0.0)
+        if up_pair >= down_pair and up < bins:
+            for _ in range(2):
+                if up >= bins or cur_vol >= target_vol:
+                    break
+                va_indices.add(up)
+                cur_vol += bin_volumes[up]
+                up += 1
         elif down >= 0:
-            va_indices.add(down)
-            cur_vol += down_vol
-            down -= 1
+            for _ in range(2):
+                if down < 0 or cur_vol >= target_vol:
+                    break
+                va_indices.add(down)
+                cur_vol += bin_volumes[down]
+                down -= 1
         else:
             break
 
@@ -910,6 +919,10 @@ def volume_profile(
     poc_volume = Decimal(str(round(bin_volumes[poc_idx], 2)))
     vah_price = Decimal(str(round(bin_mids[max(va_indices)], 8)))
     val_price = Decimal(str(round(bin_mids[min(va_indices)], 8)))
+    if tick_size is not None and tick_size > ZERO:
+        poc_price = normalize_price(poc_price, tick_size)
+        vah_price = max(poc_price, normalize_price(vah_price, tick_size))
+        val_price = min(poc_price, normalize_price(val_price, tick_size))
     total_volume_d = Decimal(str(round(total_vol, 2)))
     value_area_volume_d = Decimal(str(round(cur_vol, 2)))
 
