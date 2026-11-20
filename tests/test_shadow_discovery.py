@@ -191,6 +191,7 @@ def test_setup_inventory_keeps_short_and_funding_families():
     for name, member in SetupLabel.__members__.items():
         assert setup_family(name) == setup_family(member.value)
     assert setup_family("FUNDING_SQUEEZE_SPRING_LONG") == "positioning_squeeze"
+    assert setup_family("RECOVERY_RECLAIM_LONG") == "recovery_research"
     for label in [
         "UTAD_DIVERGENCE_SHORT",
         "EXHAUSTION_REVERSAL_SHORT",

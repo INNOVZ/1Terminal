@@ -156,7 +156,7 @@ function VerificationPanel({
           if (currPrice >= poc) {
             detail = `Accepted above 30d POC ($${poc.toFixed(decimals)}, +${pocDiffPct.toFixed(1)}%)${vahStr}`;
           } else if (item.passed) {
-            detail = `Testing 30d POC shelf ($${poc.toFixed(decimals)}, ${pocDiffPct.toFixed(1)}%)${vahStr}`;
+            detail = `Holding Value Area Base -> POC ($${poc.toFixed(decimals)}, ${pocDiffPct.toFixed(1)}%)${valStr}${vahStr}`;
           } else {
             detail = `Below 30d POC ($${poc.toFixed(decimals)}, ${pocDiffPct.toFixed(1)}%)${valStr}`;
           }
@@ -992,6 +992,35 @@ function VerificationPanel({
               </span>
             </div>
           </div>
+          {opportunity.conviction_factors && (
+            <div
+              style={{
+                marginTop: "6px",
+                padding: "6px 10px",
+                borderRadius: "6px",
+                background: "rgba(255, 255, 255, 0.02)",
+                border: "1px solid var(--border-subtle)",
+                fontFamily: "var(--font-mono)",
+                fontSize: "10px",
+                color: "var(--text-muted)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span>
+                Conviction Checklist:{" "}
+                <strong style={{ color: "var(--accent-emerald)" }}>
+                  {opportunity.conviction_factors.passed_count ?? 5}/5
+                </strong>
+              </span>
+              <span>
+                {opportunity.failed_factors && opportunity.failed_factors.length > 0
+                  ? `Override: ${opportunity.failed_factors.join(", ")}`
+                  : "All 5 Factors Confirmed"}
+              </span>
+            </div>
+          )}
         </div>
       )}
 

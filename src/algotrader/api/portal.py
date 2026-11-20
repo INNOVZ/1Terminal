@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import secrets
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -13,16 +14,18 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from algotrader.application.macro_service import MacroIntelligenceService
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from algotrader.application.radar_service import reconcile_radar_cohort
+from algotrader.application.top_gainer_short_watch import TopGainerShortWatchService
 from algotrader.application.watchlist_service import WatchlistService
 from algotrader.config import Settings, load_settings
 from algotrader.domain.crypto_screener_models import (
     ScreenerMode,
     calculate_opportunity_win_rate_and_ev,
 )
+from algotrader.domain.errors import ConfigurationError
 from algotrader.domain.radar_lifecycle import (
     RadarLifecycleState,
     same_radar_episode,
@@ -31,6 +34,7 @@ from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
 from algotrader.domain.watchlist_models import WatchlistItem, WatchlistPriority, WyckoffStage
 from algotrader.infrastructure.persistence import atomic_write_json
 from algotrader.infrastructure.runtime import Runtime, build_runtime
+from algotrader.infrastructure.top_gainer_short_watch import TopGainerShortWatchStore
 
 portal_router = APIRouter(prefix="/api")
 
@@ -42,6 +46,30 @@ _screener_cache: dict[str, Any] = {}
 _cache_timestamp: datetime | None = None
 _cached_instruments: Any = None
 _watchlist_service = WatchlistService()
+_short_watch_lock = asyncio.Lock()
+_short_watch_service: TopGainerShortWatchService | None = None
+
+
+def _get_short_watch_service(runtime: Runtime | None = None) -> TopGainerShortWatchService:
+    global _short_watch_service
+    if _short_watch_service is None:
+        settings = runtime.settings if runtime is not None else load_settings()
+        macro_provider = runtime.macro_provider if runtime is not None else None
+        store = TopGainerShortWatchStore(Path("atlas_state.sqlite3"))
+        _short_watch_service = TopGainerShortWatchService(
+            store, settings, macro_provider=macro_provider
+        )
+    return _short_watch_service
+
+
+async def _run_short_watch_cycle() -> dict[str, Any]:
+    async with _short_watch_lock:
+        runtime = await get_portal_runtime()
+        service = _get_short_watch_service(runtime)
+        return await service.run_cycle(
+            runtime.futures_market,
+            derivatives_port=runtime.futures_market,
+        )
 
 
 async def get_portal_runtime(settings: Settings | None = None) -> Runtime:
@@ -258,12 +286,14 @@ async def _do_crypto_screen(
                     o.setdefault("failed_gates", [])
                 deduped_opps.append(o)
 
+        cached_prior = list(_screener_cache.get("opportunities", []))
+        prior_policy_current = _screener_cache.get("screening_policy_version") == SCREENING_POLICY_VERSION
         prior_by_base = {
             str(
                 p.get("base_asset")
                 or str(p.get("symbol", "")).removesuffix("USDT").removesuffix("USDC")
             ): p
-            for p in _screener_cache.get("opportunities", [])
+            for p in cached_prior if prior_policy_current
         }
         for fresh in deduped_opps:
             base = str(
@@ -281,11 +311,17 @@ async def _do_crypto_screen(
 
         # Reconcile previously discovered radar candidates so active trades (AT_ENTRY_ZONE,
         # IN_ACTIVE_TRADE, ACTIVE_COIL) are retained until they hit stop loss or final target.
-        prior_opps = (
-            list(_screener_cache.get("opportunities", []))
-            if isinstance(_screener_cache, dict)
-            else []
-        )
+        prior_opps = cached_prior if prior_policy_current else []
+        if not prior_policy_current:
+            radar_events.extend(
+                {
+                    "symbol": candidate.get("symbol"), "at": now.isoformat(),
+                    "state": "POLICY_CHANGED", "retained": False,
+                    "reason": "screening_policy_changed_requires_fresh_qualification",
+                    "candidate": {k: v for k, v in candidate.items() if k != "candles"},
+                }
+                for candidate in cached_prior
+            )
         raw_retained_prior = await reconcile_radar_cohort(
             prior_opportunities=prior_opps,
             seen_bases=set(),
@@ -508,7 +544,11 @@ async def get_live_screener(
         warm_screener_cache()
 
     # Refresh older publication policies before exposing their cached candidates.
-    if not _screener_cache or _screener_cache.get("radar_lifecycle_version") != RADAR_PUBLICATION_VERSION:
+    if (
+        not _screener_cache
+        or _screener_cache.get("radar_lifecycle_version") != RADAR_PUBLICATION_VERSION
+        or _screener_cache.get("screening_policy_version") != SCREENING_POLICY_VERSION
+    ):
         async with _screener_task_lock:
             if _screener_task is None or _screener_task.done():
                 _screener_task = asyncio.create_task(
@@ -582,6 +622,7 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
         not _screener_cache
         or cache_age_hours >= float(interval_hours)
         or _screener_cache.get("radar_lifecycle_version") != RADAR_PUBLICATION_VERSION
+        or _screener_cache.get("screening_policy_version") != SCREENING_POLICY_VERSION
     ):
         try:
             async with _screener_task_lock:
@@ -591,6 +632,8 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
                     )
             if _screener_task:
                 await _screener_task
+            with contextlib.suppress(Exception):
+                await _run_short_watch_cycle()
         except Exception as init_exc:
             print(f"❌ [Cron] Initial startup refresh error: {init_exc}")
 
@@ -610,6 +653,8 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
                 f"🚀 [Cron] Waking up for aligned {interval_hours}-hour USD-M screener sweep (all liquid contracts)..."
             )
             await _do_crypto_screen(mode="all", min_score=50.0, max_symbols=320)
+            with contextlib.suppress(Exception):
+                await _run_short_watch_cycle()
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -634,7 +679,7 @@ def start_screener_cron(interval_hours: int = 4) -> None:
 
 async def stop_portal() -> None:
     """Cancel scans before closing their shared public-data clients."""
-    global _cron_task, _screener_task, _shared_runtime, _cached_instruments
+    global _cron_task, _screener_task, _shared_runtime, _cached_instruments, _short_watch_service
     global _cache_timestamp, _last_cron_run, _next_cron_run
     tasks = [task for task in (_cron_task, _screener_task) if task is not None]
     for task in tasks:
@@ -642,6 +687,7 @@ async def stop_portal() -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
     _cron_task = None
     _screener_task = None
+    _short_watch_service = None
     async with _runtime_lock:
         if _shared_runtime is not None:
             await _shared_runtime.close()
@@ -649,6 +695,25 @@ async def stop_portal() -> None:
     _cached_instruments = None
     _screener_cache.clear()
     _cache_timestamp = _last_cron_run = _next_cron_run = None
+
+
+@portal_router.get("/screener/short-watch")
+async def get_short_watch() -> dict[str, Any]:
+    """Returns bounded Top-Gainer Short Watch episodes (never alters live 5/5 publication)."""
+    service = _get_short_watch_service()
+    return service.snapshot()
+
+
+@portal_router.post("/screener/short-watch/tick")
+async def trigger_short_watch_tick(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Operator-only manual cycle; public readers cannot enqueue market scans."""
+    try:
+        token = load_settings().require_operator_token()
+    except ConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="Manual research refresh is not configured") from exc
+    if authorization is None or not secrets.compare_digest(authorization.encode(), f"Bearer {token}".encode()):
+        raise HTTPException(status_code=401, detail="Operator authentication required")
+    return await _run_short_watch_cycle()
 
 
 @portal_router.get("/screener/cron/status")

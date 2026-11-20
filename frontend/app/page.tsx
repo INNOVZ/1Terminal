@@ -21,6 +21,7 @@ interface ScreenerResponse {
   qualifying_count?: number;
   macro_narrative?: string;
   is_scanning?: boolean;
+  screening_policy_version?: string;
   opportunities?: Opportunity[];
 }
 
@@ -189,6 +190,7 @@ function RadarPageContent() {
   const [loading, setLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [scanNotification, setScanNotification] = useState<string | null>(null);
+  const [policyVersion, setPolicyVersion] = useState<string>("atlas-v3.1-discovery-guards-1");
   const [showLeftSidebar, setShowLeftSidebar] = useState(true);
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [adaptedLevelsMap, setAdaptedLevelsMap] = useState<
@@ -303,6 +305,9 @@ function RadarPageContent() {
     }
 
     const applyScreenerData = async (incoming: ScreenerResponse) => {
+      if (incoming?.screening_policy_version) {
+        setPolicyVersion(incoming.screening_policy_version);
+      }
       if (!incoming || !incoming.opportunities || incoming.opportunities.length === 0) return;
       const enriched: Opportunity[] = incoming.opportunities.map((o: Opportunity) => ({
         ...o,
@@ -1221,6 +1226,7 @@ function RadarPageContent() {
                 </strong>
               </div>
               <div
+                title={`Active Policy: ${policyVersion}`}
                 style={{
                   background: "rgba(244, 157, 13, 0.12)",
                   color: "#f49d0d",
@@ -1232,9 +1238,11 @@ function RadarPageContent() {
                   display: "flex",
                   alignItems: "center",
                   gap: "4px",
+                  letterSpacing: "0.04em",
                 }}
               >
                 <Zap size={11} />
+                <span>ATLAS v3.1</span>
               </div>
             </div>
           )}

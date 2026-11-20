@@ -199,9 +199,13 @@ async def compare_bundle(bundle):
 
         discovery = await run_discovery(record, bundle["supplemental"]) if challenger["status"] == "complete" else {
             "status": "unavailable", "reason": "funding_provenance_unavailable", "candidate_results": None}
+    recovery = None
+    if "recovery_policy" in bundle:
+        from scripts.research_recovery_study import run_recovery
+        recovery = await run_recovery(record, bundle["supplemental"], decision_at=timestamp(bundle["completed_at"]), rolling="rolling_policy" in bundle)
     return {
         "schema": "atlas-pipeline-comparison-v2",
-        "status": "complete" if challenger["status"] == "complete" and (discovery is None or discovery["status"] == "complete") else "incomplete",
+        "status": "complete" if challenger["status"] == "complete" and (discovery is None or discovery["status"] == "complete") and (recovery is None or recovery["status"] == "complete") else "incomplete",
         "scan_id": record.scan_id,
         "record_sha256": semantic_digest(record),
         "bundle_sha256": semantic_digest(bundle),
@@ -216,6 +220,7 @@ async def compare_bundle(bundle):
         "control": control,
         "quote_funding_carry": challenger,
         "discovery_v2": discovery,
+        "recovery": recovery,
         "performance_claims_permitted": False,
         "predictive_outcomes_evaluated": False,
         "negative_forecasts": 0,
@@ -238,6 +243,9 @@ def tool_identity() -> dict[str, str]:
             root / "research_evidence_stream.py",
             root / "research_immutable_capture.py",
             root / "research_discovery.py",
+            root / "research_recovery_study.py",
+            root / "research_recovery_timeline.py",
+            root / "research_rolling_replay.py",
         )
     }
 

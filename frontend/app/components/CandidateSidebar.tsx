@@ -35,6 +35,16 @@ export interface Opportunity {
   taker_ratio?: number | string;
   volume_contraction_ratio?: number | string;
   checklist?: { title: string; passed: boolean; status?: "passed" | "failed" | "unknown"; detail: string }[];
+  selection_gates?: { title: string; passed: boolean; status?: "passed" | "failed" | "unknown"; detail: string }[];
+  conviction_factors?: {
+    volume_confirmation?: boolean;
+    momentum_alignment?: boolean;
+    derivatives_positioning?: boolean;
+    trend_alignment?: boolean;
+    alpha_outperformance?: boolean;
+    passed_count?: number;
+  };
+  failed_factors?: string[];
   rationale?: string[];
   macro_narrative?: string;
   candles?: Candle[];
@@ -105,9 +115,9 @@ export function computeCoilToGainerProbability(opp: Opportunity): CoilGainerInsi
   const totalCount = opp.gates_total !== undefined ? opp.gates_total : (opp.checklist ? opp.checklist.length : 5);
   const isAllGatesPassed = totalCount > 0 && passCount === totalCount;
   const isBreakout = opp.breakout_readiness_status === "BREAKOUT_CONFIRMED";
-  const isSqueezeSetup = /compression|coil|accumulation|range_bottom|vcp/i.test(opp.setup_label || "");
+  const isSqueezeSetup = /compression|coil|accumulation|range_bottom|vcp|emerging|squeeze|recovery|breakout/i.test(opp.setup_label || "");
 
-  // 1. Detect Specific Edge Archetype (matching empirical 24h-72h top gainer research)
+  // 1. Detect Specific Edge Archetype (matching empirical 24h-72h top gainer research & Atlas v3.1)
   let archetype = "CONSOLIDATION SQUEEZE";
   let shortLabel = "COIL";
   let telemetrySummary = "";
@@ -116,14 +126,30 @@ export function computeCoilToGainerProbability(opp: Opportunity): CoilGainerInsi
   let badgeColor = "#f49d0d";
   let badgeBorder = "rgba(244, 157, 13, 0.28)";
 
-  if (fundBps <= -2.0 && oi7d >= 10.0) {
-    archetype = "SHORT-SQUEEZE FLYWHEEL";
+  if ((fundBps <= -2.0 && oi7d >= 10.0) || /short_squeeze/i.test(opp.setup_label || "")) {
+    archetype = "SHORT-SQUEEZE ABSORPTION";
     shortLabel = "SQUEEZE";
     telemetrySummary = `OI ${oi7d > 0 ? "+" : ""}${oi7d.toFixed(1)}%, Funding ${fundBps.toFixed(1)} bps`;
-    actionThesis = "Trapped short sellers paying heavy borrow fees while OI expands; high probability of explosive short-squeeze cascade.";
+    actionThesis = "Trapped short sellers with active OI expansion and buyer absorption; high probability of short-squeeze cascade.";
     badgeBg = "rgba(239, 68, 68, 0.16)";
     badgeColor = "var(--accent-crimson)";
     badgeBorder = "rgba(239, 68, 68, 0.35)";
+  } else if (/momentum_emerging/i.test(opp.setup_label || "")) {
+    archetype = "EMERGING BASE RECLAIM";
+    shortLabel = "EMERGING";
+    telemetrySummary = `Score ${scoreNum.toFixed(1)}, Taker 4H ${taker4h.toFixed(2)}x, OI ${oi7d > 0 ? "+" : ""}${oi7d.toFixed(1)}%`;
+    actionThesis = "Atlas v3.1 emerging base reclaim above 1H EMA20 & 30d VAL with 4H RSI >= 52 and fresh derivatives inflow.";
+    badgeBg = "rgba(16, 185, 129, 0.16)";
+    badgeColor = "var(--accent-emerald)";
+    badgeBorder = "rgba(16, 185, 129, 0.35)";
+  } else if (/recovery_reclaim/i.test(opp.setup_label || "")) {
+    archetype = "RECOVERY PIVOT RECLAIM";
+    shortLabel = "RECOVERY";
+    telemetrySummary = `Score ${scoreNum.toFixed(1)}, Taker 4H ${taker4h.toFixed(2)}x`;
+    actionThesis = "Atlas v3.1 higher-low structural pivot reclaim with flow-confirmed turnover acceleration.";
+    badgeBg = "rgba(56, 189, 248, 0.16)";
+    badgeColor = "#38bdf8";
+    badgeBorder = "rgba(56, 189, 248, 0.35)";
   } else if (scoreNum >= 88.0 && (oi7d >= 4.0 || isAllGatesPassed)) {
     archetype = "LEADERBOARD COIL SPRING";
     shortLabel = "LEAD COIL";
@@ -620,8 +646,22 @@ function CandidateSidebar({
       const isShort = opp.direction?.toLowerCase() === "short";
       if (filter === "LONGS") return !isShort;
       if (filter === "SHORTS") return isShort;
-      if (filter === "COIL") return opp.setup_label.includes("COIL") || opp.setup_label.includes("VCP");
-      if (filter === "OI") return opp.setup_label.includes("OI");
+      if (filter === "COIL") {
+        return (
+          opp.setup_label.includes("COIL") ||
+          opp.setup_label.includes("VCP") ||
+          opp.setup_label.includes("RANGE_BOTTOM") ||
+          opp.setup_label.includes("EMERGING") ||
+          opp.setup_label.includes("RECOVERY")
+        );
+      }
+      if (filter === "OI") {
+        return (
+          opp.setup_label.includes("OI") ||
+          opp.setup_label.includes("SQUEEZE") ||
+          opp.setup_label.includes("ACCUMULATION")
+        );
+      }
       return true;
     });
   }, [opportunities, search, filter]);

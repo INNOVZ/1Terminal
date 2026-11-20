@@ -205,6 +205,21 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
     ):
         return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
 
+    # 4b. Active Range-Bottom Buyer Absorption (1H/4H institutional demand at 30d floor)
+    if (
+        features.pos_in_range_30d <= Decimal("0.22")
+        and features.range_height_30d <= Decimal("0.85")
+        and features.ema20_1h is not None
+        and features.close >= features.ema20_1h
+        and features.macd_hist_1h > Decimal("0")
+        and features.macd_hist_4h > features.macd_hist_4h_prev
+        and taker_4h is not None
+        and taker_4h >= Decimal("1.15")
+        and Decimal("-0.05") <= features.ret_24h <= Decimal("0.10")
+        and (features.val_30d <= Decimal("0") or features.close >= features.val_30d)
+    ):
+        return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
+
     # 5. BREAKOUT_LONG (Volume & OI Expansion)
     oi_4h = features.oi_delta_4h or Decimal("0")
     at_or_above_resistance = (features.close >= features.local_swing_high_4h) or (

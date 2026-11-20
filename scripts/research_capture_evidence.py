@@ -36,7 +36,15 @@ class EvidenceStopped(RuntimeError):
 class EvidenceTransport(httpx.AsyncBaseTransport):
     """Bound wire attempts/bytes, stop on throttling, and retain public JSON receipts."""
 
-    def __init__(self, inner, *, attempts=1500, seconds=180, byte_limit=64 * 1024 * 1024):
+    def __init__(
+        self,
+        inner,
+        *,
+        attempts=1500,
+        seconds=180,
+        byte_limit=64 * 1024 * 1024,
+        retain_payloads: bool = True,
+    ):
         if (
             not 1 <= attempts <= 3000
             or not 1 <= seconds <= 600
@@ -44,6 +52,7 @@ class EvidenceTransport(httpx.AsyncBaseTransport):
         ):
             raise ValueError("invalid evidence budget")
         self.inner, self.max_attempts, self.byte_limit = inner, attempts, byte_limit
+        self.retain_payloads = retain_payloads
         self.deadline = time.monotonic() + seconds
         self.attempts = self.bytes = 0
         self.stopped: str | None = None
@@ -98,7 +107,11 @@ class EvidenceTransport(httpx.AsyncBaseTransport):
             payload = json.loads(
                 data, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite_json"))
             )
-            row.update(payload=payload, payload_sha256=digest(payload))
+            payload_sha256 = digest(payload)
+            if self.retain_payloads:
+                row.update(payload=payload, payload_sha256=payload_sha256)
+            else:
+                row["payload_sha256"] = payload_sha256
             # Buffered replacement: the normal production client parses the same JSON body.
             return httpx.Response(
                 response.status_code,
@@ -193,8 +206,12 @@ class MissingTape(ReplayTape):
 
 async def capture_evidence(
     port, macro, settings, *, max_symbols, max_supplemental=60, on_control=None,
-    discovery_v2=False,
+    discovery_v2=False, recovery=False, rolling_recovery=False,
 ):
+    if rolling_recovery and not recovery:
+        raise ValueError("rolling discovery requires recovery capture")
+    if recovery and not discovery_v2:
+        raise ValueError("recovery capture requires discovery-v2")
     if not 1 <= max_symbols <= 320 or not 0 <= max_supplemental <= (120 if discovery_v2 else 60):
         raise ValueError("invalid capture selection budget")
     captured = await capture_control(
@@ -230,44 +247,59 @@ async def capture_evidence(
                     RecordedCall(method, index, arguments, error=type(exc).__name__)
                 )
         if discovery_v2:
+            from algotrader.application.recovery_screener import RecoveryScreener
             from scripts.research_discovery import DiscoveryScreener
 
-            # Resolve extended candle histories, then additional enrichment requests.
-            for _ in range(3):
-                tape = MissingTape((*record.inputs, *supplemental))
-                market = ReplayMarket(tape)
-                engine = DiscoveryScreener(settings, market, evaluated_at=record.started_at,
-                                            journal=ScanDecisionJournal())
-                arguments = dict(record.request)
-                arguments.pop("derivatives_enabled")
-                await engine.screen(market, derivatives_port=market, **arguments)
-                pending = {key: (method, arguments) for key, method, arguments in tape.requests}
-                if not pending:
-                    break
-                for method, arguments in pending.values():
-                    if method not in ("candles", "derivatives_snapshot"):
-                        raise ReplayUnavailable("unexpected_discovery_input_request")
-                    if method == "candles" and (arguments["interval"], arguments["limit"]) not in (
-                        ("1h", 360), ("4h", 480), ("1w", 40)
-                    ):
-                        raise ReplayUnavailable("unexpected_discovery_candle_request")
-                    derivative_count = sum(c.method == "derivatives_snapshot" for c in supplemental)
-                    if len(supplemental) >= 600 or (method == "derivatives_snapshot" and derivative_count >= max_supplemental):
-                        raise ReplayUnavailable("discovery_supplemental_budget_exhausted")
-                    index = port.counts.get(digest((method, arguments)), 0)
-                    try:
-                        value = await port.invoke(method, arguments)
-                    except Exception as exc:
-                        supplemental.append(RecordedCall(method, index, arguments, error=type(exc).__name__))
-                        raise ReplayUnavailable("discovery_input_acquisition_failed") from exc
-                    supplemental.append(RecordedCall(method, index, arguments, value))
+            # Resolve each arm through the same bounded union of recorded inputs.
+            if rolling_recovery:
+                from algotrader.application.activity_recovery import ActivityRecoveryScreener
+                recovery_class = ActivityRecoveryScreener
             else:
-                raise ReplayUnavailable("discovery_input_planning_did_not_converge")
+                recovery_class = RecoveryScreener
+            engines = (DiscoveryScreener, recovery_class) if recovery else (DiscoveryScreener,)
+            for engine_class in engines:
+                for _ in range(3):
+                    tape = MissingTape((*record.inputs, *supplemental))
+                    market = ReplayMarket(tape)
+                    engine = engine_class(settings, market, evaluated_at=record.started_at,
+                                                journal=ScanDecisionJournal())
+                    arguments = dict(record.request)
+                    arguments.pop("derivatives_enabled")
+                    arguments.pop("feature_contract", None)
+                    await engine.screen(market, derivatives_port=market, **arguments)
+                    pending = {key: (method, arguments) for key, method, arguments in tape.requests}
+                    if not pending:
+                        break
+                    for method, arguments in pending.values():
+                        if method not in ("candles", "derivatives_snapshot"):
+                            raise ReplayUnavailable("unexpected_discovery_input_request")
+                        if method == "candles" and (arguments["interval"], arguments["limit"]) not in (
+                            ("1h", 360), ("4h", 480), ("1w", 40)
+                        ):
+                            raise ReplayUnavailable("unexpected_discovery_candle_request")
+                        derivative_count = sum(c.method == "derivatives_snapshot" for c in supplemental)
+                        if len(supplemental) >= 600 or (method == "derivatives_snapshot" and derivative_count >= max_supplemental):
+                            raise ReplayUnavailable("discovery_supplemental_budget_exhausted")
+                        index = port.counts.get(digest((method, arguments)), 0)
+                        try:
+                            value = await port.invoke(method, arguments)
+                        except Exception as exc:
+                            supplemental.append(RecordedCall(method, index, arguments, error=type(exc).__name__))
+                            raise ReplayUnavailable("discovery_input_acquisition_failed") from exc
+                        supplemental.append(RecordedCall(method, index, arguments, value))
+                else:
+                    raise ReplayUnavailable("discovery_input_planning_did_not_converge")
     return record, tuple(supplemental)
 
 
 async def execute(args, *, transport=None, macro_provider=None):
     discovery = getattr(args, "discovery_v2", False)
+    recovery = getattr(args, "recovery", False)
+    rolling = getattr(args, "rolling_recovery", False)
+    if rolling and not recovery:
+        raise ValueError("rolling discovery requires recovery capture")
+    if recovery and not discovery:
+        raise ValueError("recovery capture requires discovery-v2")
     if discovery and args.max_symbols != 320:
         raise ValueError("discovery-v2 requires the explicit 320-symbol ceiling")
     budget = EvidenceTransport(
@@ -306,7 +338,7 @@ async def execute(args, *, transport=None, macro_provider=None):
                 max_symbols=args.max_symbols,
                 max_supplemental=args.max_supplemental,
                 on_control=lambda r: bundle.update(record=r),
-                discovery_v2=discovery,
+                discovery_v2=discovery, recovery=recovery, rolling_recovery=rolling,
             )
             bundle.update(record=record, supplemental=supplemental)
             # Explicit metadata; never treat an omitted fundingInfo row as an 8h interval.
@@ -320,6 +352,12 @@ async def execute(args, *, transport=None, macro_provider=None):
                 from scripts.research_discovery import POLICY as DISCOVERY_POLICY
 
                 bundle["research_policy"] = dict(DISCOVERY_POLICY)
+                if recovery:
+                    from scripts.research_recovery_study import POLICY as RECOVERY_POLICY
+                    bundle["recovery_policy"] = dict(RECOVERY_POLICY)
+                    if rolling:
+                        from algotrader.application.rolling_discovery import ROLLING_POLICY
+                        bundle["rolling_policy"] = dict(ROLLING_POLICY)
                 selected.update(c.arguments["instrument"].id.symbol for c in supplemental)
                 bundle["research_selected_symbols"] = tuple(sorted(selected))
             for symbol in sorted(selected):
@@ -357,10 +395,16 @@ def main():
     parser.add_argument("--max-supplemental", type=int)
     parser.add_argument("--discovery-v2", action="store_true",
                         help="Capture corrected features and bounded discovery watch pool")
+    parser.add_argument("--recovery", action="store_true", help="Capture the opt-in recovery arm with discovery-v2")
+    parser.add_argument("--rolling-recovery", action="store_true", help="Capture activity-ranked watch selection and enable rolling discovery")
     parser.add_argument("--max-attempts", type=int)
     parser.add_argument("--deadline-seconds", type=int)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.rolling_recovery and not args.recovery:
+        parser.error("rolling discovery requires --recovery")
+    if args.recovery and not args.discovery_v2:
+        parser.error("recovery capture requires --discovery-v2")
     if args.output.exists():
         parser.error("output exists")
     if args.max_supplemental is None:

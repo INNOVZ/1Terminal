@@ -42,6 +42,7 @@ class SetupLabel(StrEnum):
     STEALTH_OI_ACCUMULATION = "STEALTH_OI_ACCUMULATION"
     VCP_COMPRESSION_LONG = "VCP_COMPRESSION_LONG"
     RANGE_BOTTOM_ACCUMULATION_LONG = "RANGE_BOTTOM_ACCUMULATION_LONG"
+    RECOVERY_RECLAIM_LONG = "RECOVERY_RECLAIM_LONG"
 
     # Pre-Breakdown & Distribution Setups (BEFORE the dump)
     COIL_BREAKDOWN_SHORT = "COIL_BREAKDOWN_SHORT"
@@ -86,6 +87,16 @@ class ChecklistVerification:
             ]
         )
 
+    def failed_factors(self) -> tuple[str, ...]:
+        mapping = (
+            ("value_acceptance", self.value_acceptance),
+            ("volatility_structure", self.volatility_structure),
+            ("momentum_alignment", self.momentum_alignment),
+            ("volume_microstructure", self.volume_microstructure),
+            ("derivatives_positioning", self.derivatives_positioning),
+        )
+        return tuple(name for name, ok in mapping if not ok)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "value_acceptance": self.value_acceptance,
@@ -94,6 +105,7 @@ class ChecklistVerification:
             "volume_microstructure": self.volume_microstructure,
             "derivatives_positioning": self.derivatives_positioning,
             "passed_count": self.passed_count,
+            "failed_factors": list(self.failed_factors()),
         }
 
 
@@ -166,6 +178,7 @@ class CryptoOpportunity:
     risk_reward_target_index: int = 2
     retest_stop: Decimal | None = None
     breakout_stop: Decimal | None = None
+    research_policy_version: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         tick = self.instrument.price_tick
@@ -180,7 +193,7 @@ class CryptoOpportunity:
                 return "N/A"
             return f"{float(val):.{decimals}f}"
 
-        return {
+        result: dict[str, object] = {
             "symbol": self.instrument.id.symbol,
             "validation_status": "uncalibrated_research",
             "order_execution_enabled": False,
@@ -210,6 +223,11 @@ class CryptoOpportunity:
             "conviction": str(self.conviction) if self.conviction is not None else str(self.score),
             "grade": self.grade,
             "checklist_verification": self.checklist_verification.as_dict() if self.checklist_verification is not None else {},
+            "conviction_factors": self.checklist_verification.as_dict() if self.checklist_verification is not None else {},
+            "selection_gates": [
+                {"title": item[0], "passed": item[1], "detail": item[2]}
+                for item in self.checklist
+            ],
             "btc_beta": str(self.btc_beta),
             "residual_return_24h_pct": f"{float(self.residual_return_24h * 100):+.2f}%",
             "funding_rate_bps": f"{float((self.funding_rate or Decimal('0')) * 10000):+.2f} bps",
@@ -249,6 +267,9 @@ class CryptoOpportunity:
             "candles": list(self.candles),
             "is_discovery_tier": self.is_discovery_tier,
         }
+        if self.research_policy_version is not None:
+            result["research_policy_version"] = self.research_policy_version
+        return result
 
 
 def calculate_opportunity_win_rate_and_ev(

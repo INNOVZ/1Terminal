@@ -112,6 +112,9 @@ def definition(root):
     if result["identity"] != identity() or result["policy"] != POLICY:
         raise ValueError("study source/runtime/policy mismatch")
     validate_cohort(result["cohort"], RankPolicy())
+    if "recovery" in result:
+        from scripts.research_recovery_study import validate_arm
+        validate_arm(result)
     return result
 
 
@@ -236,6 +239,20 @@ async def prepare(bundle_path, root, *, clock=lambda: datetime.now(UTC), previou
             arm["research_views"].update(transitions)
     elif previous_study is not None:
         raise ValueError("transition context requires discovery-v2 evidence")
+    if comparison.get("recovery") is not None:
+        from scripts.research_recovery_study import freeze_arm
+        frozen["arms"]["recovery"] = long_arms(comparison["recovery"])
+        frozen["arms"]["recovery"]["source_policy"] = comparison["recovery"]["policy"]
+        frozen["arms"]["recovery"]["feature_unavailable_symbols"] = comparison["recovery"]["candidate_results"]["feature_unavailable_symbols"]
+        frozen["recovery"] = freeze_arm(comparison["recovery"], cutoff)
+        if "rolling_policy" in bundle:
+            benchmark = next((call.arguments["instrument"] for call in (*record.inputs, *bundle["supplemental"])
+                              if call.method == "candles" and call.arguments["instrument"].id.symbol == "BTCUSDT"), None)
+            macro = next((call.result for call in record.inputs if call.method == "macro"), None)
+            if benchmark is None or macro is None:
+                raise ValueError("rolling context unavailable")
+            frozen["recovery"]["rolling"] = {"policy": bundle["rolling_policy"], "benchmark": benchmark,
+                                             "macro": macro, "configuration": record.identity["configuration"]}
     for arm in frozen["arms"].values():
         if not set((*arm["engine"], *arm["radar"])) <= cohort_symbols:
             raise ValueError("candidate outside frozen cohort")
@@ -304,10 +321,16 @@ def enroll(root, *, now):
             "anchor": anchor,
             "endpoint_24h": anchor + timedelta(hours=24),
             "endpoint_48h": anchor + timedelta(hours=48),
+            **({"endpoint_120h": anchor + timedelta(hours=120)} if "rolling" in d.get("recovery", {}) else {}),
+            **({"recovery_enabled": True} if "recovery" in d else {}),
         }
         save(root / "enrollment.json", record)
         write_progress(root, record, latest=None, now=now)
         return record
+
+
+def collection_end(enrollment):
+    return enrollment.get("endpoint_120h", enrollment.get("endpoint_96h", enrollment["endpoint_48h"]))
 
 
 def write_progress(root, enrollment, *, latest, now):
@@ -327,9 +350,16 @@ def write_progress(root, enrollment, *, latest, now):
             for key in ("slot", "status", "requested_at", "arrived_at", "cooldown_until")
         } if latest is not None else None,
     }
+    replace_progress(path, payload)
+
+
+def replace_progress(path, payload):
+    if path.is_symlink():
+        raise ValueError("progress symlink refused")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     envelope = {"schema": "atlas-paired-envelope-v1", "sha256": semantic_digest(payload),
                 "payload": encode_value(payload)}
-    with tempfile.NamedTemporaryFile(dir=root, prefix=".progress-", delete=False) as handle:
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".progress-", delete=False) as handle:
         temporary = Path(handle.name)
         try:
             handle.write(json.dumps(envelope, allow_nan=False).encode())
@@ -338,6 +368,14 @@ def write_progress(root, enrollment, *, latest, now):
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
+
+
+def write_recovery_progress(root, enrollment, latest, *, now):
+    latest = {key: latest[key] for key in ("status", "reason", "scheduled_at", "completed_at", "cooldown_until", "states", "discovery_unavailable") if key in latest}
+    replace_progress(root / "recovery" / "progress.json", {
+        "study_id": enrollment["study_id"], "definition_sha256": enrollment["definition_sha256"],
+        "updated_at": now, "latest": latest,
+    })
 
 
 def health(root, *, now):
@@ -359,7 +397,7 @@ def health(root, *, now):
             state = "invalid_anchor"
     elif latest["slot"] == 0 and latest["status"] != "observed":
         state = "invalid_anchor"
-    elif now > enrollment["endpoint_48h"] + timedelta(seconds=45):
+    elif now > collection_end(enrollment) + timedelta(seconds=45):
         state = "window_ended"
     elif latest["status"] != "observed" or (
         now - (latest["arrived_at"] or latest["requested_at"])
@@ -367,8 +405,28 @@ def health(root, *, now):
         state = "degraded"
     else:
         state = "collecting"
+    recovery = recovery_health(root, enrollment, now=now) if enrollment.get("recovery_enabled") else None
+    if state == "collecting" and recovery is not None and recovery["status"] == "degraded":
+        state = "degraded"
     return {"status": state, "study_id": progress["study_id"], "latest": latest,
+            **({"recovery": recovery} if recovery is not None else {}),
             "health_source": "bounded_progress_record"}
+
+
+def recovery_health(root, enrollment, *, now):
+    path = root / "recovery" / "progress.json"
+    if not path.exists():
+        return {"status": "degraded" if now > enrollment["anchor"] + timedelta(minutes=17)
+                else "awaiting_first_recovery_cycle"}
+    if path.stat().st_size > 16 * 1024:
+        raise ValueError("oversized recovery progress")
+    progress = load(path)
+    if any(progress[key] != enrollment[key] for key in ("study_id", "definition_sha256")):
+        raise ValueError("recovery progress enrollment mismatch")
+    latest = progress["latest"]
+    good = (latest["status"] == "observed" and not latest.get("discovery_unavailable") and 0 <= (now - progress["updated_at"]).total_seconds() <= 1200
+            and all(row["coverage_complete"] for row in latest.get("states", ())))
+    return {"status": "collecting" if good else "degraded", "latest_status": latest["status"]}
 
 
 def session(root):
@@ -404,7 +462,8 @@ async def tick(root, *, enabled, clock=lambda: datetime.now(UTC), transport=None
         if seconds < 0:
             return {"status": "waiting_for_anchor", "http_attempts": 0}
         slot = int(seconds // 300)
-        if slot > 576:
+        last_slot = int((collection_end(e) - e["anchor"]).total_seconds() // 300)
+        if slot > last_slot:
             return {"status": "window_ended", "http_attempts": 0}
         scheduled = e["anchor"] + timedelta(seconds=slot * 300)
         path = root / "snapshots" / f"{slot:06d}.json"
@@ -414,6 +473,11 @@ async def tick(root, *, enabled, clock=lambda: datetime.now(UTC), transport=None
             if progress is None or progress["latest"] is None or progress["latest"]["slot"] < slot:
                 write_progress(root, e, latest=load(path), now=now)
             return {"status": "already_recorded", "slot": slot, "http_attempts": 0}
+        recovery_progress = root / "recovery" / "progress.json"
+        if "recovery" in d and recovery_progress.exists():
+            latest = load(recovery_progress)["latest"]
+            if latest.get("cooldown_until") and now < latest["cooldown_until"]:
+                return {"status": "exchange_cooldown", "http_attempts": 0}
         previous = sorted((root / "snapshots").glob("*.json"))
         if previous:
             last = load(previous[-1])
@@ -509,7 +573,7 @@ def status(root, *, now):
     )
     if live:
         latest = load(files[-1])
-        state = "window_ended" if now > e["endpoint_48h"] + timedelta(seconds=45) else "collecting"
+        state = "window_ended" if now > collection_end(e) + timedelta(seconds=45) else "collecting"
         if state == "collecting" and latest["status"] != "observed":
             state = "degraded"
         if (
@@ -530,18 +594,80 @@ def status(root, *, now):
         "endpoint_48h_status": load(root / "snapshots/000576.json")["status"]
         if (root / "snapshots/000576.json").exists()
         else "missing",
+        **({"endpoint_120h_status": load(root / "snapshots/001440.json")["status"]
+            if (root / "snapshots/001440.json").exists()
+            else "missing"} if "endpoint_120h" in e else {}),
+        **({"endpoint_96h_status": load(root / "snapshots/001152.json")["status"]
+            if (root / "snapshots/001152.json").exists()
+            else "missing"} if "endpoint_96h" in e else {}),
     }
+
+
+def _validated_members(d, e, slot, sample):
+    if sample["status"] not in ("observed", "missed", "failed"):
+        raise ValueError("unknown snapshot status")
+    if sample["study_id"] != d["study_id"] or sample["definition_sha256"] != e["definition_sha256"] or sample["slot"] != slot:
+        raise ValueError("cross-study snapshot")
+    if sample["status"] != "observed":
+        return {}
+    normalized = normalize_ranks(d["cohort"], sample["rows"], sample["arrived_at"], RankPolicy())
+    if semantic_digest(normalized) != semantic_digest(sample["normalized"]):
+        raise ValueError("snapshot normalization mismatch")
+    return {m["symbol"]: m for m in normalized["members"]}
+
+
+def _record_episode_observations(triggers, members, arrived_at, confirmation_ranks, confirmation_outcomes):
+    for symbol, episodes in triggers.items():
+        member = members.get(symbol, {})
+        inside = member.get("inside")
+        price = member.get("price")
+        for episode in episodes:
+            if arrived_at <= episode.triggered_at:
+                confirmation_ranks[episode.episode_id] = {"at": arrived_at, "inside": inside}
+            if price is not None:
+                for hours in (24, 48):
+                    target = episode.triggered_at + timedelta(hours=hours)
+                    key = (episode.episode_id, hours)
+                    if key not in confirmation_outcomes and target <= arrived_at <= target + timedelta(seconds=345):
+                        confirmation_outcomes[key] = {"at": arrived_at, "price": price}
 
 
 def report(root, horizon, *, now):
     d, e = session(root)
-    endpoint = e[f"endpoint_{horizon}h"]
+    key = f"endpoint_{horizon}h"
+    if key not in e:
+        raise ValueError(f"unsupported horizon {horizon} for this study")
+    endpoint = e[key]
     if now < endpoint:
         raise ValueError("outcome horizon not reached")
     expected = horizon * 12 + 1
-    paths = {int(p.stem): p for p in (root / "snapshots").glob("*.json") if int(p.stem) < expected}
+    end_limit = collection_end(e)
+    followup_endpoint = (
+        min(now, end_limit)
+        if horizon == 48 and end_limit > endpoint and now >= endpoint + timedelta(minutes=5)
+        else endpoint
+    )
+    followup_limit = int((followup_endpoint - e["anchor"]).total_seconds() // 300) + 1
+    followup_expected = max(0, followup_limit - expected)
+    paths = {int(p.stem): p for p in (root / "snapshots").glob("*.json") if 0 <= int(p.stem) < expected}
     if 0 not in paths or load(paths[0])["status"] != "observed":
         raise ValueError("valid anchor observation required")
+    recovery_context = None
+    confirmation_ranks = {}
+    confirmation_outcomes = {}
+    control_matches = {}
+    control_alerts = {}
+    triggers = {}
+    if "recovery" in d:
+        from scripts.research_recovery_study import snapshot
+        recovery_context = snapshot(root, d, followup_endpoint)
+        if recovery_context is not None:
+            for episode in recovery_context[0].values():
+                if episode.triggered_at is not None:
+                    triggers.setdefault(episode.instrument.id.symbol, []).append(episode)
+            for decision in recovery_context[1].get("rolling_decisions", ()):
+                for symbol in decision["control_symbols"]:
+                    control_alerts.setdefault(symbol, decision["issued_at"])
     symbols = {i.id.symbol for i in d["cohort"]}
     states = {
         s: {
@@ -561,22 +687,18 @@ def report(root, horizon, *, now):
     for slot in range(expected):
         sample = load(paths[slot]) if slot in paths else None
         coverage[sample["status"] if sample is not None else "absent"] += 1
-        members = {}
-        if sample is not None:
-            if sample["status"] not in ("observed", "missed", "failed"):
-                raise ValueError("unknown snapshot status")
-            if sample["study_id"] != d["study_id"] or sample["definition_sha256"] != e["definition_sha256"] or sample["slot"] != slot:
-                raise ValueError("cross-study snapshot")
-            if sample["status"] == "observed":
-                normalized = normalize_ranks(
-                    d["cohort"], sample["rows"], sample["arrived_at"], RankPolicy()
-                )
-                if semantic_digest(normalized) != semantic_digest(sample["normalized"]):
-                    raise ValueError("snapshot normalization mismatch")
-                members = {m["symbol"]: m for m in normalized["members"]}
+        members = _validated_members(d, e, slot, sample) if sample is not None else {}
+        if sample is not None and sample["status"] == "observed":
+            _record_episode_observations(
+                triggers, members, sample["arrived_at"], confirmation_ranks, confirmation_outcomes
+            )
         for symbol, state in states.items():
             member = members.get(symbol, {})
             inside = member.get("inside")
+            control_at = control_alerts.get(symbol)
+            if (control_at is not None and sample is not None and sample["status"] == "observed"
+                    and sample["arrived_at"] <= control_at):
+                control_matches[symbol] = {"at": sample["arrived_at"], "inside": inside}
             if inside is None:
                 state["unknown_samples"] += 1
             else:
@@ -661,15 +783,52 @@ def report(root, horizon, *, now):
                 )
             ),
         }
+    followup_coverage_summary = None
+    if followup_expected > 0:
+        followup_paths = {
+            int(p.stem): p
+            for p in (root / "snapshots").glob("*.json")
+            if expected <= int(p.stem) < followup_limit
+        }
+        followup_coverage = Counter()
+        for slot in range(expected, followup_limit):
+            sample = load(followup_paths[slot]) if slot in followup_paths else None
+            followup_coverage[sample["status"] if sample is not None else "absent"] += 1
+            members = _validated_members(d, e, slot, sample) if sample is not None else {}
+            if sample is not None and sample["status"] == "observed" and triggers:
+                _record_episode_observations(
+                    triggers, members, sample["arrived_at"], confirmation_ranks, confirmation_outcomes
+                )
+        followup_coverage_summary = {
+            "endpoint": followup_endpoint,
+            "expected_slots": followup_expected,
+            "recorded_slots": len(followup_paths),
+            "missing_slots": followup_expected - len(followup_paths),
+            "observed_slots": followup_coverage["observed"],
+            "missed_slots": followup_coverage["missed"],
+            "failed_slots": followup_coverage["failed"],
+            "absent_slots": followup_coverage["absent"],
+            "unobserved_slots": followup_expected - followup_coverage["observed"],
+        }
+    recovery_outcomes = None
+    if "recovery" in d:
+        from scripts.research_recovery_study import outcome_report
+        recovery_outcomes = outcome_report(root, recovery_context, d, e, endpoint, states, confirmation_ranks,
+                                           confirmation_outcomes=confirmation_outcomes, control_matches=control_matches,
+                                           followup_endpoint=followup_endpoint)
     return {
+        **({"recovery_outcomes": recovery_outcomes} if recovery_outcomes is not None else {}),
+        **({"followup_coverage": followup_coverage_summary} if followup_coverage_summary is not None else {}),
         "schema": "atlas-paired-report-v2",
         "study_id": d["study_id"],
         "definition_sha256": semantic_digest(d),
         "horizon_hours": horizon,
         "collection_status": "degraded"
         if coverage["observed"] != expected
+        or (followup_coverage_summary is not None and followup_coverage_summary["observed_slots"] != followup_expected)
+        or (recovery_outcomes is not None and recovery_outcomes.get("status") in ("degraded", "unavailable"))
         else "bounded"
-        if any(r["unknown_samples"] for r in states.values())
+        if any(r["unknown_samples"] for r in states.values()) or (recovery_outcomes is not None and recovery_outcomes.get("status") == "bounded")
         else "complete",
         "selection_and_rejection_diagnostics": {
             name: arm["decisions"] for name, arm in d["arms"].items()
@@ -726,7 +885,11 @@ async def main_async(args):
     if not enabled:
         return {"status": "disabled", "http_attempts": 0}
     if args.action == "tick":
-        return await tick(root, enabled=True)
+        result = await tick(root, enabled=True)
+        if "recovery" in definition(root):
+            from scripts.research_recovery_study import tick as recovery_tick
+            result["recovery"] = await recovery_tick(root, enabled=True)
+        return result
     if args.action == "reports":
         return await run_reports(root)
     signature = session_signature(root)
@@ -735,19 +898,28 @@ async def main_async(args):
         paths = sorted((root / "snapshots").glob("*.json"))
         write_progress(root, validated[1], latest=load(paths[-1]) if paths else None,
                        now=datetime.now(UTC))
-    while True:
-        if session_signature(root) != signature:
-            raise ValueError("study definition/enrollment changed during collection")
-        result = await tick(root, enabled=True, validated_session=validated)
-        print(encode_value(result), flush=True)
-        if result["status"] in (
-            "window_ended",
-            "anchor_missing_study_invalid",
-            "anchor_failed_study_invalid",
-        ):
-            return result
-        # Single bounded job, wakes every 5s; never schedules new candidate scans/cohorts.
-        await asyncio.sleep(5)
+    recovery_task = None
+    if "recovery" in validated[0]:
+        from scripts.research_recovery_study import run as run_recovery
+        recovery_task = asyncio.create_task(run_recovery(root, validated_session=validated))
+    try:
+        while True:
+            if session_signature(root) != signature:
+                raise ValueError("study definition/enrollment changed during collection")
+            result = await tick(root, enabled=True, validated_session=validated)
+            print(encode_value(result), flush=True)
+            if result["status"] in (
+                "window_ended",
+                "anchor_missing_study_invalid",
+                "anchor_failed_study_invalid",
+            ):
+                return result
+            # Single bounded job, wakes every 5s; never schedules new candidate scans/cohorts.
+            await asyncio.sleep(5)
+    finally:
+        if recovery_task is not None:
+            recovery_task.cancel()
+            await asyncio.gather(recovery_task, return_exceptions=True)
 
 
 def session_signature(root):
@@ -764,24 +936,45 @@ def finalize_report(root, horizon, *, now):
             _, enrollment = session(root)
             if result["definition_sha256"] != enrollment["definition_sha256"] or result["horizon_hours"] != horizon:
                 raise ValueError("existing report belongs to another study/horizon")
+            end_limit = collection_end(enrollment)
+            if (
+                horizon == 48
+                and end_limit > enrollment["endpoint_48h"]
+                and now >= end_limit
+                and result.get("as_of", now) < end_limit
+            ):
+                with offline():
+                    refreshed = report(root, horizon, now=now)
+                replace_progress(path, refreshed)
+                return refreshed
             return result
-        result = report(root, horizon, now=now)
+        with offline():
+            result = report(root, horizon, now=now)
         save(path, result)
         return result
 
 
 async def run_reports(root):
     _, enrollment = session(root)
+    horizons = (
+        (24, 48, 120)
+        if "endpoint_120h" in enrollment
+        else (24, 48, 96)
+        if "endpoint_96h" in enrollment
+        else (24, 48)
+    )
     completed = set()
-    while len(completed) < 2:
+    while len(completed) < len(horizons):
         now = datetime.now(UTC)
-        for horizon in (24, 48):
+        for horizon in horizons:
             if horizon not in completed and now >= enrollment[f"endpoint_{horizon}h"] + timedelta(seconds=45):
                 await asyncio.to_thread(finalize_report, root, horizon, now=now)
+                if horizon > 48 and 48 in completed:
+                    await asyncio.to_thread(finalize_report, root, 48, now=now)
                 completed.add(horizon)
-        if len(completed) < 2:
+        if len(completed) < len(horizons):
             await asyncio.sleep(5)
-    return {"status": "reports_complete", "horizons": (24, 48)}
+    return {"status": "reports_complete", "horizons": horizons}
 
 
 def main():
@@ -792,7 +985,7 @@ def main():
     parser.add_argument("--study", type=Path, required=True)
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--previous-study", type=Path)
-    parser.add_argument("--horizon", type=int, choices=(24, 48), default=48)
+    parser.add_argument("--horizon", type=int, choices=(24, 48, 96, 120), default=48)
     parser.add_argument("--confirm-enrollment", action="store_true")
     parser.add_argument("--execute-public-collection", action="store_true")
     args = parser.parse_args()

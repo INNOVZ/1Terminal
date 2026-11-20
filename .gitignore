@@ -39,7 +39,10 @@ data/radar_events/
 data/testnet_trades.json
 data/testnet_watchlist.json
 
-# Keys and raw evidence dumps
+# Keys, research documents, findings, and raw evidence dumps
+docs/
+deliverables/
+tools/
 docs/deploy/instance_ssh_keys.txt
 docs/security/evidence/*pre-gainer-raw*
 docs/security/evidence/*pre-gainer-analysis.json

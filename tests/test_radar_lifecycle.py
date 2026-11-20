@@ -610,7 +610,8 @@ async def test_scan_reconciliation_archives_removals_without_resetting_episode(
         return []
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(portal, "_screener_cache", {"opportunities": [c]})
+    monkeypatch.setattr(portal, "_screener_cache", {"opportunities": [c],
+        "screening_policy_version": portal.SCREENING_POLICY_VERSION})
     monkeypatch.setattr(portal, "_cache_timestamp", None)
     monkeypatch.setattr(portal, "get_portal_runtime", runtime)
     monkeypatch.setattr(portal, "reconcile_radar_cohort", reconcile)

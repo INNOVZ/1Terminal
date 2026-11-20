@@ -186,14 +186,30 @@ def build_long_bracket(
         risk_unit = max(risk_unit, EPSILON)
 
         if close < poc_30d:
-            min_t1_below_poc = normalize_price(
-                effective_entry + max(tick_size, Decimal("0.50") * risk_unit), tick_size
-            )
-            t1 = max(normalize_price(poc_30d, tick_size), min_t1_below_poc)
-            t2 = normalize_price(vah_30d, tick_size)
+            if (poc_30d - effective_entry) < Decimal("1.00") * risk_unit:
+                t1 = max(
+                    normalize_price(vah_30d, tick_size),
+                    normalize_price(effective_entry + Decimal("1.50") * risk_unit, tick_size),
+                )
+                t2 = max(
+                    normalize_price(high_30d, tick_size),
+                    normalize_price(effective_entry + Decimal("2.50") * risk_unit, tick_size),
+                )
+            else:
+                min_t1_below_poc = normalize_price(
+                    effective_entry + max(tick_size, Decimal("0.50") * risk_unit), tick_size
+                )
+                t1 = max(normalize_price(poc_30d, tick_size), min_t1_below_poc)
+                t2 = max(
+                    normalize_price(vah_30d, tick_size),
+                    normalize_price(effective_entry + Decimal("2.00") * risk_unit, tick_size),
+                )
             if t2 <= t1:
                 t2 = normalize_price(t1 + max(tick_size, atr * Decimal("0.5")), tick_size)
-            t3 = normalize_price(max(high_30d, vah_30d + Decimal("1.5") * atr), tick_size)
+            t3 = normalize_price(
+                max(high_30d, vah_30d + Decimal("1.5") * atr, effective_entry + Decimal("3.50") * risk_unit),
+                tick_size,
+            )
             if t3 <= t2:
                 t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
         else:
@@ -217,14 +233,30 @@ def build_long_bracket(
         risk_unit = max(risk_unit, EPSILON)
 
         if close < poc_30d:
-            min_t1_below_poc = normalize_price(
-                effective_entry + max(tick_size, Decimal("0.50") * risk_unit), tick_size
-            )
-            t1 = max(normalize_price(poc_30d, tick_size), min_t1_below_poc)
-            t2 = normalize_price(vah_30d, tick_size)
+            if (poc_30d - effective_entry) < Decimal("1.00") * risk_unit:
+                t1 = max(
+                    normalize_price(vah_30d, tick_size),
+                    normalize_price(effective_entry + Decimal("1.50") * risk_unit, tick_size),
+                )
+                t2 = max(
+                    normalize_price(high_30d, tick_size),
+                    normalize_price(effective_entry + Decimal("2.50") * risk_unit, tick_size),
+                )
+            else:
+                min_t1_below_poc = normalize_price(
+                    effective_entry + max(tick_size, Decimal("0.50") * risk_unit), tick_size
+                )
+                t1 = max(normalize_price(poc_30d, tick_size), min_t1_below_poc)
+                t2 = max(
+                    normalize_price(vah_30d, tick_size),
+                    normalize_price(effective_entry + Decimal("2.00") * risk_unit, tick_size),
+                )
             if t2 <= t1:
                 t2 = normalize_price(t1 + max(tick_size, atr * Decimal("0.5")), tick_size)
-            t3 = normalize_price(max(high_30d, vah_30d + Decimal("1.5") * atr), tick_size)
+            t3 = normalize_price(
+                max(high_30d, vah_30d + Decimal("1.5") * atr, effective_entry + Decimal("3.50") * risk_unit),
+                tick_size,
+            )
             if t3 <= t2:
                 t3 = normalize_price(t2 + max(tick_size, atr * Decimal("0.5")), tick_size)
         else:
@@ -250,9 +282,9 @@ def build_long_bracket(
     r_t1 = ((t1 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
     r_t2 = ((t2 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
     r_t3 = ((t3 - effective_entry) / risk_unit).quantize(Decimal("0.01"))
-    # Fix 5: When close < poc_30d, evaluate R:R to Target_1 (POC) and cap at 5.0
+    # Fix 5 (Atlas v3.0 U1): When close < poc_30d, evaluate R:R to full Value-Area rotation (max of r_t1, r_t2) and cap at 5.0
     if close < poc_30d:
-        asymmetric_rr = min(r_t1, Decimal("5.00")).quantize(Decimal("0.01"))
+        asymmetric_rr = min(max(r_t1, r_t2), Decimal("5.00")).quantize(Decimal("0.01"))
     else:
         asymmetric_rr = min(r_t2, Decimal("5.00")).quantize(Decimal("0.01"))
 

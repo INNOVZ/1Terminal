@@ -245,7 +245,8 @@ def funding_manifest(bundle):
     return {"schema": bundle["schema"], "calls": calls, "selected_symbols": sorted(selected)}
 
 
-async def verify_bundle(bundle):
+async def verify_bundle_inputs(bundle):
+    """Attest raw receipts and availability independently of strategy source identity."""
     if (
         bundle.get("schema") not in (SCHEMA, ACQUISITION_SCHEMA, DISCOVERY_SCHEMA)
         or bundle.get("status") != "captured"
@@ -254,6 +255,14 @@ async def verify_bundle(bundle):
     ):
         raise ReplayUnavailable("unsupported_or_incomplete_evidence_bundle")
     record = bundle["record"]
+    if "rolling_policy" in bundle:
+        from algotrader.application.rolling_discovery import ROLLING_POLICY
+        if "recovery_policy" not in bundle or bundle["rolling_policy"] != ROLLING_POLICY:
+            raise ReplayUnavailable("invalid_rolling_discovery_policy")
+    if "recovery_policy" in bundle:
+        from scripts.research_recovery_study import POLICY as RECOVERY_POLICY
+        if bundle["schema"] != DISCOVERY_SCHEMA or bundle["recovery_policy"] != RECOVERY_POLICY:
+            raise ReplayUnavailable("invalid_recovery_capture_policy")
     end = timestamp(bundle["completed_at"])
     if not timestamp(record.started_at) <= timestamp(record.completed_at) <= end:
         raise ReplayUnavailable("invalid_bundle_bounds")
@@ -344,6 +353,11 @@ async def verify_bundle(bundle):
                 )
             except ReplayUnavailable as exc:
                 raise ReplayUnavailable(f"{call.method}:{exc}") from exc
+    return record
+
+
+async def verify_bundle(bundle):
+    record = await verify_bundle_inputs(bundle)
     # Exact original tape/source/dependency/configuration guards remain mandatory.
     await replay_scan(record)
     return record

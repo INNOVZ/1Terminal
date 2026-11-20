@@ -139,6 +139,17 @@ class CryptoOpportunityScreener:
             values = json.loads(json.dumps(details, default=str, allow_nan=False))
             self._journal.note(symbol, stage, reason, **values)
 
+    def _additional_probe_priority(self, symbol: str) -> Decimal:
+        """Research policies can nominate candidates within the existing probe budget."""
+        return ZERO
+
+    def _probe_rejection_reason(self, quote: Quote, direction: Direction | None) -> str | None:
+        """Versioned research policies may apply direction-specific probe admission."""
+        return None
+
+    def _candidate_is_discovery_tier(self, selected_tier: bool) -> bool:
+        return selected_tier
+
     def _extend_selection(
         self, selected: list[Instrument], liquid: list[Instrument],
         quotes: dict[str, Quote], max_symbols: int | None,
@@ -174,6 +185,7 @@ class CryptoOpportunityScreener:
         mode: ScreenerMode = ScreenerMode.ACCUMULATION,
         coi_score: float | Decimal | None = None,
         enforce_quality: bool = False,
+        top_gainer_symbols: set[str] | frozenset[str] | None = None,
     ) -> list[CryptoOpportunity]:
         self._fetch_failures.clear()
         self._feature_unavailable.clear()
@@ -294,6 +306,26 @@ class CryptoOpportunityScreener:
             cohort_by_base.update(best_by_base)
             self._journal.cohort = tuple(cohort_by_base.values())
         self.scan_counts["liquid"] = len(liquid_instruments)
+
+        # Live 24h Top-10 Gainer Exhaustion Set (auto-derived from universe quotes when >= 20 liquid pairs,
+        # or explicitly passed by bounded-pool / rolling callers).
+        effective_top10_gainers: frozenset[str]
+        if top_gainer_symbols is not None:
+            effective_top10_gainers = frozenset(top_gainer_symbols)
+        elif len(liquid_instruments) >= 20:
+            ranked_24h = sorted(
+                (
+                    (quotes_by_symbol[i.id.symbol].price_change_pct_24h, i.id.symbol)
+                    for i in liquid_instruments
+                    if quotes_by_symbol[i.id.symbol].price_change_pct_24h is not None
+                ),
+                reverse=True,
+            )
+            effective_top10_gainers = frozenset(
+                sym for chg, sym in ranked_24h[:10] if chg is not None and chg >= Decimal("10.0")
+            )
+        else:
+            effective_top10_gainers = frozenset()
 
         # Stage 5: Dynamic 265-Pair Funnel (Top 215 ILI Core + Top 50 Pre-Pump Anomaly Discovery)
         alloc_cap = (
@@ -493,28 +525,42 @@ class CryptoOpportunityScreener:
         stage2_probes: list[Instrument] = []
         probe_overflow_symbols: set[str] = set()
         if derivatives_port is not None and mode != ScreenerMode.BREAKOUT:
-            ranked_probes: list[tuple[Decimal, Instrument]] = []
+            ranked_probes: list[tuple[tuple[int, Decimal, Decimal, str], Instrument]] = []
             for inst in selected_instruments:
                 q = quotes_by_symbol[inst.id.symbol]
                 if inst.id.symbol in shortlisted_symbols:
                     continue
-                is_track_b_ready = (
-                    self._feature_contract == "discovery_v2"
-                    and (inst.id.symbol in self._stage1_ready_symbols or inst.id.symbol in self._vvi_symbols)
-                )
-                min_probe_vol = Decimal("500000") if is_track_b_ready else Decimal("1500000")
+                probe_rejection = self._probe_rejection_reason(q, target_direction)
+                if probe_rejection is not None:
+                    self._note(inst.id.symbol, "probe_admission", probe_rejection)
+                    continue
+                in_stage1_ready = self._feature_contract == "discovery_v2" and inst.id.symbol in self._stage1_ready_symbols
+                in_vvi = self._feature_contract == "discovery_v2" and inst.id.symbol in self._vvi_symbols
+                is_track_b_ready = in_stage1_ready or in_vvi
+                additional_priority = self._additional_probe_priority(inst.id.symbol)
+                min_probe_vol = Decimal("500000") if is_track_b_ready or additional_priority > ZERO else Decimal("1500000")
                 if q.quote_volume_24h < min_probe_vol or q.spread_bps > Decimal("25"):
                     continue
                 funding_signal = max(Decimal("0"), Decimal("-0.00005") - (q.funding_rate or ZERO)) if q.funding_rate is not None else ZERO
                 basis_signal = max(ZERO, (q.basis_pct or ZERO) - Decimal("0.0008"))
-                track_b_boost = Decimal("1000") if is_track_b_ready else ZERO
-                if is_track_b_ready and inst.id.symbol in self._vvi_symbols:
+                track_b_boost = max(Decimal("1000") if is_track_b_ready else ZERO, additional_priority)
+                if is_track_b_ready and in_vvi:
                     track_b_boost += Decimal("500")
                 if funding_signal <= ZERO and basis_signal <= ZERO and track_b_boost <= ZERO:
                     continue
-                anomaly_rank = track_b_boost + funding_signal * Decimal("100000") + basis_signal * Decimal("10000")
-                ranked_probes.append((anomaly_rank, inst))
-            ranked_probes.sort(key=lambda item: (item[0], quotes_by_symbol[item[1].id.symbol].quote_volume_24h), reverse=True)
+                if in_stage1_ready and in_vvi:
+                    probe_class = 3
+                elif in_vvi or in_stage1_ready:
+                    probe_class = 2
+                elif additional_priority > ZERO:
+                    probe_class = 1
+                else:
+                    probe_class = 0
+                vvi_within_boost = Decimal("500") if in_vvi else ZERO
+                raw_within_score = vvi_within_boost + funding_signal * Decimal("100000") + basis_signal * Decimal("10000") + additional_priority
+                within_class_score = min(Decimal("999999"), raw_within_score) if raw_within_score.is_finite() else ZERO
+                ranked_probes.append(((probe_class, within_class_score, q.quote_volume_24h, inst.id.symbol), inst))
+            ranked_probes.sort(key=lambda item: (-item[0][0], -item[0][1], -item[0][2], item[0][3]))
             probe_limit = 30 if self._feature_contract == "discovery_v2" else 15
             stage2_probes = [inst for _, inst in ranked_probes[:probe_limit]]
             if self._feature_contract == "discovery_v2":
@@ -526,6 +572,7 @@ class CryptoOpportunityScreener:
             self._note(inst.id.symbol, "stage2", "admitted" if inst.id.symbol in admitted else "not_admitted",
                        structural_ready=inst.id.symbol in self._stage1_ready_symbols,
                        vvi_ignition=inst.id.symbol in self._vvi_symbols,
+                       additional_probe_priority=self._additional_probe_priority(inst.id.symbol),
                        probe_overflow=inst.id.symbol in probe_overflow_symbols)
 
         # Stage 2: Deep Derivatives Enrichment ONLY for surviving shortlist
@@ -644,7 +691,9 @@ class CryptoOpportunityScreener:
                         self._note(symbol, "publication", "requested_score_floor")
                         continue
                 if enforce_quality or min_score is None:
-                    reasons = publication_rejection_reasons(opp, coi_score=effective_coi)
+                    reasons = publication_rejection_reasons(
+                        opp, coi_score=effective_coi, top_gainer_symbols=effective_top10_gainers
+                    )
                     if reasons:
                         for reason in reasons:
                             self._note(symbol, "publication", "publication:" + reason)
@@ -771,6 +820,7 @@ class CryptoOpportunityScreener:
         explicit_derivatives: DerivativesSnapshot | None = None,
     ) -> list[CryptoOpportunity]:
         """Evaluate a single instrument across 1h, 4h, derivatives, and alpha factors."""
+        is_discovery_tier = self._candidate_is_discovery_tier(is_discovery_tier)
         c1h: Sequence[Candle] | BaseException
         c4h: Sequence[Candle] | BaseException
         c1w: Sequence[Candle] | BaseException
@@ -1520,7 +1570,7 @@ class CryptoOpportunityScreener:
             btc_residual_alpha=residual_24h,
             rvol_4h=rvol_4h,
             asymmetric_rr=bracket.asymmetric_rr,
-            dist_to_trigger=dist_to_ceiling,
+            dist_to_trigger=abs(bracket.breakout_trigger - close) / max(close, Decimal("1e-8")),
             macro_multiplier=macro_mult,
             is_btc_cascade=is_btc_cascade,
             dist_to_entry=abs(close - bracket.suggested_entry) / max(close, Decimal("1e-8")),
@@ -1634,7 +1684,7 @@ class CryptoOpportunityScreener:
             (
                 "Trend Baseline",
                 gate_details.get("L1", True),
-                f"Holding above 4H EMA50 (${float(ema50_4h):.4f})",
+                f"Trend/base-reclaim checks | Price ${float(close):.4f}, 4H EMA50 ${float(ema50_4h):.4f}",
             ),
             (
                 "Anti-Chasing Validated",
@@ -1724,8 +1774,8 @@ class CryptoOpportunityScreener:
             retest_stop=bracket.retest_stop if bracket.retest_stop > 0 else None,
             breakout_stop=bracket.breakout_stop if bracket.breakout_stop > 0 else None,
             suggested_targets=bracket.targets,
-            risk_reward_ratio=bracket.r_t1 if close < poc_price else bracket.r_t2,
-            risk_reward_target_index=1 if close < poc_price else 2,
+            risk_reward_ratio=bracket.asymmetric_rr,
+            risk_reward_target_index=2,
             estimated_win_rate_pct=(p_win * Decimal("100.0")).quantize(Decimal("0.1")),
             expected_value_r=ev_r,
             conviction=conviction,
@@ -1793,6 +1843,7 @@ class CryptoOpportunityScreener:
         atr14 = snap_1h.atr14
         closes_4h = [c.close for c in closed_4h]
         if len(closes_4h) < 20:
+            self._note(inst.id.symbol, "distribution_rejection", "insufficient_4h_bars", bars=len(closes_4h))
             return None
 
         ema20_4h = ema(closes_4h, 20)[-1]
@@ -1808,6 +1859,7 @@ class CryptoOpportunityScreener:
         high_30d = max(c.high for c in vpvr_window)
         low_30d = min(c.low for c in vpvr_window)
         if low_30d <= ZERO or high_30d <= low_30d:
+            self._note(inst.id.symbol, "distribution_rejection", "invalid_30d_range")
             return None
         range_height_30d = (high_30d - low_30d) / max(low_30d, Decimal("1e-8"))
 
@@ -1898,6 +1950,7 @@ class CryptoOpportunityScreener:
         oi_change_7d = derivatives.open_interest_change_7d if derivatives else None
         # Fix 2: Hard veto on Short setups when Stage 2 derivatives has missing 7d OI ("N/A")
         if derivatives is not None and oi_change_7d is None:
+            self._note(inst.id.symbol, "distribution_rejection", "missing_7d_oi", enriched=True)
             return None
         taker_ratio_calc = taker_buy_ratio_from_candles(closed_1h, hours=24)
         taker_ratio: Decimal | None
@@ -1953,11 +2006,25 @@ class CryptoOpportunityScreener:
         )
         archetype = classify_short_archetype(short_features)
         if archetype is None:
+            self._note(
+                inst.id.symbol,
+                "distribution_rejection",
+                "no_short_archetype",
+                enriched=derivatives is not None,
+                pos_in_range_30d=pos_in_range,
+                ret_14d=ret_14d,
+                ret_24h=ret_24h,
+                rsi_4h=rsi_4h,
+                rsi_1d=rsi_1d,
+                has_bearish_div=has_bearish_divergence,
+                taker_buy_ratio_24h=taker_buy_ratio_24h,
+            )
             return None
 
         # Stage 2 Gate S5 Trapped Longs Guard: Missing Stage 2 derivatives telemetry cannot falsely satisfy crowding gate
         if derivatives is not None and getattr(derivatives, "degraded_telemetry", False):
             if funding is None and oi_change_7d is None:
+                self._note(inst.id.symbol, "distribution_rejection", "degraded_stage2_telemetry", enriched=True)
                 return None
 
         # 9. Mandatory Domain Screening Gates S1-S5 (Two-Track Precision Spec)
@@ -1997,7 +2064,30 @@ class CryptoOpportunityScreener:
         )
         gates_passed, gate_details = evaluate_short_gates(gate_inputs, archetype)
         if not gates_passed:
+            failed_gates = tuple(name for name, passed in gate_details.items() if not passed)
+            anti_squeeze = len(failed_gates) == 5
+            self._note(
+                inst.id.symbol,
+                "distribution_rejection",
+                "anti_squeeze_veto" if anti_squeeze else "short_gates_failed",
+                enriched=derivatives is not None,
+                archetype=archetype.value,
+                failed_gates=failed_gates,
+                funding_rate_8h=funding,
+                oi_delta_7d=oi_change_7d,
+                taker_buy_ratio_24h=taker_buy_ratio_24h,
+                pos_in_range_30d=pos_in_range,
+                **gate_details,
+            )
             return None
+        self._note(
+            inst.id.symbol,
+            "distribution_gates",
+            "passed",
+            enriched=derivatives is not None,
+            archetype=archetype.value,
+            **gate_details,
+        )
 
         # 10. 5-Level Execution Bracket Construction with Tick-Size Normalization
         try:
@@ -2026,8 +2116,24 @@ class CryptoOpportunityScreener:
         dist_to_trigger = (close - bracket.breakout_trigger) / max(close, Decimal("1e-8"))
         dist_to_entry = abs(close - bracket.suggested_entry) / max(close, Decimal("1e-8"))
         if dist_to_entry > Decimal("0.045"):
+            self._note(
+                inst.id.symbol,
+                "distribution_rejection",
+                "dist_to_entry_exceeded",
+                enriched=derivatives is not None,
+                archetype=archetype.value,
+                dist_to_entry=dist_to_entry,
+            )
             return None
         if bracket.asymmetric_rr < Decimal("1.40"):
+            self._note(
+                inst.id.symbol,
+                "distribution_rejection",
+                "rr_below_floor",
+                enriched=derivatives is not None,
+                archetype=archetype.value,
+                asymmetric_rr=bracket.asymmetric_rr,
+            )
             return None
         cvd_val = Decimal(str(quote.cvd_zscore)) if hasattr(quote, "cvd_zscore") and quote.cvd_zscore is not None else Decimal("0.0")
 
@@ -2115,7 +2221,49 @@ class CryptoOpportunityScreener:
                 else f"Ceiling distance {float(dist_to_ceiling*100):.1f}% outside retest corridor"
             )
 
-        is_div_valid = bool(has_bearish_divergence)
+        if archetype is SetupLabel.UTAD_DIVERGENCE_SHORT:
+            item2_title = "Bearish Divergence"
+            is_div_valid = bool(has_bearish_divergence)
+            div_desc = (
+                "Confirmed 4H/1D Bearish Divergence (RSI & MACD)"
+                if is_div_valid
+                else "No Confirmed Divergence"
+            )
+        elif archetype is SetupLabel.EXHAUSTION_REVERSAL_SHORT:
+            item2_title = "Divergence / Climax Rejection"
+            has_climax_rej = bool(
+                upper_wick_ratio_4h >= Decimal("0.35")
+                and close <= (high_24h - Decimal("0.45") * atr14)
+                and (rsi_4h >= Decimal("70.0") or rsi_1d >= Decimal("70.0"))
+            )
+            is_div_valid = bool(has_bearish_divergence or has_climax_rej)
+            div_desc = (
+                "Confirmed 4H/1D Bearish Divergence (RSI & MACD)"
+                if has_bearish_divergence
+                else (
+                    f"Overbought climax rejection ({float(upper_wick_ratio_4h * 100):.0f}% wick)"
+                    if has_climax_rej
+                    else "No Divergence or Climax Rejection"
+                )
+            )
+        else:
+            item2_title = "Divergence / Breakdown Flow"
+            has_breakdown_flow = bool(
+                close <= ema50_4h
+                and macd_hist_4h <= macd_hist_4h_prev
+                and taker_buy_ratio_24h is not None
+                and taker_buy_ratio_24h <= Decimal("0.95")
+            )
+            is_div_valid = bool(has_bearish_divergence or has_breakdown_flow)
+            div_desc = (
+                "Confirmed 4H/1D Bearish Divergence (RSI & MACD)"
+                if has_bearish_divergence
+                else (
+                    "EMA50 breakdown with seller taker dominance"
+                    if has_breakdown_flow
+                    else "No Divergence or Confirmed Breakdown Flow"
+                )
+            )
         is_macd_valid = bool(is_4h_macd_bearish_cross or is_4h_hist_negative or is_1h_macd_bearish)
         is_vol_valid = bool(vol_drying or has_climax_wick or is_4h_hist_decelerating)
         is_deriv_valid = bool(trapped_longs_check or squeeze_flush_check or (funding is not None and funding >= Decimal("0.00005")))
@@ -2163,7 +2311,6 @@ class CryptoOpportunityScreener:
         if is_btc_cascade:
             rationale.append(f"Macro Tailwind: BTC Flash Dump Active ({float(btc_ret_1h*100):.1f}%)")
 
-        div_desc = "Confirmed 4H/1D Bearish Divergence (RSI & MACD)" if has_bearish_divergence else "No Confirmed Divergence"
         macd_desc = "4H MACD crossed below signal line | Hist decelerating" if is_4h_macd_bearish_cross else ("MACD histogram negative" if is_4h_hist_negative else "Bearish MACD momentum active")
         vol_desc = "Effort vs Result: Volume drying on push, seller dominance" if (vol_drying or has_climax_wick) else f"Volume ratio {float(vol_contraction_ratio):.2f}"
         deriv_desc = (
@@ -2174,10 +2321,28 @@ class CryptoOpportunityScreener:
 
         checklist = (
             (item1_title, is_item1_valid, item1_desc),
-            ("Bearish Divergence", is_div_valid, div_desc),
+            (item2_title, is_div_valid, div_desc),
             ("MACD Bearish Crossover", is_macd_valid, macd_desc),
             ("Volume & Momentum Exhaustion", is_vol_valid, vol_desc),
             ("Trapped Longs / Funding", is_deriv_valid, deriv_desc),
+        )
+        failed_checklist_items = tuple(title for title, passed, _ in checklist if not passed)
+        checklist_passed_count = sum(1 for _, passed, _ in checklist if passed)
+        self._note(
+            inst.id.symbol,
+            "distribution_candidate",
+            "evaluated",
+            enriched=derivatives is not None,
+            archetype=archetype.value,
+            score=final_score,
+            conviction=conviction,
+            checklist_passed=checklist_passed_count,
+            failed_checklist_items=failed_checklist_items,
+            entry=bracket.suggested_entry,
+            stop=bracket.invalidation_stop,
+            trigger=bracket.breakout_trigger,
+            rr=bracket.r_t2,
+            pos_in_range_30d=pos_in_range,
         )
 
         breakdown = CryptoScreenerScoreBreakdown(

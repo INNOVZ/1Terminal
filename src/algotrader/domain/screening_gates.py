@@ -193,23 +193,46 @@ def evaluate_long_gates(
         and (inputs.vcr_4h <= Decimal("0.90"))
     )
     is_base_consolidation = (
-        arch_val in ("VCP_COMPRESSION_LONG", "RANGE_BOTTOM_ACCUMULATION_LONG", "OI_ACCUMULATION_LONG")
-        and (inputs.close >= inputs.ema50_4h * Decimal("0.985"))
-        and (inputs.bb_inside_kc_4h or inputs.bb_bandwidth_4h <= Decimal("0.22"))
+        arch_val in (
+            "VCP_COMPRESSION_LONG",
+            "RANGE_BOTTOM_ACCUMULATION_LONG",
+            "OI_ACCUMULATION_LONG",
+            "MOMENTUM_EMERGING_LONG",
+        )
+        and (
+            inputs.close >= inputs.ema50_4h * Decimal("0.96")
+            or (inputs.val_30d > Decimal("0") and inputs.close >= inputs.val_30d)
+        )
+        and (inputs.bb_inside_kc_4h or inputs.bb_bandwidth_4h <= Decimal("0.28"))
     )
     is_squeeze_absorption = (
         arch_val == "SHORT_SQUEEZE_ABSORPTION_LONG"
         and (inputs.funding_rate_8h is None or inputs.funding_rate_8h <= Decimal("-0.00005"))
         and (
-            inputs.close >= inputs.ema50_4h * Decimal("0.975")
+            inputs.close >= inputs.ema50_4h * Decimal("0.96")
             or inputs.close >= inputs.poc_30d * Decimal("0.975")
+            or (
+                inputs.oi_delta_24h is not None
+                and inputs.oi_delta_24h >= Decimal("0.05")
+                and inputs.close >= inputs.ema20_4h
+            )
         )
     )
 
     # Macro Death Cross Veto: Price and EMA50 must not be submerged in a severe macro downtrend under EMA200
+    # Exempt MOMENTUM_EMERGING_LONG when reclaiming above 4H EMA20 with positive 4H/1H buyer flow and 4H RSI >= 52.0
+    is_emerging_base_reclaim = (
+        arch_val == "MOMENTUM_EMERGING_LONG"
+        and inputs.close >= inputs.ema20_4h
+        and (inputs.close >= inputs.ema50_4h * Decimal("0.88"))
+        and inputs.rsi_4h >= Decimal("52.0")
+        and (inputs.bb_inside_kc_4h or inputs.bb_bandwidth_4h <= Decimal("0.28"))
+        and (inputs.taker_buy_ratio_4h is None or inputs.taker_buy_ratio_4h >= Decimal("1.15"))
+    )
     has_macro_death_cross = (
         (inputs.ema50_4h < inputs.ema200_4h * Decimal("0.95"))
         and (inputs.close < inputs.ema200_4h * Decimal("0.96"))
+        and not is_emerging_base_reclaim
     )
 
     # Post-Crash Markdown Filter: Exclude tokens that dumped severely over 7 days while bleeding OI or deeply below EMA200
@@ -222,7 +245,7 @@ def evaluate_long_gates(
     )
 
     l1 = (
-        (is_standard_trend or is_wyckoff_spring or is_base_consolidation or is_squeeze_absorption)
+        (is_standard_trend or is_wyckoff_spring or is_base_consolidation or is_squeeze_absorption or is_emerging_base_reclaim)
         and not has_macro_death_cross
         and not is_post_crash_markdown
     )
@@ -317,7 +340,15 @@ def evaluate_long_gates(
     dist_to_ceiling = (inputs.high_30d - inputs.close) / max(inputs.close, EPSILON)
     is_expansion_archetype = arch_val in ("BREAKOUT_LONG", "MOMENTUM_EMERGING_LONG")
     max_range = Decimal("2.50") if is_expansion_archetype else Decimal("1.80")
-    max_dist = Decimal("0.45") if arch_val in ("SHORT_SQUEEZE_ABSORPTION_LONG", "RANGE_BOTTOM_ACCUMULATION_LONG") else Decimal("0.38")
+    max_dist = (
+        Decimal("1.25")
+        if arch_val == "MOMENTUM_EMERGING_LONG"
+        else (
+            Decimal("0.50")
+            if arch_val in ("SHORT_SQUEEZE_ABSORPTION_LONG", "RANGE_BOTTOM_ACCUMULATION_LONG")
+            else Decimal("0.38")
+        )
+    )
     standard_l3 = (range_height_30d <= max_range) and (
         Decimal("-0.05") <= dist_to_ceiling <= max_dist
     )
@@ -397,8 +428,18 @@ def evaluate_long_gates(
             or (inputs.taker_buy_ratio_1h is not None and inputs.taker_buy_ratio_1h >= Decimal("1.10"))
         )
     )
+    tight_squeeze_ignition = bool(
+        inputs.bb_bandwidth_4h <= Decimal("0.12")
+        and inputs.close >= inputs.ema50_4h * Decimal("0.985")
+        and inputs.close >= inputs.poc_30d * Decimal("0.985")
+        and (inputs.oi_delta_4h is None or inputs.oi_delta_4h >= Decimal("-0.0035"))
+        and (
+            (inputs.taker_buy_ratio_4h is not None and inputs.taker_buy_ratio_4h >= Decimal("1.04"))
+            or (inputs.taker_buy_ratio_1h is not None and inputs.taker_buy_ratio_1h >= Decimal("1.08"))
+        )
+    )
     stealth_coil_qualified = (
-        (coil_maturity >= 65) or volume_vacuum or mature_squeeze or stealth_oi_accumulation
+        (coil_maturity >= 65) or volume_vacuum or mature_squeeze or stealth_oi_accumulation or tight_squeeze_ignition
     )
 
     # 1. Universal Order-Flow Audit (Bypass eliminated: every candidate audited regardless of dist_to_ceiling)
@@ -427,6 +468,11 @@ def evaluate_long_gates(
                 and (
                     (inputs.oi_delta_4h is not None and inputs.oi_delta_4h >= 0)
                     or (inputs.taker_buy_ratio_4h is not None and inputs.taker_buy_ratio_4h >= Decimal("1.01"))
+                    or (
+                        inputs.taker_buy_ratio_1h is not None
+                        and inputs.taker_buy_ratio_1h >= Decimal("1.08")
+                        and (inputs.taker_buy_ratio_4h is None or inputs.taker_buy_ratio_4h >= Decimal("0.99"))
+                    )
                 )
             )
             # Preserve confirmed fresh OI inflections after a longer washout.
@@ -438,7 +484,7 @@ def evaluate_long_gates(
                     or (inputs.taker_buy_ratio_1h is not None and inputs.taker_buy_ratio_1h >= Decimal("1.05"))
                 )
             )
-            universal_oi_ok = discovery_flow or fresh_inflection
+            universal_oi_ok = discovery_flow or fresh_inflection or tight_squeeze_ignition
         if dist_to_ceiling <= Decimal("0.045"):
             # Strict resistance ceiling rule: OI_7d >= -1.0% AND RVOL >= 1.15x
             # Stealth coil bypass: mature compression coiling under ceiling doesn't require pre-breakout volume surge
@@ -505,7 +551,26 @@ def evaluate_long_gates(
     if is_acute_oi_liquidation:
         flow_confirmed = False
 
-    l6 = flow_confirmed and ignition_confirmed and not is_acute_oi_liquidation
+    # Fix 5 (Atlas v3.1 Finding 1): Wide-Excursion Exhaustion-Risk Guard for Coil/Range Archetypes.
+    # Only measured Stage-2 negatives trigger rejection; Stage-1 None values remain unknown and pass Stage 1.
+    is_wide_excursion_coil_exhaustion = False
+    if arch_val in ("COIL_SPRING_LONG", "VCP_COMPRESSION_LONG", "RANGE_BOTTOM_ACCUMULATION_LONG"):
+        unwinding_24h_oi = inputs.oi_delta_24h is not None and inputs.oi_delta_24h < Decimal("-0.015")
+        passive_weak_1h_taker = (
+            inputs.rvol_4h < Decimal("1.25")
+            and inputs.taker_buy_ratio_1h is not None
+            and inputs.taker_buy_ratio_1h < Decimal("1.05")
+        )
+        if inputs.excursion_72h > Decimal("0.22") and (unwinding_24h_oi or passive_weak_1h_taker):
+            is_wide_excursion_coil_exhaustion = True
+            flow_confirmed = False
+
+    l6 = (
+        flow_confirmed
+        and ignition_confirmed
+        and not is_acute_oi_liquidation
+        and not is_wide_excursion_coil_exhaustion
+    )
 
     gates = {"L1": l1, "L2": l2, "L3": l3, "L4": l4, "L5": l5, "L6": l6}
     return all(gates.values()), gates
