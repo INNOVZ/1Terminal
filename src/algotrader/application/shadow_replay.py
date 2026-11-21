@@ -15,7 +15,7 @@ from algotrader.application.shadow_budget import (
 )
 from algotrader.application.shadow_runner import ShadowRunner
 from algotrader.domain.errors import RateLimitError, VenueError
-from algotrader.domain.scan_observations import ScanRecord
+from algotrader.domain.scan_observations import ScanRecord, recorded_call_key
 from algotrader.domain.shadow_discovery import ShadowPolicy
 from algotrader.domain.shadow_observations import ShadowRunRecord
 from algotrader.infrastructure.scan_archive import canonical_bytes
@@ -27,7 +27,7 @@ class _ShadowTape(ReplayTape):
         self.deadline_cancel = deadline_cancel
 
     def take(self, method: str, arguments: dict[str, Any]) -> Any:
-        group = self.calls.get(canonical_bytes((method, arguments)), [])
+        group = self.calls.get((method, recorded_call_key(arguments)), [])
         error = group[0].error if group else None
         try:
             return super().take(method, arguments)
