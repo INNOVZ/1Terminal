@@ -116,3 +116,14 @@ async def test_complete_scan_with_a_cancelled_candle_fetch_replays_without_extra
     captured = await capture_scan(CancelledMarket([instrument], {}, {}), None, Macro(), settings, {})
     assert captured.record.status == "complete"
     assert (await replay_scan(captured.record)).matches
+
+
+async def test_call_tape_reuses_immutable_candles_while_isolating_caller_list_mutation() -> None:
+    tape = CallTape()
+    bars = trending_candles(up=True, count=20)
+    returned = await tape.capture("candles", {"interval": "1h"}, lambda: asyncio.sleep(0, result=bars))
+    recorded_bars = tape.calls[0].result
+    assert recorded_bars is not returned
+    assert recorded_bars[0] is bars[0]
+    returned.clear()
+    assert len(recorded_bars) == 20

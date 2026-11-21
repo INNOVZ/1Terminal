@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import secrets
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -55,10 +56,12 @@ def _get_short_watch_service(runtime: Runtime | None = None) -> TopGainerShortWa
     if _short_watch_service is None:
         settings = runtime.settings if runtime is not None else load_settings()
         macro_provider = runtime.macro_provider if runtime is not None else None
-        store = TopGainerShortWatchStore(Path("atlas_state.sqlite3"))
+        store = TopGainerShortWatchStore(settings.state_db_path)
         _short_watch_service = TopGainerShortWatchService(
             store, settings, macro_provider=macro_provider
         )
+    if runtime is not None:
+        _short_watch_service.macro_provider = runtime.macro_provider
     return _short_watch_service
 
 
@@ -457,7 +460,8 @@ async def _do_crypto_screen(
         # Persist every reconciliation, including removals, independently of the sidebar.
         # This is an operational audit trail, not prospective study enrollment.
         try:
-            atomic_write_json(
+            await asyncio.to_thread(
+                atomic_write_json,
                 Path("data/radar_events") / f"{uuid4()}.json",
                 {
                     "schema": "atlas-radar-events-v2",
@@ -472,10 +476,10 @@ async def _do_crypto_screen(
         _screener_cache = result
         _cache_timestamp = now
 
-        # Persist latest live scan to disk atomically
+        # Persist latest live scan to disk atomically off the main event loop thread
         try:
             cache_file = Path("data/screener_latest.json")
-            atomic_write_json(cache_file, result)
+            await asyncio.to_thread(atomic_write_json, cache_file, result)
         except Exception:
             pass
 
@@ -541,7 +545,7 @@ async def get_live_screener(
 
     # If no live scan exists yet in memory, attempt warm-up from persistent disk before initiating scan
     if not _screener_cache:
-        warm_screener_cache()
+        await asyncio.to_thread(warm_screener_cache)
 
     # Refresh older publication policies before exposing their cached candidates.
     if (
@@ -632,8 +636,10 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
                     )
             if _screener_task:
                 await _screener_task
-            with contextlib.suppress(Exception):
+            try:
                 await _run_short_watch_cycle()
+            except Exception:
+                logging.getLogger(__name__).exception("Top-gainer short-watch cycle failed")
         except Exception as init_exc:
             print(f"❌ [Cron] Initial startup refresh error: {init_exc}")
 
@@ -653,8 +659,10 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
                 f"🚀 [Cron] Waking up for aligned {interval_hours}-hour USD-M screener sweep (all liquid contracts)..."
             )
             await _do_crypto_screen(mode="all", min_score=50.0, max_symbols=320)
-            with contextlib.suppress(Exception):
+            try:
                 await _run_short_watch_cycle()
+            except Exception:
+                logging.getLogger(__name__).exception("Top-gainer short-watch cycle failed")
         except asyncio.CancelledError:
             break
         except Exception as exc:

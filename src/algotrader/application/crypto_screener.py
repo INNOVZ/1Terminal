@@ -568,6 +568,9 @@ class CryptoOpportunityScreener:
             probe_overflow_symbols = {i.id.symbol for _, i in ranked_probes[probe_limit:]}
         self.scan_counts["stage2_probes"] = len(stage2_probes)
         admitted = shortlisted_symbols | {inst.id.symbol for inst in stage2_probes}
+        for cached_symbol in list(candle_cache):
+            if cached_symbol not in admitted:
+                candle_cache.pop(cached_symbol, None)
         for inst in selected_instruments:
             self._note(inst.id.symbol, "stage2", "admitted" if inst.id.symbol in admitted else "not_admitted",
                        structural_ready=inst.id.symbol in self._stage1_ready_symbols,
@@ -601,7 +604,7 @@ class CryptoOpportunityScreener:
                                 symbol=opp.instrument.id.symbol,
                             )
                             return None
-                        cached_c = candle_cache.get(opp.instrument.id.symbol)
+                        cached_c = candle_cache.pop(opp.instrument.id.symbol, None)
                         if cached_c is not None:
                             c1h_cached = cached_c[0]
                             c4h_cached = cached_c[1]
@@ -637,7 +640,7 @@ class CryptoOpportunityScreener:
         async def enrich_probe(inst: Instrument) -> CryptoOpportunity | None:
             if derivatives_port is None:
                 return None
-            cached_c = candle_cache.get(inst.id.symbol)
+            cached_c = candle_cache.pop(inst.id.symbol, None)
             if cached_c is None:
                 return None
             async with stage2_semaphore:
@@ -673,6 +676,7 @@ class CryptoOpportunityScreener:
             *(enrich_probe(inst) for inst in stage2_probes),
             return_exceptions=True,
         )
+        candle_cache.clear()
 
         opportunities: list[CryptoOpportunity] = []
         stage2_symbols = [opp.instrument.id.symbol for opp in stage2_shortlist] + [inst.id.symbol for inst in stage2_probes]

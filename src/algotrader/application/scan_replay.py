@@ -13,8 +13,8 @@ from algotrader.domain.scan_observations import (
     RecordedCall,
     ScanDecisionJournal,
     ScanRecord,
+    recorded_call_key,
 )
-from algotrader.infrastructure.scan_archive import canonical_bytes
 
 
 class ReplayMismatch(ValueError):
@@ -23,15 +23,15 @@ class ReplayMismatch(ValueError):
 
 class ReplayTape:
     def __init__(self, calls: tuple[RecordedCall, ...]) -> None:
-        self.calls: dict[bytes, list[RecordedCall]] = {}
+        self.calls: dict[Any, list[RecordedCall]] = {}
         self.missing = False
         for call in calls:
-            self.calls.setdefault(canonical_bytes((call.method, call.arguments)), []).append(call)
+            self.calls.setdefault((call.method, recorded_call_key(call.arguments)), []).append(call)
         for group in self.calls.values():
             group.sort(key=lambda call: call.index)
 
     def take(self, method: str, arguments: dict[str, Any]) -> Any:
-        group = self.calls.get(canonical_bytes((method, arguments)))
+        group = self.calls.get((method, recorded_call_key(arguments)))
         if not group:
             self.missing = True
             raise ReplayMismatch("missing recorded input")
@@ -97,7 +97,10 @@ async def replay_scan(record: ScanRecord) -> ReplayReport:
     enabled = arguments.pop("derivatives_enabled")
     result = await screener.screen(market, derivatives_port=market if enabled else None, **arguments)
     tape.assert_consumed()
-    if (tuple(item.as_dict() for item in result) != record.opportunities or screener.scan_counts != record.counts
-        or journal.snapshot() != record.decisions or journal.cohort != record.cohort):
+    decisions_snapshot, opportunities_payload = await asyncio.to_thread(
+        lambda: (journal.snapshot(), tuple(item.as_dict() for item in result))
+    )
+    if (opportunities_payload != record.opportunities or screener.scan_counts != record.counts
+        or decisions_snapshot != record.decisions or journal.cohort != record.cohort):
         raise ReplayMismatch("replayed decisions or funnel counts differ")
     return ReplayReport(True, dict(screener.scan_counts))

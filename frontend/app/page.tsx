@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback, Suspense } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef, Suspense } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import type { Opportunity } from "./components/CandidateSidebar";
@@ -191,6 +191,13 @@ function RadarPageContent() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanNotification, setScanNotification] = useState<string | null>(null);
   const [policyVersion, setPolicyVersion] = useState<string>("atlas-v3.1-discovery-guards-1");
+  const fetchInFlightRef = useRef(false);
+  const fetchScreenerRef = useRef<((isLiveRefresh?: boolean, scope?: "core" | "full") => Promise<void>) | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const awaitingScanCompletionRef = useRef(false);
+  const manualScanRequestedRef = useRef(false);
+  const scanStartedAtRef = useRef<number | null>(null);
   const [showLeftSidebar, setShowLeftSidebar] = useState(true);
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [adaptedLevelsMap, setAdaptedLevelsMap] = useState<
@@ -299,12 +306,38 @@ function RadarPageContent() {
   );
 
   const fetchScreener = useCallback(async (isLiveRefresh: boolean = false, scope: "core" | "full" = "core") => {
+    const clearPollTimer = () => {
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+
+    const scheduleTransientNotification = (message: string) => {
+      setScanNotification(message);
+      if (notificationTimerRef.current) {
+        clearTimeout(notificationTimerRef.current);
+      }
+      notificationTimerRef.current = setTimeout(() => {
+        setScanNotification(null);
+        notificationTimerRef.current = null;
+      }, 4000);
+    };
+
     if (isLiveRefresh) {
+      clearPollTimer();
+      manualScanRequestedRef.current = true;
+      awaitingScanCompletionRef.current = true;
+      if (!scanStartedAtRef.current) {
+        scanStartedAtRef.current = Date.now();
+      }
       setIsScanning(true);
       window.dispatchEvent(new CustomEvent("atlas:scan-start"));
+    } else if (fetchInFlightRef.current) {
+      return;
     }
 
-    const applyScreenerData = async (incoming: ScreenerResponse) => {
+    const applyScreenerData = async (incoming: ScreenerResponse, notifyCompletion: boolean) => {
       if (incoming?.screening_policy_version) {
         setPolicyVersion(incoming.screening_policy_version);
       }
@@ -401,69 +434,91 @@ function RadarPageContent() {
         return enriched[0];
       });
 
-      if (isLiveRefresh) {
-        setScanNotification(
-          `✓ Rescan complete: verified ${enriched.length} setups`,
+      if (notifyCompletion) {
+        scheduleTransientNotification(
+          `✓ Rescan complete: verified ${dedupedEnriched.length} setups`,
         );
         window.dispatchEvent(
           new CustomEvent("atlas:scan-complete", {
-            detail: { count: enriched.length, timestamp: incoming.timestamp },
+            detail: { count: dedupedEnriched.length, timestamp: incoming.timestamp },
           }),
         );
       }
     };
 
+    fetchInFlightRef.current = true;
     try {
       const cacheBuster = `t=${Date.now()}`;
       const url = isLiveRefresh
         ? `/api/screener/live?refresh=true&scope=${scope}&${cacheBuster}`
         : `/api/screener/live?${cacheBuster}`;
 
-      const res = await fetch(url, { cache: "no-store" }).catch(() => null);
+      const controller = new AbortController();
+      const requestTimeout = setTimeout(() => controller.abort(), 25000);
+      const res = await fetch(url, { cache: "no-store", signal: controller.signal })
+        .catch(() => null)
+        .finally(() => clearTimeout(requestTimeout));
       let data: ScreenerResponse | null = null;
       if (res && res.ok) {
         data = (await res.json()) as ScreenerResponse;
       }
 
-      // If backend reports an active background scan, poll non-blockingly until it finishes
-      if (data && data.is_scanning) {
-        setIsScanning(true);
-        let pollAttempts = 0;
-        const maxPollAttempts = 120; // Max 240 seconds for 320-symbol discovery_v2 scan
-        let finalData: ScreenerResponse | null = null;
-        while (pollAttempts < maxPollAttempts) {
-          await new Promise((r) => setTimeout(r, 2000));
-          pollAttempts++;
-          try {
-            const pollRes = await fetch(`/api/screener/live?t=${Date.now()}`, { cache: "no-store" }).catch(() => null);
-            if (pollRes && pollRes.ok) {
-              const pollData = (await pollRes.json()) as ScreenerResponse;
-              if (pollData && !pollData.is_scanning) {
-                finalData = pollData;
-                break;
-              }
-            }
-          } catch (pollErr) {
-            console.warn("Polling error during rescan:", pollErr);
-          }
-        }
-        if (finalData) {
-          data = finalData;
-          setIsScanning(false);
-        }
+      if (data?.screening_policy_version) {
+        setPolicyVersion(data.screening_policy_version);
       }
 
-      // Apply newly verified live scan data (preserve existing state on transient network error or active scan)
-      if (data && Array.isArray(data.opportunities) && data.opportunities.length > 0) {
-        setIsScanning(false);
-        await applyScreenerData(data);
-      } else if (data && !data.is_scanning) {
-        setIsScanning(false);
+      // If backend reports an active background scan, render immediately and schedule a single adaptive follow-up poll
+      if (data && data.is_scanning) {
+        setLoading(false);
+        setIsScanning(true);
+        awaitingScanCompletionRef.current = true;
+        if (!scanStartedAtRef.current) {
+          scanStartedAtRef.current = Date.now();
+        }
+        const elapsedMs = Date.now() - scanStartedAtRef.current;
+        const nextDelayMs = elapsedMs < 120000 ? 3000 : elapsedMs < 600000 ? 5000 : 8000;
+        clearPollTimer();
+        pollTimerRef.current = setTimeout(() => {
+          pollTimerRef.current = null;
+          void fetchScreenerRef.current?.(false, scope);
+        }, nextDelayMs);
+        return;
+      }
+
+      if (!data) {
+        // Transient network hiccup while a scan is in flight: retry non-blockingly without dropping scan state
+        if (awaitingScanCompletionRef.current) {
+          clearPollTimer();
+          pollTimerRef.current = setTimeout(() => {
+            pollTimerRef.current = null;
+            void fetchScreenerRef.current?.(false, scope);
+          }, 5000);
+        } else if (isLiveRefresh) {
+          setIsScanning(false);
+          manualScanRequestedRef.current = false;
+          scheduleTransientNotification("Rescan error: connection timeout");
+          window.dispatchEvent(new CustomEvent("atlas:scan-error"));
+        }
+        return;
+      }
+
+      clearPollTimer();
+      const notifyCompletion =
+        isLiveRefresh || awaitingScanCompletionRef.current || manualScanRequestedRef.current;
+      awaitingScanCompletionRef.current = false;
+      manualScanRequestedRef.current = false;
+      scanStartedAtRef.current = null;
+      setIsScanning(false);
+
+      // Apply newly verified live scan data
+      if (Array.isArray(data.opportunities) && data.opportunities.length > 0) {
+        await applyScreenerData(data, notifyCompletion);
+      } else {
         setOpportunities([]);
         setActiveOpportunity(null);
         setActiveCandle(null);
-        if (isLiveRefresh) {
-          setScanNotification(
+        if (notifyCompletion) {
+          scheduleTransientNotification(
             "Scan complete: 0 tokens currently qualify for institutional gates",
           );
           window.dispatchEvent(
@@ -508,28 +563,43 @@ function RadarPageContent() {
     } catch (err) {
       console.warn("Using offline radar baseline:", err);
       if (isLiveRefresh) {
-        setScanNotification("Rescan error: connection timeout");
+        setIsScanning(false);
+        awaitingScanCompletionRef.current = false;
+        manualScanRequestedRef.current = false;
+        scanStartedAtRef.current = null;
+        scheduleTransientNotification("Rescan error: connection timeout");
         window.dispatchEvent(new CustomEvent("atlas:scan-error"));
       }
     } finally {
+      fetchInFlightRef.current = false;
       setLoading(false);
-      if (isLiveRefresh) {
-        setIsScanning(false);
-        setTimeout(() => setScanNotification(null), 4000);
-      }
     }
   }, [symbolParam]);
+
+  useEffect(() => {
+    fetchScreenerRef.current = fetchScreener;
+  }, [fetchScreener]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       void fetchScreener(false);
     }, 0);
     const interval = setInterval(() => {
-      void fetchScreener(false);
+      if (!awaitingScanCompletionRef.current && !fetchInFlightRef.current) {
+        void fetchScreener(false);
+      }
     }, 60000);
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      if (notificationTimerRef.current) {
+        clearTimeout(notificationTimerRef.current);
+        notificationTimerRef.current = null;
+      }
     };
   }, [fetchScreener]);
 

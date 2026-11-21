@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import errno
+import filecmp
 import hashlib
 import json
 import os
 import re
 import shutil
 import tempfile
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import UUID
 
 from algotrader.domain.scan_observations import (
@@ -17,7 +19,7 @@ from algotrader.domain.scan_observations import (
     ScanReceipt,
     ScanRecord,
     decode_value,
-    encode_value,
+    iter_canonical_json,
 )
 
 
@@ -30,7 +32,36 @@ class ArchiveIntegrityError(ValueError):
 
 
 def canonical_bytes(value: Any) -> bytes:
-    return json.dumps(encode_value(value), sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return "".join(iter_canonical_json(value)).encode("utf-8")
+
+
+def write_canonical_stream(stream: BinaryIO, value: Any, *, chunk_target: int = 65536) -> tuple[str, int]:
+    """Stream canonical JSON directly to disk in bounded chunks, periodically yielding the GIL."""
+    hasher = hashlib.sha256()
+    total_bytes = 0
+    buf: list[str] = []
+    buf_len = 0
+    flushes = 0
+    for piece in iter_canonical_json(value):
+        buf.append(piece)
+        buf_len += len(piece)
+        if buf_len >= chunk_target:
+            chunk = "".join(buf).encode("utf-8")
+            stream.write(chunk)
+            hasher.update(chunk)
+            total_bytes += len(chunk)
+            buf.clear()
+            buf_len = 0
+            flushes += 1
+            if flushes % 4 == 0:
+                time.sleep(0)
+    if buf:
+        chunk = "".join(buf).encode("utf-8")
+        stream.write(chunk)
+        hasher.update(chunk)
+        total_bytes += len(chunk)
+        buf.clear()
+    return hasher.hexdigest(), total_bytes
 
 
 def validated_id(value: str) -> str:
@@ -52,16 +83,23 @@ class LocalScanArchive:
         self.root = root
 
     def _write(self, target: Path, payload: Any) -> None:
-        data = canonical_bytes(payload)
-        manifest = json.dumps({"schema_version": SCHEMA_VERSION, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}, sort_keys=True).encode()
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=target.parent))
         try:
-            for name, content in (("payload.json", data), ("manifest.json", manifest)):
-                with (staging / name).open("xb") as stream:
-                    stream.write(content)
-                    stream.flush()
-                    os.fsync(stream.fileno())
+            payload_path = staging / "payload.json"
+            with payload_path.open("xb") as stream:
+                digest, total_bytes = write_canonical_stream(stream, payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            manifest = json.dumps(
+                {"schema_version": SCHEMA_VERSION, "sha256": digest, "bytes": total_bytes},
+                sort_keys=True,
+            ).encode()
+            manifest_path = staging / "manifest.json"
+            with manifest_path.open("xb") as stream:
+                stream.write(manifest)
+                stream.flush()
+                os.fsync(stream.fileno())
             _sync_directory(staging)
             try:
                 # An existing complete (nonempty) directory cannot be replaced by rename.
@@ -70,7 +108,12 @@ class LocalScanArchive:
                 if exc.errno not in (errno.EEXIST, errno.ENOTEMPTY):
                     raise
                 self._read(target)
-                if (target / "payload.json").read_bytes() != data:
+                existing_manifest = json.loads((target / "manifest.json").read_bytes())
+                if (
+                    existing_manifest.get("sha256") != digest
+                    or existing_manifest.get("bytes") != total_bytes
+                    or not filecmp.cmp(target / "payload.json", payload_path, shallow=False)
+                ):
                     raise ArchiveConflict("archive ID already contains different content") from exc
             _sync_directory(target.parent)
         finally:

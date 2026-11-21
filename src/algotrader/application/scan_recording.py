@@ -24,9 +24,19 @@ from algotrader.domain.scan_observations import (
     ScanRecord,
     decode_value,
     encode_value,
+    recorded_call_key,
+    snapshot_recorded_value,
 )
 from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
 from algotrader.infrastructure.scan_archive import canonical_bytes
+
+_DEFAULT_ENCODE_VALUE = encode_value
+
+
+def _copy_recorded(value: Any) -> Any:
+    if encode_value is not _DEFAULT_ENCODE_VALUE:
+        return decode_value(encode_value(value))
+    return snapshot_recorded_value(value)
 
 
 class MacroContextSource(Protocol):
@@ -55,17 +65,17 @@ def screening_configuration(settings: Settings) -> dict[str, Any]:
 class CallTape:
     def __init__(self) -> None:
         self.calls: list[RecordedCall] = []
-        self._counts: dict[bytes, int] = {}
+        self._counts: dict[Any, int] = {}
         self.recording_error: str | None = None
 
     async def capture(self, method: str, arguments: dict[str, Any], operation: Callable[[], Awaitable[Any]]) -> Any:
         try:
-            args = decode_value(encode_value(arguments))
-            key = canonical_bytes((method, args))
+            args = _copy_recorded(arguments)
+            key: Any = (method, recorded_call_key(args))
         except Exception as exc:
             self.recording_error = self.recording_error or type(exc).__name__
             args = {}
-            key = f"unrecordable:{method}:{len(self.calls)}".encode()
+            key = f"unrecordable:{method}:{len(self.calls)}"
         index = self._counts.get(key, 0)
         self._counts[key] = index + 1
         position = len(self.calls)
@@ -76,7 +86,7 @@ class CallTape:
             self.calls[position] = RecordedCall(method, index, args, error=type(exc).__name__)
             raise
         try:
-            copied = decode_value(encode_value(result))
+            copied = _copy_recorded(result)
             self.calls[position] = RecordedCall(method, index, args, copied)
         except Exception as exc:
             self.recording_error = self.recording_error or type(exc).__name__
@@ -115,7 +125,7 @@ class RecordingMacroProvider:
         return cast(MacroSentimentContext, await self.tape.capture("macro", {}, self.provider.get_context))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CapturedScan:
     record: ScanRecord
     opportunities: list[CryptoOpportunity]
@@ -154,8 +164,12 @@ async def capture_scan(
     request = {**arguments, "derivatives_enabled": derivatives is not None}
     if feature_contract != "legacy":
         request["feature_contract"] = feature_contract
-    record = ScanRecord(scan_id, started, datetime.now(UTC), status,
-        identity, request, tuple(tape.calls), journal.snapshot(),
-        tuple(opp.as_dict() for opp in result), dict(screener.scan_counts), journal.cohort,
+    completed_at = datetime.now(UTC)
+    decisions_snapshot, opportunities_payload = await asyncio.to_thread(
+        lambda: (journal.snapshot(), tuple(opp.as_dict() for opp in result))
+    )
+    record = ScanRecord(scan_id, started, completed_at, status,
+        identity, request, tuple(tape.calls), decisions_snapshot,
+        opportunities_payload, dict(screener.scan_counts), journal.cohort,
         error=type(failure).__name__ if failure else recording_error)
     return CapturedScan(record, result, failure, recording_error)

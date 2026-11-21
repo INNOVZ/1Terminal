@@ -108,3 +108,36 @@ def test_concurrent_processes_cannot_replace_complete_archives(tmp_path: Path) -
     archive = LocalScanArchive(tmp_path)
     assert len(archive.scan_ids()) == 3
     assert archive.read_scan(SCAN_ID).request["score"] in {"0", "1"}
+
+
+def test_streaming_canonical_archive_matches_reference_encoding_with_bounded_memory(tmp_path: Path) -> None:
+    import tracemalloc
+
+    from algotrader.domain.scan_observations import encode_value
+    from algotrader.infrastructure.scan_archive import canonical_bytes
+
+    candles = tuple(
+        Candle(NOW, NOW, *(Decimal(f"{i}.12345678") for _ in range(5)))
+        for i in range(2500)
+    )
+    large_record = replace(
+        record(),
+        inputs=(RecordedCall("candles", 0, {"symbol": "TESTUSDT"}, candles),),
+    )
+    reference_bytes = json.dumps(
+        encode_value(large_record), sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+
+    assert canonical_bytes(large_record) == reference_bytes
+
+    archive = LocalScanArchive(tmp_path)
+    tracemalloc.start()
+    try:
+        archive.write_scan(large_record)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    written_bytes = (tmp_path / "scans" / SCAN_ID / "payload.json").read_bytes()
+    assert written_bytes == reference_bytes
+    assert peak_bytes < 2 * 1024 * 1024
