@@ -10,6 +10,7 @@ import re
 import shutil
 import tempfile
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import UUID
@@ -158,6 +159,73 @@ class LocalScanArchive:
             if (path / "manifest.json").is_file():
                 result.append(path.name)
         return tuple(sorted(result))
+
+    def prune_scans(
+        self,
+        *,
+        max_age_days: int = 5,
+        max_scans: int = 15,
+        max_bytes: int = 2_684_354_560,
+        now: datetime | None = None,
+        preserve_scan_ids: set[str] | frozenset[str] = frozenset(),
+    ) -> tuple[str, ...]:
+        """Prune old or excess scan archives using age, count, and byte safety caps."""
+        directory = self.root / "scans"
+        if not directory.exists():
+            return ()
+        reference_now = (now or datetime.now(UTC)).astimezone(UTC)
+        cutoff_ts = (reference_now - timedelta(days=max_age_days)).timestamp()
+        staging_cutoff_ts = (reference_now - timedelta(hours=1)).timestamp()
+
+        entries: list[tuple[float, str, Path, int]] = []
+        for path in directory.iterdir():
+            if path.name.startswith(".staging-"):
+                try:
+                    if path.is_dir() and path.stat().st_mtime < staging_cutoff_ts:
+                        shutil.rmtree(path, ignore_errors=True)
+                except OSError:
+                    pass
+                continue
+            try:
+                validated_id(path.name)
+            except ValueError:
+                continue
+            manifest_path = path / "manifest.json"
+            if not manifest_path.is_file():
+                continue
+            try:
+                mtime = manifest_path.stat().st_mtime
+                manifest = json.loads(manifest_path.read_bytes())
+                size_bytes = int(manifest.get("bytes", 0))
+            except (OSError, ValueError, TypeError):
+                try:
+                    mtime = path.stat().st_mtime
+                    size_bytes = sum(
+                        child.stat().st_size for child in path.rglob("*") if child.is_file()
+                    )
+                except OSError:
+                    continue
+            entries.append((mtime, path.name, path, max(0, size_bytes)))
+
+        entries.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        pruned: list[str] = []
+        kept_count = 0
+        kept_bytes = 0
+        for mtime, scan_id, path, size_bytes in entries:
+            if scan_id in preserve_scan_ids:
+                kept_count += 1
+                kept_bytes += size_bytes
+                continue
+            too_old = mtime < cutoff_ts
+            too_many = kept_count >= max_scans
+            too_large = (kept_bytes + size_bytes) > max_bytes
+            if too_old or too_many or too_large:
+                shutil.rmtree(path, ignore_errors=True)
+                pruned.append(scan_id)
+            else:
+                kept_count += 1
+                kept_bytes += size_bytes
+        return tuple(pruned)
 
     def _outcome_directory(self, scan_id: str, horizon: int, symbol: str) -> Path:
         validated_id(scan_id)

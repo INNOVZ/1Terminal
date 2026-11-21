@@ -141,3 +141,40 @@ def test_streaming_canonical_archive_matches_reference_encoding_with_bounded_mem
     written_bytes = (tmp_path / "scans" / SCAN_ID / "payload.json").read_bytes()
     assert written_bytes == reference_bytes
     assert peak_bytes < 2 * 1024 * 1024
+
+
+def test_prune_scans_enforces_age_count_and_byte_caps(tmp_path: Path) -> None:
+    import os
+    from datetime import timedelta
+
+    archive = LocalScanArchive(tmp_path)
+    base_now = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
+    ids = [str(UUID(int=i)) for i in range(1, 7)]
+    # Write 6 scans with staggered timestamps: oldest is 6 days old, others are recent
+    ages_hours = [144, 20, 16, 12, 8, 1]
+    for sid, age_h in zip(ids, ages_hours, strict=True):
+        archive.write_scan(record(sid))
+        ts = (base_now - timedelta(hours=age_h)).timestamp()
+        os.utime(tmp_path / "scans" / sid / "manifest.json", (ts, ts))
+
+    # Max age 5 days + max 3 scans should prune oldest (6d old) + next 2 oldest, keeping latest 3
+    pruned = archive.prune_scans(
+        max_age_days=5,
+        max_scans=3,
+        max_bytes=100_000_000,
+        now=base_now,
+        preserve_scan_ids=frozenset({ids[-1]}),
+    )
+    assert set(pruned) == {ids[0], ids[1], ids[2]}
+    assert set(archive.scan_ids()) == {ids[3], ids[4], ids[5]}
+
+    # Tight byte cap prunes down to only the preserved newest scan
+    pruned_bytes = archive.prune_scans(
+        max_age_days=5,
+        max_scans=15,
+        max_bytes=1,
+        now=base_now,
+        preserve_scan_ids=frozenset({ids[-1]}),
+    )
+    assert set(pruned_bytes) == {ids[3], ids[4]}
+    assert archive.scan_ids() == (ids[5],)

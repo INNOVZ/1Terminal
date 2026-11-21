@@ -35,6 +35,7 @@ from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
 from algotrader.domain.watchlist_models import WatchlistItem, WatchlistPriority, WyckoffStage
 from algotrader.infrastructure.persistence import atomic_write_json
 from algotrader.infrastructure.runtime import Runtime, build_runtime
+from algotrader.infrastructure.scan_archive import LocalScanArchive
 from algotrader.infrastructure.top_gainer_short_watch import TopGainerShortWatchStore
 
 portal_router = APIRouter(prefix="/api")
@@ -482,6 +483,16 @@ async def _do_crypto_screen(
             await asyncio.to_thread(atomic_write_json, cache_file, result)
         except Exception:
             pass
+
+        # Automatically prune old/excess raw scan archives (5-day max age, max 15 scans, 2.5 GiB cap)
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(
+                LocalScanArchive(settings.research_archive_dir).prune_scans,
+                max_age_days=5,
+                max_scans=15,
+                max_bytes=2_684_354_560,
+                preserve_scan_ids=frozenset({run.receipt.scan_id}),
+            )
 
         return result
     except Exception as exc:
