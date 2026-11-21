@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     operator_token: SecretStr = SecretStr("")
     allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ("localhost", "127.0.0.1")
     screener_cron_enabled: bool = True
-    screener_interval_hours: int = Field(default=4, ge=1, le=24)
+    screener_interval_hours: int = Field(default=1, ge=1, le=24)
     research_archive_dir: Path = Path("data/research")
 
     # The following parameters are retained for offline research simulations only.

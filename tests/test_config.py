@@ -18,7 +18,7 @@ def test_legacy_deployment_flags_cannot_enable_trading(monkeypatch: MonkeyPatch)
 
 
 def test_screener_interval_aligns_to_utc_day() -> None:
-    assert Settings(_env_file=None).screener_interval_hours == 4
+    assert Settings(_env_file=None).screener_interval_hours == 1
     with pytest.raises(ValidationError, match="divide evenly"):
         Settings(_env_file=None, screener_interval_hours=5)
 

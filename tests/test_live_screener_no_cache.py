@@ -194,3 +194,43 @@ async def test_unconfigured_manual_short_watch_refresh_is_disabled():
             await portal_module.trigger_short_watch_tick(authorization=None)
         assert raised.value.status_code == 503
         cycle.assert_not_awaited()
+
+
+def test_seconds_until_next_cycle_hourly_alignment() -> None:
+    from datetime import UTC, datetime
+
+    assert portal_module.seconds_until_next_cycle(
+        datetime(2026, 11, 21, 4, 0, 30, tzinfo=UTC), interval_hours=1, grace_seconds=60
+    ) == 30.0
+    assert portal_module.seconds_until_next_cycle(
+        datetime(2026, 11, 21, 4, 1, 1, tzinfo=UTC), interval_hours=1, grace_seconds=60
+    ) == 3599.0
+    assert portal_module.seconds_until_next_cycle(
+        datetime(2026, 11, 21, 23, 30, 0, tzinfo=UTC), interval_hours=1, grace_seconds=60
+    ) == 1860.0
+
+
+@pytest.mark.asyncio
+async def test_do_crypto_screen_serializes_concurrent_scans() -> None:
+    active = 0
+    max_active = 0
+
+    async def slow_scan(*_args, **_kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.05)
+        active -= 1
+        return ScreeningRun([], {"evaluated": 320}, ScanReceipt("fixture", "saved"))
+
+    runtime = AsyncMock()
+    runtime.run_crypto_scan.side_effect = slow_scan
+    with (
+        patch.object(portal_module, "get_portal_runtime", return_value=runtime),
+        patch.object(portal_module, "atomic_write_json"),
+    ):
+        await asyncio.gather(
+            portal_module._do_crypto_screen(),
+            portal_module._do_crypto_screen(),
+        )
+    assert max_active == 1

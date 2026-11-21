@@ -181,9 +181,24 @@ def warm_screener_cache(path: Path | str = "data/screener_latest.json") -> dict[
 # Screener background and on-demand execution state
 _screener_task: asyncio.Task[dict[str, Any]] | None = None
 _screener_task_lock = asyncio.Lock()
+_scan_execution_lock = asyncio.Lock()
 
 
 async def _do_crypto_screen(
+    mode: str = "all",
+    min_score: float = 50.0,
+    max_symbols: int = 320,
+) -> dict[str, Any]:
+    global _screener_cache, _cache_timestamp, _is_refreshing
+    async with _scan_execution_lock:
+        return await _do_crypto_screen_locked(
+            mode=mode,
+            min_score=min_score,
+            max_symbols=max_symbols,
+        )
+
+
+async def _do_crypto_screen_locked(
     mode: str = "all",
     min_score: float = 50.0,
     max_symbols: int = 320,
@@ -601,16 +616,16 @@ async def trigger_screener_rescan(
     )
 
 
-# --- Automated 4-Hour Screener Cron Service ---
+# --- Automated Hourly Screener Cron Service ---
 _cron_task: asyncio.Task[None] | None = None
 _last_cron_run: datetime | None = None
 _next_cron_run: datetime | None = None
 
 
 def seconds_until_next_cycle(
-    now: datetime, interval_hours: int = 4, grace_seconds: int = 60
+    now: datetime, interval_hours: int = 1, grace_seconds: int = 60
 ) -> float:
-    """Calculates seconds until the next aligned UTC cycle (e.g., at 00:00:60, 04:00:60, 08:00:60 UTC for 4H)."""
+    """Calculates seconds until the next aligned UTC cycle (e.g., at XX:01:00 UTC for 1H)."""
     utc_now = now.astimezone(UTC)
     boundary_hour = (utc_now.hour // interval_hours) * interval_hours
     boundary = utc_now.replace(hour=boundary_hour, minute=0, second=0, microsecond=0)
@@ -624,7 +639,7 @@ def seconds_until_next_cycle(
 seconds_until_next_8h_cycle = seconds_until_next_cycle
 
 
-async def _screener_cron_loop(interval_hours: int = 4) -> None:
+async def _screener_cron_loop(interval_hours: int = 1) -> None:
     global _last_cron_run, _next_cron_run, _screener_task
     # If cache on startup is stale (>interval_hours) or lacks the current publication policy, refresh immediately
     now_init = datetime.now(UTC)
@@ -669,7 +684,16 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
             print(
                 f"🚀 [Cron] Waking up for aligned {interval_hours}-hour USD-M screener sweep (all liquid contracts)..."
             )
-            await _do_crypto_screen(mode="all", min_score=50.0, max_symbols=320)
+            async with _screener_task_lock:
+                active_manual_scan = (
+                    _screener_task
+                    if _screener_task is not None and not _screener_task.done()
+                    else None
+                )
+            if active_manual_scan is not None:
+                await active_manual_scan
+            else:
+                await _do_crypto_screen(mode="all", min_score=50.0, max_symbols=320)
             try:
                 await _run_short_watch_cycle()
             except Exception:
@@ -681,8 +705,8 @@ async def _screener_cron_loop(interval_hours: int = 4) -> None:
             await asyncio.sleep(60.0)
 
 
-def start_screener_cron(interval_hours: int = 4) -> None:
-    """Starts the 4-hour background screener daemon if not already running."""
+def start_screener_cron(interval_hours: int = 1) -> None:
+    """Starts the background screener daemon if not already running."""
     global _cron_task
     if not _screener_cache:
         warm_screener_cache()
@@ -737,7 +761,7 @@ async def trigger_short_watch_tick(authorization: str | None = Header(default=No
 
 @portal_router.get("/screener/cron/status")
 async def get_cron_status() -> dict[str, Any]:
-    """Returns the current operational status and next run time of the 4-hour screener cron."""
+    """Returns the current operational status and next run time of the screener cron."""
     global _last_cron_run, _next_cron_run, _cron_task
     now = datetime.now(UTC)
     settings = load_settings()
@@ -745,10 +769,11 @@ async def get_cron_status() -> dict[str, Any]:
     delay = seconds_until_next_cycle(now, interval_hours=interval_hours, grace_seconds=60)
     next_run = _next_cron_run or (now + timedelta(seconds=delay))
     is_running = _cron_task is not None and not _cron_task.done()
+    unit = "hour" if interval_hours == 1 else "hours"
     return {
         "status": "running" if is_running else "idle",
         "interval_hours": interval_hours,
-        "schedule": f"Every {interval_hours} hours at aligned UTC candle closes plus 60 seconds",
+        "schedule": f"Every {interval_hours} {unit} at aligned UTC candle closes plus 60 seconds",
         "last_run": _last_cron_run.isoformat() if _last_cron_run else None,
         "next_run": next_run.isoformat(),
         "seconds_remaining": int(delay),
