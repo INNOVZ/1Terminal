@@ -135,10 +135,18 @@ export function computeVolumeProfile(
   };
 }
 
-export function getPriceFormatOptions(price: number) {
-  if (price < 0.1) return { type: "price" as const, precision: 4, minMove: 0.0001 };
-  if (price < 1) return { type: "price" as const, precision: 4, minMove: 0.0001 };
-  if (price < 10) return { type: "price" as const, precision: 3, minMove: 0.001 };
+export function getPriceFormatOptions(price: number, tickSize?: number) {
+  if (tickSize && Number.isFinite(tickSize) && tickSize > 0) {
+    const precision = Math.min(8, Math.max(2, Math.round(-Math.log10(tickSize))));
+    return { type: "price" as const, precision, minMove: Number(Math.pow(10, -precision).toFixed(precision)) };
+  }
+  const absPrice = Math.abs(price);
+  if (absPrice > 0 && absPrice < 0.00001) return { type: "price" as const, precision: 8, minMove: 0.00000001 };
+  if (absPrice > 0 && absPrice < 0.001) return { type: "price" as const, precision: 7, minMove: 0.0000001 };
+  if (absPrice > 0 && absPrice < 0.01) return { type: "price" as const, precision: 6, minMove: 0.000001 };
+  if (absPrice > 0 && absPrice < 0.1) return { type: "price" as const, precision: 5, minMove: 0.00001 };
+  if (absPrice > 0 && absPrice < 1) return { type: "price" as const, precision: 4, minMove: 0.0001 };
+  if (absPrice > 0 && absPrice < 10) return { type: "price" as const, precision: 3, minMove: 0.001 };
   return { type: "price" as const, precision: 2, minMove: 0.01 };
 }
 
@@ -177,6 +185,7 @@ export interface ChartProps {
   onChangeInterval?: (interval: CandleInterval) => void;
   direction?: string;
   preservePublishedLevels?: boolean;
+  tickSize?: number;
 }
 
 type PriceLine = ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]>;
@@ -186,6 +195,7 @@ function TradingChart({
   symbol,
   direction = "long",
   preservePublishedLevels = false,
+  tickSize,
   pocPrice,
   vahPrice,
   valPrice,
@@ -282,9 +292,12 @@ function TradingChart({
     }
   }, [onChangeInterval]);
 
-  // Real-Time Connection Status & Hovered Legend
+  // Real-Time Connection Status
   const [connectionMode, setConnectionMode] = useState<"connecting" | "live_ws" | "live_poll">("connecting");
-  const [hoveredCandle, setHoveredCandle] = useState<Candle | null>(null);
+  const tickSizeRef = useRef(tickSize);
+  useEffect(() => {
+    tickSizeRef.current = tickSize;
+  }, [tickSize]);
 
   // --------------------------------------------------------------------------
   // EFFECT 1: Mount & Maintain Chart Instance (Once per symbol)
@@ -333,7 +346,7 @@ function TradingChart({
       rightPriceScale: {
         borderColor: "rgba(255, 255, 255, 0.08)",
         scaleMargins: { top: 0.12, bottom: 0.2 },
-        minimumWidth: 72,
+        minimumWidth: 92,
       },
       timeScale: {
         borderColor: "rgba(255, 255, 255, 0.08)",
@@ -348,7 +361,7 @@ function TradingChart({
       initialCandles.length > 0
         ? initialCandles[initialCandles.length - 1].close
         : entryPrice || pocPrice || 1;
-    const initialPriceFormat = getPriceFormatOptions(samplePrice);
+    const initialPriceFormat = getPriceFormatOptions(samplePrice, tickSizeRef.current);
 
     // 1. Candlestick Series: price line disabled per user request
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -383,7 +396,6 @@ function TradingChart({
       if (!param.time || !param.seriesData.get(candleSeries)) {
         if (activeCandlesRef.current.length > 0) {
           const lastCandle = activeCandlesRef.current[activeCandlesRef.current.length - 1];
-          setHoveredCandle(lastCandle);
           onCandleChangeRef.current?.(lastCandle);
         }
         return;
@@ -392,7 +404,6 @@ function TradingChart({
       if (data) {
         const fullCandle = activeCandlesRef.current.find((c) => c.time === (param.time as number));
         if (fullCandle) {
-          setHoveredCandle(fullCandle);
           onCandleChangeRef.current?.(fullCandle);
         }
       }
@@ -487,7 +498,6 @@ function TradingChart({
       }
 
       const lastInit = initialCandles[initialCandles.length - 1];
-      setHoveredCandle(lastInit);
       onCandleChangeRef.current?.(lastInit);
     }
 
@@ -537,13 +547,12 @@ function TradingChart({
             }
 
             const lastFetched = fetchedCandles[fetchedCandles.length - 1];
-            setHoveredCandle(lastFetched);
             onCandleChangeRef.current?.(lastFetched);
 
             // Dynamically update candlestick series priceFormat based on actual fetched prices
             if (lastFetched && candleSeriesRef.current) {
               candleSeriesRef.current.applyOptions({
-                priceFormat: getPriceFormatOptions(lastFetched.close),
+                priceFormat: getPriceFormatOptions(lastFetched.close, tickSizeRef.current),
               });
             }
 
@@ -608,7 +617,6 @@ function TradingChart({
                 low: last.low,
                 close: last.close,
               });
-              setHoveredCandle(last);
               onCandleChangeRef.current?.(last);
 
               const now = Date.now();
@@ -680,7 +688,6 @@ function TradingChart({
             });
 
             // Update legend and parent
-            setHoveredCandle(updatedCandle);
             onCandleChangeRef.current?.(updatedCandle);
 
             // Update in-memory candle buffer

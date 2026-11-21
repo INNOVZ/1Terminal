@@ -831,6 +831,7 @@ function RadarPageContent() {
 
     return {
       symbol: activeOpportunity.symbol,
+      dec,
       formattedPrice: currentPrice.toFixed(dec),
       poc: poc.toFixed(dec),
       vah: vah.toFixed(dec),
@@ -844,22 +845,27 @@ function RadarPageContent() {
 
   const candleMetrics = useMemo(() => {
     if (!activeCandle) return null;
+    const dec = headerMetrics?.dec ?? (activeCandle.close < 0.001 ? 7 : activeCandle.close < 0.01 ? 6 : activeCandle.close < 1 ? 4 : 2);
     const isBullish = activeCandle.close >= activeCandle.open;
     const volFormatted =
       activeCandle.volume !== undefined
-        ? activeCandle.volume >= 1_000_000
-          ? `${(activeCandle.volume / 1_000_000).toFixed(1)}M`
-          : `${(activeCandle.volume / 1000).toFixed(0)}k`
+        ? activeCandle.volume >= 1_000_000_000
+          ? `${(activeCandle.volume / 1_000_000_000).toFixed(2)}B`
+          : activeCandle.volume >= 1_000_000
+            ? `${(activeCandle.volume / 1_000_000).toFixed(1)}M`
+            : activeCandle.volume >= 1_000
+              ? `${(activeCandle.volume / 1000).toFixed(0)}k`
+              : `${activeCandle.volume.toFixed(0)}`
         : null;
     return {
-      open: activeCandle.open,
-      high: activeCandle.high,
-      low: activeCandle.low,
-      close: activeCandle.close,
+      open: Number(activeCandle.open).toFixed(dec),
+      high: Number(activeCandle.high).toFixed(dec),
+      low: Number(activeCandle.low).toFixed(dec),
+      close: Number(activeCandle.close).toFixed(dec),
       isBullish,
       volFormatted,
     };
-  }, [activeCandle]);
+  }, [activeCandle, headerMetrics?.dec]);
 
   const activeCandles = useMemo(() => {
     return activeOpportunity?.candles || [];
@@ -1102,14 +1108,21 @@ function RadarPageContent() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "10px 20px",
+          height: "52px",
+          minHeight: "52px",
+          maxHeight: "52px",
+          flexShrink: 0,
+          overflow: "hidden",
+          whiteSpace: "nowrap",
+          gap: "12px",
+          padding: "0 20px",
           background: "rgba(11, 15, 25, 0.98)",
           borderBottom: "1px solid var(--border-subtle)",
           zIndex: 30,
         }}
       >
         {/* Left: Brand & Active Token */}
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "14px", minWidth: 0, overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span
               style={{
@@ -1167,6 +1180,9 @@ function RadarPageContent() {
                     gap: "9px",
                     fontSize: "11px",
                     fontFamily: "var(--font-mono)",
+                    fontVariantNumeric: "tabular-nums",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
                     background: "rgba(255, 255, 255, 0.04)",
                     border: "1px solid rgba(255, 255, 255, 0.08)",
                     borderRadius: "6px",
@@ -1414,6 +1430,7 @@ function RadarPageContent() {
               symbol={activeOpportunity.symbol}
               direction={activeOpportunity.direction}
               preservePublishedLevels={activeOpportunity.risk_reward_target_index != null}
+              tickSize={Number(activeOpportunity.tick_size) || undefined}
               candles={activeCandles}
               pocPrice={pocPriceVal}
               vahPrice={vahPriceVal}
