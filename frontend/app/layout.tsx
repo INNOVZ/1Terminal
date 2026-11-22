@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import dynamic from "next/dynamic";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 const BottomDock = dynamic(() => import("./components/BottomDock"));
@@ -38,6 +39,7 @@ export default function RootLayout({
       <body>
         {children}
         <BottomDock />
+        <Analytics />
       </body>
     </html>
   );
