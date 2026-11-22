@@ -86,14 +86,16 @@ async def replay_scan(record: ScanRecord) -> ReplayReport:
     for key in ("policy", "source_hash", "python", "packages"):
         if record.identity.get(key) != current[key]:
             raise ReplayMismatch("replay identity mismatch: " + key)
-    settings = Settings(**{**record.identity["configuration"], "_env_file": None})
+    settings = Settings(**{"bearish_continuation_canary_enabled": False, "bearish_continuation_enabled": False, **record.identity["configuration"], "_env_file": None})
     tape = ReplayTape(record.inputs)
     market = ReplayMarket(tape)
     journal = ScanDecisionJournal()
     arguments = dict(record.request)
     feature_contract = arguments.pop("feature_contract", "legacy")
+    from algotrader.application.continuation_context import ReplayContinuationContext
+    context = ReplayContinuationContext(tape) if settings.bearish_continuation_enabled else None
     screener = CryptoOpportunityScreener(settings, market, evaluated_at=record.started_at, journal=journal,
-                                        feature_contract=feature_contract)
+                                        feature_contract=feature_contract, continuation_context=context)
     enabled = arguments.pop("derivatives_enabled")
     result = await screener.screen(market, derivatives_port=market if enabled else None, **arguments)
     tape.assert_consumed()

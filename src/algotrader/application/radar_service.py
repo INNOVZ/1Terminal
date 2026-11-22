@@ -9,12 +9,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from algotrader.domain.bearish_continuation import (
+    DEFAULT_POLICY,
+    POLICY_VERSION,
+    ContinuationPlan,
+    evaluate_continuation,
+)
 from algotrader.domain.indicators import bollinger_bands, ema, volume_contraction_metrics
-from algotrader.domain.models import Candle
+from algotrader.domain.models import Candle, Quote
+from algotrader.domain.radar_insights import radar_quote_snapshot
 from algotrader.domain.radar_lifecycle import evaluate_radar_candidate_lifecycle
 
 
@@ -24,6 +31,9 @@ async def reconcile_radar_cohort(
     futures: Any,
     now: datetime | None = None,
     events: list[dict[str, Any]] | None = None,
+    bearish_continuation_enabled: bool = False,
+    additional_instruments: Sequence[Any] = (),
+    quote_sink: dict[str, Quote] | None = None,
 ) -> list[dict[str, Any]]:
     """Re-audits prior radar setups against live 1H candles and retains active trades until stop or target."""
     ref_now = now or datetime.now(UTC)
@@ -69,21 +79,25 @@ async def reconcile_radar_cohort(
         ]
         return updated
 
-    if not prior_opportunities:
+    if not prior_opportunities and not additional_instruments:
         return []
     inst_by_symbol = {}
     quotes_by_symbol = {}
     try:
-        all_insts = await asyncio.wait_for(futures.instruments(), timeout=6.0)
+        all_insts = (await asyncio.wait_for(futures.instruments(), timeout=6.0)
+                     if prior_opportunities else additional_instruments)
         inst_by_symbol = {inst.id.symbol: inst for inst in all_insts}
         wanted = [
             inst_by_symbol[str(p.get("symbol"))]
             for p in prior_opportunities
             if str(p.get("symbol")) in inst_by_symbol
         ]
+        wanted = list({inst.id.symbol: inst for inst in [*wanted, *additional_instruments]}.values())
         if wanted:
             quotes = await asyncio.wait_for(futures.quotes(wanted), timeout=6.0)
             quotes_by_symbol = {q.instrument_id.symbol: q for q in quotes}
+            if quote_sink is not None:
+                quote_sink.update(quotes_by_symbol)
     except Exception:
         pass  # Retain uncertainty explicitly; a provider error is not invalidation.
 
@@ -104,9 +118,8 @@ async def reconcile_radar_cohort(
         quote_now = now or datetime.now(UTC)
         if (
             quote is not None
-            and quote.last.is_finite()
-            and quote.last > 0
-            and -5 <= (quote_now - quote.observed_at).total_seconds() <= 60
+            and quote.is_valid_book
+            and quote.is_fresh_at(quote_now, max_age_seconds=60.0, max_future_seconds=5.0)
         ):
             immediate = evaluate_radar_candidate_lifecycle(
                 prev, current_price=quote.last, now=quote_now
@@ -146,9 +159,8 @@ async def reconcile_radar_cohort(
             if (
                 not closed_1h
                 or quote is None
-                or not quote.last.is_finite()
-                or quote.last <= 0
-                or not -5 <= (checked_at - quote.observed_at).total_seconds() <= 60
+                or not quote.is_valid_book
+                or not quote.is_fresh_at(checked_at, max_age_seconds=60.0, max_future_seconds=5.0)
                 or not 0 <= (checked_at - closed_1h[-1].closed_at).total_seconds() <= 3900
             ):
                 return unavailable(prev, "fresh_quote_or_candles_unavailable")
@@ -167,8 +179,9 @@ async def reconcile_radar_cohort(
             ]
             updated = dict(prev)
             updated.setdefault("discovery_checklist", prev.get("checklist", []))
+            updated.setdefault("discovery_price", prev.get("discovery_price") or prev.get("current_price"))
             updated["radar_origin"] = "retained"
-            updated["radar_gate_policy"] = "retention-health-v2"
+            updated["radar_gate_policy"] = "retention-health-v3"
             updated["first_seen_at"] = prev.get("first_seen_at") or prev.get("evaluated_at")
             updated["radar_metrics"] = {}
             metrics = updated["radar_metrics"]
@@ -230,12 +243,51 @@ async def reconcile_radar_cohort(
                     metrics["taker_buy_sell_ratio"] = (
                         f"{float(deriv_snap.taker_buy_sell_ratio):.4f}"
                     )
+            continuation_gates = None
+            is_continuation = prev.get("setup_label") == "BREAKDOWN_RETEST_SHORT"
+            continuation_horizon = 4.0
+            if is_continuation and bearish_continuation_enabled:
+                evidence = prev.get("continuation_evidence") or {}
+                if evidence.get("policy_version") == POLICY_VERSION:
+                    try:
+                        plan = ContinuationPlan.from_dict(evidence["plan"])
+                        discovered = datetime.fromisoformat(str(prev.get("first_seen_at") or prev["evaluated_at"]))
+                        wait_deadline = plan.rejection_at + timedelta(hours=DEFAULT_POLICY.trigger_wait_hours)
+                        continuation_horizon = max(0.0, (wait_deadline - discovered).total_seconds() / 3600)
+                        # Reuse the lifecycle's post-discovery candle ordering and locked
+                        # trigger basis, including a trigger first observed in this scan.
+                        observed = evaluate_radar_candidate_lifecycle(
+                            updated, current_price=live_price, recent_candles_1h=candles_payload,
+                            ema50_4h=ema50, now=checked_at, max_age_hours=continuation_horizon,
+                        )
+                        trigger_at = datetime.fromisoformat(observed.triggered_at) if observed.triggered_at else None
+                        is_triggered = (
+                            observed.retained and trigger_at is not None
+                            and plan.rejection_at <= trigger_at <= wait_deadline
+                            and observed.trigger_basis in ("breakout", "retest")
+                            and observed.trigger_entry_price is not None
+                            and observed.trigger_stop_price is not None
+                        )
+                        current = evaluate_continuation(
+                            closed_1h, closed_4h, now=checked_at, price=live_price,
+                            tick=inst.price_tick, derivatives=deriv_snap,
+                            spread_fraction=(quote.ask - quote.bid) / quote.last,
+                            existing_plan=plan, is_triggered=is_triggered,
+                        )
+                        continuation_gates = current.gates
+                        if (not quote.quote_volume_24h.is_finite()
+                                or quote.quote_volume_24h < Decimal("500000")):
+                            continuation_gates = (*current.gates[:2], False, *current.gates[3:])
+                    except (KeyError, TypeError, ValueError, ArithmeticError):
+                        continuation_gates = None
             decision = evaluate_radar_candidate_lifecycle(
                 updated,
                 current_price=live_price,
                 recent_candles_1h=candles_payload,
                 ema50_4h=ema50,
                 now=checked_at,
+                continuation_gates=continuation_gates,
+                max_age_hours=continuation_horizon if is_continuation else 72.0,
             )
             if events is not None:
                 events.append(
@@ -275,10 +327,14 @@ async def reconcile_radar_cohort(
                         updated.pop(key, None)
                     else:
                         updated[key] = str(value)
+            updated["radar_quote"] = radar_quote_snapshot(quote, sym, checked_at)
             updated["current_price"] = str(live_price)
             updated["candles"] = candles_payload
             updated["radar_status"] = decision.state.value
             updated["radar_status_label"] = decision.label
+            updated["pending_retention_healthy"] = bool(
+                decision.triggered_at is None and decision.gates_passed == decision.gates_total
+            )
             updated["gates_passed"] = decision.gates_passed
             updated["gates_total"] = decision.gates_total
             updated["failed_gates"] = list(decision.failed_gates)

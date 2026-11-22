@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Any
 from uuid import UUID, uuid4
 
 
@@ -148,6 +149,61 @@ class Quote:
     price_change_pct_24h: Decimal | None = None
     funding_rate: Decimal | None = None
     basis_pct: Decimal | None = None
+    exchange_observed_at: datetime | None = None
+    received_at: datetime | None = None
+    book_observed_at: datetime | None = None
+    ticker_observed_at: datetime | None = None
+
+    @property
+    def is_valid_book(self) -> bool:
+        return (
+            self.bid.is_finite()
+            and self.ask.is_finite()
+            and self.last.is_finite()
+            and self.quote_volume_24h.is_finite()
+            and self.bid > 0
+            and self.ask > 0
+            and self.bid <= self.ask
+            and self.last > 0
+            and self.quote_volume_24h >= 0
+        )
+
+    def is_fresh_at(
+        self,
+        reference: datetime,
+        *,
+        max_age_seconds: float = 300.0,
+        max_future_seconds: float = 5.0,
+    ) -> bool:
+        if reference.tzinfo is None:
+            return False
+        if self.received_at is not None:
+            if self.exchange_observed_at is None:
+                return False
+            if (self.book_observed_at is None) != (self.ticker_observed_at is None):
+                return False
+            timestamps: list[datetime] = [self.exchange_observed_at]
+            if self.book_observed_at is not None:
+                timestamps.append(self.book_observed_at)
+            if self.ticker_observed_at is not None:
+                timestamps.append(self.ticker_observed_at)
+        else:
+            timestamps = [
+                ts
+                for ts in (
+                    self.exchange_observed_at,
+                    self.book_observed_at,
+                    self.ticker_observed_at,
+                )
+                if ts is not None
+            ] or [self.observed_at]
+        for ts in timestamps:
+            if ts.tzinfo is None:
+                return False
+            age = (reference - ts).total_seconds()
+            if not (-max_future_seconds <= age <= max_age_seconds):
+                return False
+        return True
 
     @property
     def mid(self) -> Decimal:
@@ -155,6 +211,14 @@ class Quote:
 
     @property
     def spread_bps(self) -> Decimal:
+        if (
+            not self.bid.is_finite()
+            or not self.ask.is_finite()
+            or self.bid <= 0
+            or self.ask <= 0
+            or self.ask < self.bid
+        ):
+            return Decimal("Infinity")
         mid = self.mid
         if mid <= 0:
             return Decimal("Infinity")
@@ -269,6 +333,7 @@ class DerivativesSnapshot:
     taker_buy_sell_ratio_24h: Decimal | None = None
     observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     degraded_telemetry: bool = False
+    continuation_inputs: dict[str, Any] | None = None
 
     @property
     def depth_imbalance(self) -> Decimal:

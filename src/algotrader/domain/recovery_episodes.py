@@ -130,13 +130,15 @@ def advance_episode(
     deadline = state.first_seen + horizon
     evaluation_at = min(at, deadline)
     fresh_quote = (
-        quote is not None and quote.instrument_id == episode.instrument.id
-        and quote.observed_at.tzinfo is not None and quote.observed_at.utcoffset() is not None
+        quote is not None
+        and quote.instrument_id == episode.instrument.id
+        and quote.observed_at.tzinfo is not None
+        and quote.observed_at.utcoffset() is not None
         and at <= deadline
-        and all(p.is_finite() and p > 0 for p in (quote.last, quote.bid, quote.ask))
-        and -5 <= (at - quote.observed_at).total_seconds() <= 120
+        and quote.is_valid_book
+        and quote.is_fresh_at(at, max_age_seconds=120.0, max_future_seconds=5.0)
         and 0 <= quote.spread_bps <= 25
-        and quote.quote_volume_24h.is_finite() and quote.quote_volume_24h >= 500000
+        and quote.quote_volume_24h >= 500000
     )
     if fresh_quote:
         assert quote is not None

@@ -163,7 +163,6 @@ const OverextensionRadarHero = memo(function OverextensionRadarHero({
         marginBottom: "28px",
         position: "relative",
         border: `1px solid ${regimeStyle.border}`,
-        boxShadow: `0 8px 32px ${regimeStyle.bg}`,
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "16px", marginBottom: "20px" }}>
@@ -254,7 +253,6 @@ const OverextensionRadarHero = memo(function OverextensionRadarHero({
               left: `calc(${Math.min(99, Math.max(1, score))}% - 3px)`,
               width: "6px",
               background: "#ffffff",
-              boxShadow: "0 0 10px #ffffff, 0 0 20px rgba(255,255,255,0.8)",
               borderRadius: "4px",
               transition: "left 0.5s ease-out",
             }}
@@ -766,7 +764,7 @@ export default function MacroPage() {
                 gap: "5px",
               }}
             >
-              <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--accent-emerald)", boxShadow: "0 0 6px var(--accent-emerald)" }} />
+              <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--accent-emerald)" }} />
               Live Telemetry Active
             </span>
           </div>

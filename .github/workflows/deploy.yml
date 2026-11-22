@@ -115,6 +115,11 @@ jobs:
             fi
             export ATLAS_DATA_DIR=/home/deploy/alfa-terminal/data
             export ATLAS_IMAGE_TAG="$RELEASE_SHA"
+            if [ -f /home/deploy/alfa-terminal/.env ]; then
+              set -a
+              . /home/deploy/alfa-terminal/.env
+              set +a
+            fi
             mkdir -p "$ATLAS_DATA_DIR"
             # Preserve deploy data and the SQLite state volume for the non-root container UID 10001.
             # The bound data path and named state volume are root-owned by default and must be fixed

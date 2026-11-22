@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from algotrader.domain.models import Direction
+from algotrader.domain.plan_diagnostics import BracketContext
 from algotrader.domain.precision import ceil_to_increment, floor_to_increment, normalize_price
 
 EPSILON = Decimal("1e-8")
@@ -42,6 +43,7 @@ class ExecutionBracket:
     execution_mode: str = "RETEST_ACCUMULATION"
     retest_stop: Decimal = Decimal("0")
     breakout_stop: Decimal = Decimal("0")
+    diagnostic_context: BracketContext | None = None
 
 
 def build_long_bracket(
@@ -138,6 +140,9 @@ def build_long_bracket(
         raw_t3 = t2 + max(tick_size, atr * Decimal("1.0"))
     t3 = normalize_price(raw_t3, tick_size)
 
+    # Save the initial objective for descriptive diagnostics only.
+    initial_t1_before_risk_sizing = t1
+
     # Execution Mode Determination
     abs_score = resistance_absorption_score if resistance_absorption_score is not None else Decimal("50.0")
 
@@ -181,6 +186,11 @@ def build_long_bracket(
         if breakout_stop >= effective_entry:
             breakout_stop = floor_to_increment(effective_entry - tick_size, tick_size)
 
+        stop_anchor = (
+            "breakout_distance_bound" if effective_entry - max_breakout_risk >= min(handle_stop, effective_entry - min_breakout_risk)
+            else "breakout_handle" if handle_stop <= effective_entry - min_breakout_risk
+            else "minimum_distance"
+        )
         effective_stop = breakout_stop
         risk_unit = max(effective_entry - effective_stop, min_breakout_risk)
         risk_unit = max(risk_unit, EPSILON)
@@ -226,6 +236,12 @@ def build_long_bracket(
         invalidation_stop = effective_stop
     else:
         effective_entry = retest_entry
+        stop_options = (
+            (swing_low_4h - Decimal("0.80") * atr, "swing_low_7d"),
+            (effective_val - Decimal("0.60") * atr, "value_area_low_30d"),
+            (retest_entry - min_retest_risk, "minimum_distance"),
+        )
+        stop_anchor = min(stop_options, key=lambda item: item[0])[1]
         effective_stop = retest_stop
         invalidation_stop = retest_stop
         breakout_stop = floor_to_increment(breakout_trigger - max(Decimal("1.0") * atr, breakout_trigger * Decimal("0.025")), tick_size)
@@ -306,6 +322,12 @@ def build_long_bracket(
         execution_mode=execution_mode,
         retest_stop=retest_stop,
         breakout_stop=breakout_stop,
+        diagnostic_context=BracketContext(
+            atr_value=atr, atr_timeframe="4h", stop_anchor=stop_anchor,
+            t1_before_risk_sizing=initial_t1_before_risk_sizing,
+            levels=(("30d POC", poc_30d), ("30d VAH", vah_30d), ("30d VAL", effective_val),
+                    ("72h compression high", local_compression_high_4h), ("30d high", high_30d)),
+        ),
     )
 
 

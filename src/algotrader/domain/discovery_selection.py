@@ -13,11 +13,14 @@ ACTIVITY_POLICY = "recovery-activity-watch-v1-12rank8rotation"
 
 
 def liquid_quote(quote: Quote, at: datetime, *, max_age_seconds: int = 120) -> bool:
-    values = (quote.bid, quote.ask, quote.last, quote.quote_volume_24h)
-    return (all(v.is_finite() and v > 0 for v in values)
-            and quote.observed_at.utcoffset() is not None
-            and -5 <= (at - quote.observed_at).total_seconds() <= max_age_seconds
-            and quote.quote_volume_24h >= 500000 and 0 <= quote.spread_bps <= 25)
+    return (
+        quote.is_valid_book
+        and quote.quote_volume_24h > 0
+        and quote.observed_at.utcoffset() is not None
+        and quote.is_fresh_at(at, max_age_seconds=float(max_age_seconds), max_future_seconds=5.0)
+        and quote.quote_volume_24h >= 500000
+        and 0 <= quote.spread_bps <= 25
+    )
 
 
 def activity_scores(instruments: Sequence[Instrument], quotes: Mapping[str, Quote], at: datetime, *, max_age_seconds: int = 120) -> dict[str, Decimal]:

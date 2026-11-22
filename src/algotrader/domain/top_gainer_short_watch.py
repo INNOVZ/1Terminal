@@ -1,4 +1,5 @@
 """Domain policy and state transitions for tracking rolling top gainers into confirmed shorts."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -24,7 +25,7 @@ class TopGainerWatchState(StrEnum):
 
 @dataclass(frozen=True)
 class TopGainerWatchPolicy:
-    version: str = "top-gainer-short-watch-v1"
+    version: str = "top-gainer-short-watch-v2-current-quality"
     top_n_gainers: int = 20
     min_24h_gain_pct: Decimal = Decimal("8.0")
     min_quote_volume_24h: Decimal = Decimal("500000")
@@ -88,7 +89,10 @@ class TopGainerWatchEpisode:
             "latest_price": float(self.latest_price),
             "latest_24h_pct": float(self.latest_24h_pct),
             "drawdown_from_peak_pct": (
-                round(float((self.latest_price - self.peak_price) / self.peak_price * Decimal("100")), 2)
+                round(
+                    float((self.latest_price - self.peak_price) / self.peak_price * Decimal("100")),
+                    2,
+                )
                 if self.peak_price > 0
                 else 0.0
             ),
@@ -98,8 +102,12 @@ class TopGainerWatchEpisode:
             "failed_checklist_items": list(self.failed_checklist_items),
             "latest_blocker": self.latest_blocker,
             "latest_score": float(self.latest_score) if self.latest_score is not None else None,
-            "latest_conviction": float(self.latest_conviction) if self.latest_conviction is not None else None,
-            "pos_in_range_30d": float(self.pos_in_range_30d) if self.pos_in_range_30d is not None else None,
+            "latest_conviction": float(self.latest_conviction)
+            if self.latest_conviction is not None
+            else None,
+            "pos_in_range_30d": float(self.pos_in_range_30d)
+            if self.pos_in_range_30d is not None
+            else None,
             "watch_tier": self.watch_tier,
             "confirmed_at": self.confirmed_at.isoformat() if self.confirmed_at else None,
             "confirmed_opportunity": self.confirmed_opportunity,
@@ -125,7 +133,7 @@ def _deduplicated_liquid_usdm(
         ):
             continue
         q = quotes.get(inst.id.symbol)
-        if q is None or not q.last.is_finite() or q.last <= 0:
+        if q is None or not q.is_valid_book:
             continue
         if q.quote_volume_24h < policy.min_quote_volume_24h or q.spread_bps > policy.max_spread_bps:
             continue
@@ -171,7 +179,7 @@ def select_top_gainer_instruments(
 
     ranked_gainers.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
     new_slots = min(policy.top_n_gainers, policy.max_active_watches - len(selected))
-    for _, _, _, inst in ranked_gainers[:max(0, new_slots)]:
+    for _, _, _, inst in ranked_gainers[: max(0, new_slots)]:
         selected.append(inst)
     return tuple(selected)
 
@@ -188,11 +196,11 @@ def extract_short_diagnostic(
     rej_events = [e for e in sym_events if e.get("stage") == "distribution_rejection"]
 
     if opportunity is not None:
-        failed_items = tuple(
-            title for title, passed, _ in opportunity.checklist if not passed
-        )
+        failed_items = tuple(title for title, passed, _ in opportunity.checklist if not passed)
         passed_count = sum(1 for _, passed, _ in opportunity.checklist if passed)
-        eff_score = opportunity.conviction if opportunity.conviction is not None else opportunity.score
+        eff_score = (
+            opportunity.conviction if opportunity.conviction is not None else opportunity.score
+        )
         blocker = None
         if passed_count < 5:
             blocker = f"checklist_{passed_count}_of_5:" + ",".join(failed_items)
@@ -206,9 +214,7 @@ def extract_short_diagnostic(
             "blocker": blocker,
             "score": opportunity.score,
             "conviction": eff_score,
-            "pos_in_range_30d": (
-                cand_events[-1].get("pos_in_range_30d") if cand_events else None
-            ),
+            "pos_in_range_30d": (cand_events[-1].get("pos_in_range_30d") if cand_events else None),
         }
 
     if cand_events:
@@ -221,9 +227,7 @@ def extract_short_diagnostic(
             "checklist_passed": cp,
             "failed_checklist_items": failed,
             "blocker": (
-                f"checklist_{cp}_of_5:" + ",".join(failed)
-                if cp < 5
-                else "filtered_post_evaluation"
+                f"checklist_{cp}_of_5:" + ",".join(failed) if cp < 5 else "filtered_post_evaluation"
             ),
             "score": last.get("score"),
             "conviction": last.get("conviction"),
@@ -286,8 +290,12 @@ def advance_top_gainer_watch_episode(
     policy: TopGainerWatchPolicy,
 ) -> TopGainerWatchEpisode:
     """Advance or enroll one Top-Gainer Short Watch episode."""
+    if evaluated_at.tzinfo is None or evaluated_at.utcoffset() is None:
+        raise ValueError("evaluated_at must be timezone-aware")
     now = evaluated_at.astimezone(UTC)
     price = quote.last
+    if not price.is_finite() or price <= ZERO:
+        raise ValueError("quote price must be finite and positive")
     ret_24h = quote.price_change_pct_24h if quote.price_change_pct_24h is not None else ZERO
 
     archetype = str(diagnostic["archetype"]) if diagnostic.get("archetype") else None
@@ -305,13 +313,19 @@ def advance_top_gainer_watch_episode(
     is_confirmed_now = (
         opportunity is not None
         and opportunity.direction is Direction.SHORT
+        and gates_passed
+        and blocker is None
         and checklist_passed >= policy.confirmed_checklist_required
         and (opportunity.conviction if opportunity.conviction is not None else opportunity.score)
         >= policy.confirmed_min_conviction
     )
 
     if previous is None:
-        state = TopGainerWatchState.CONFIRMED_SHORT if is_confirmed_now else TopGainerWatchState.WATCHING
+        state = (
+            TopGainerWatchState.CONFIRMED_SHORT
+            if is_confirmed_now
+            else TopGainerWatchState.WATCHING
+        )
         return TopGainerWatchEpisode(
             episode_id=str(uuid4()),
             symbol=symbol,
@@ -335,7 +349,9 @@ def advance_top_gainer_watch_episode(
             pos_in_range_30d=pos_30d,
             watch_tier=_classify_watch_tier(state, pos_30d, archetype, ret_24h, policy),
             confirmed_at=now if is_confirmed_now else None,
-            confirmed_opportunity=opportunity.as_dict() if is_confirmed_now and opportunity is not None else None,
+            confirmed_opportunity=opportunity.as_dict()
+            if is_confirmed_now and opportunity is not None
+            else None,
             policy_version=policy.version,
         )
 
@@ -361,12 +377,14 @@ def advance_top_gainer_watch_episode(
         policy_version=policy.version,
     )
 
-    if previous.state == TopGainerWatchState.CONFIRMED_SHORT:
+    if previous.confirmed_opportunity is not None:
         conf = previous.confirmed_opportunity or {}
         entry_val = conf.get("suggested_entry") or float(previous.latest_price)
         stop_val = conf.get("suggested_stop")
         squeeze_cap = Decimal(str(entry_val)) * (Decimal("1") + policy.squeeze_stop_cap_pct)
-        effective_stop = min(Decimal(str(stop_val)), squeeze_cap) if stop_val is not None else squeeze_cap
+        effective_stop = (
+            min(Decimal(str(stop_val)), squeeze_cap) if stop_val is not None else squeeze_cap
+        )
         if price >= effective_stop:
             return replace(
                 base_update,
@@ -383,19 +401,25 @@ def advance_top_gainer_watch_episode(
                 invalidation_reason="watch_horizon_exceeded",
                 collapse_streak=0,
             )
+        # Keep the original thesis bracket for stop monitoring; current qualification
+        # determines publication, never the existence of an old confirmation.
         return replace(
             base_update,
-            state=TopGainerWatchState.CONFIRMED_SHORT,
-            watch_tier="confirmed_short",
-            current_archetype=archetype or previous.current_archetype,
-            latest_blocker=None if is_confirmed_now else blocker,
-            confirmed_opportunity=(
-                opportunity.as_dict()
-                if is_confirmed_now and opportunity is not None
-                else previous.confirmed_opportunity
-            ),
+            state=TopGainerWatchState.CONFIRMED_SHORT
+            if is_confirmed_now
+            else TopGainerWatchState.WATCHING,
+            watch_tier="confirmed_short" if is_confirmed_now else "reverification_required",
+            latest_blocker=None if is_confirmed_now else (blocker or "current_quality_unverified"),
             invalidation_reason=None,
             collapse_streak=0,
+        )
+
+    if (now - previous.enrolled_at) >= timedelta(hours=policy.max_watch_hours):
+        return replace(
+            base_update,
+            state=TopGainerWatchState.EXPIRED,
+            watch_tier="expired",
+            invalidation_reason="watch_horizon_exceeded",
         )
 
     if is_confirmed_now:
@@ -436,4 +460,3 @@ def advance_top_gainer_watch_episode(
         invalidation_reason=inv_reason,
         collapse_streak=collapse_streak,
     )
-

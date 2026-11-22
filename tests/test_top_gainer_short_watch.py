@@ -4,15 +4,17 @@ Verifies that short decision logging, Stage-0 top-gainer pinning, watch-loop sta
 transitions, SQLite persistence, and portal endpoints work cleanly without altering
 long/buy screening or live 5/5 publication.
 """
+
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from algotrader.adapters.external.models import (
     FearGreedReading,
@@ -37,8 +39,10 @@ from algotrader.domain.models import (
 )
 from algotrader.domain.scan_observations import ScanDecisionJournal
 from algotrader.domain.top_gainer_short_watch import (
+    TopGainerWatchEpisode,
     TopGainerWatchPolicy,
     TopGainerWatchState,
+    advance_top_gainer_watch_episode,
     select_top_gainer_instruments,
 )
 from algotrader.infrastructure.top_gainer_short_watch import TopGainerShortWatchStore
@@ -111,7 +115,9 @@ def _distribution_candles(started: datetime) -> tuple[list[Candle], list[Candle]
     return near_1h, near_4h
 
 
-def _quote_for(symbol: str, price: Decimal, change_24h: Decimal, qv: Decimal, at: datetime) -> Quote:
+def _quote_for(
+    symbol: str, price: Decimal, change_24h: Decimal, qv: Decimal, at: datetime
+) -> Quote:
     from algotrader.domain.models import InstrumentId
 
     return Quote(
@@ -129,20 +135,42 @@ def _quote_for(symbol: str, price: Decimal, change_24h: Decimal, qv: Decimal, at
 
 def test_select_top_gainer_instruments_pins_active_and_ranks_top_gainers() -> None:
     at = datetime(2026, 11, 16, 4, 0, tzinfo=UTC)
-    inst_btc = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="BTCUSDT")
-    inst_a = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="ALPHABTC".replace("BTC", "USDT"))
-    inst_b = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="BETABTC".replace("BTC", "USDT"))
-    inst_c = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="GAMMAUSDT")
-    inst_low = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="THINUSDT")
+    inst_btc = make_instrument(
+        venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="BTCUSDT"
+    )
+    inst_a = make_instrument(
+        venue=Venue.BINANCE_USDM,
+        market_kind=MarketKind.FUTURES,
+        symbol="ALPHABTC".replace("BTC", "USDT"),
+    )
+    inst_b = make_instrument(
+        venue=Venue.BINANCE_USDM,
+        market_kind=MarketKind.FUTURES,
+        symbol="BETABTC".replace("BTC", "USDT"),
+    )
+    inst_c = make_instrument(
+        venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="GAMMAUSDT"
+    )
+    inst_low = make_instrument(
+        venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="THINUSDT"
+    )
 
     quotes = {
-        "BTCUSDT": _quote_for("BTCUSDT", Decimal("90000"), Decimal("1.5"), Decimal("500000000"), at),
-        "ALPHAUSDT": _quote_for("ALPHAUSDT", Decimal("1.2"), Decimal("12.0"), Decimal("1500000"), at),
+        "BTCUSDT": _quote_for(
+            "BTCUSDT", Decimal("90000"), Decimal("1.5"), Decimal("500000000"), at
+        ),
+        "ALPHAUSDT": _quote_for(
+            "ALPHAUSDT", Decimal("1.2"), Decimal("12.0"), Decimal("1500000"), at
+        ),
         "BETAUSDT": _quote_for("BETAUSDT", Decimal("2.4"), Decimal("28.0"), Decimal("900000"), at),
-        "GAMMAUSDT": _quote_for("GAMMAUSDT", Decimal("0.8"), Decimal("3.0"), Decimal("2000000"), at),
+        "GAMMAUSDT": _quote_for(
+            "GAMMAUSDT", Decimal("0.8"), Decimal("3.0"), Decimal("2000000"), at
+        ),
         "THINUSDT": _quote_for("THINUSDT", Decimal("0.5"), Decimal("45.0"), Decimal("100000"), at),
     }
-    policy = TopGainerWatchPolicy(top_n_gainers=2, min_24h_gain_pct=Decimal("8.0"), max_active_watches=5)
+    policy = TopGainerWatchPolicy(
+        top_n_gainers=2, min_24h_gain_pct=Decimal("8.0"), max_active_watches=5
+    )
     # GAMMAUSDT is pinned even though its 24h gain cooled to +3%; THINUSDT fails $500k volume floor.
     selected = select_top_gainer_instruments(
         [inst_btc, inst_a, inst_b, inst_c, inst_low],
@@ -157,9 +185,15 @@ def test_select_top_gainer_instruments_pins_active_and_ranks_top_gainers() -> No
 async def test_short_decision_journal_and_top_gainer_watch_lifecycle(tmp_path: Path) -> None:
     started = datetime(2026, 8, 1, tzinfo=UTC)
     now = started + timedelta(hours=320)
-    inst_btc = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="BTCUSDT")
-    inst_near = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="NEARUSDT")
-    inst_flat = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="FLATUSDT")
+    inst_btc = make_instrument(
+        venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="BTCUSDT"
+    )
+    inst_near = make_instrument(
+        venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="NEARUSDT"
+    )
+    inst_flat = make_instrument(
+        venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="FLATUSDT"
+    )
 
     near_1h, near_4h = _distribution_candles(started)
     btc_1h = trending_candles(up=True, count=360)
@@ -168,9 +202,15 @@ async def test_short_decision_journal_and_top_gainer_watch_lifecycle(tmp_path: P
     flat_4h = trending_candles(up=False, count=80)
 
     quotes_map = {
-        "BTCUSDT": _quote_for("BTCUSDT", btc_1h[-1].close, Decimal("1.0"), Decimal("800000000"), now),
-        "NEARUSDT": _quote_for("NEARUSDT", near_1h[-1].close, Decimal("22.5"), Decimal("4000000"), now),
-        "FLATUSDT": _quote_for("FLATUSDT", flat_1h[-1].close, Decimal("14.0"), Decimal("2000000"), now),
+        "BTCUSDT": _quote_for(
+            "BTCUSDT", btc_1h[-1].close, Decimal("1.0"), Decimal("800000000"), now
+        ),
+        "NEARUSDT": _quote_for(
+            "NEARUSDT", near_1h[-1].close, Decimal("22.5"), Decimal("4000000"), now
+        ),
+        "FLATUSDT": _quote_for(
+            "FLATUSDT", flat_1h[-1].close, Decimal("14.0"), Decimal("2000000"), now
+        ),
     }
 
     class _QuotedFakeMarket(FakeCryptoMarketData):
@@ -224,7 +264,66 @@ async def test_short_decision_journal_and_top_gainer_watch_lifecycle(tmp_path: P
         min_score=Decimal("40"),
         max_symbols=10,
     )
-    assert any(o.instrument.id.symbol == "NEARUSDT" and o.direction == Direction.SHORT for o in opps)
+    assert any(
+        o.instrument.id.symbol == "NEARUSDT" and o.direction == Direction.SHORT for o in opps
+    )
+    opp = next(o for o in opps if o.instrument.id.symbol == "NEARUSDT")
+    policy = TopGainerWatchPolicy()
+    confirmed = advance_top_gainer_watch_episode(
+        None,
+        symbol="NEARUSDT",
+        base_asset="NEAR",
+        quote=quotes_map["NEARUSDT"],
+        diagnostic={"gates_passed": True, "checklist_passed": 5},
+        opportunity=opp,
+        evaluated_at=now,
+        policy=policy,
+    )
+    drift = advance_top_gainer_watch_episode(
+        confirmed,
+        symbol="NEARUSDT",
+        base_asset="NEAR",
+        quote=quotes_map["NEARUSDT"],
+        diagnostic={"gates_passed": False, "blocker": "current_gates_failed"},
+        opportunity=None,
+        evaluated_at=now + timedelta(minutes=1),
+        policy=policy,
+    )
+    assert drift.state == TopGainerWatchState.WATCHING
+    assert drift.confirmed_opportunity == confirmed.confirmed_opportunity
+    stopped = advance_top_gainer_watch_episode(
+        drift,
+        symbol="NEARUSDT",
+        base_asset="NEAR",
+        quote=replace(quotes_map["NEARUSDT"], last=opp.suggested_stop * Decimal("2")),
+        diagnostic={"gates_passed": False},
+        opportunity=None,
+        evaluated_at=now + timedelta(minutes=2),
+        policy=policy,
+    )
+    assert stopped.state == TopGainerWatchState.INVALIDATED
+    reconfirmed = advance_top_gainer_watch_episode(
+        drift,
+        symbol="NEARUSDT",
+        base_asset="NEAR",
+        quote=quotes_map["NEARUSDT"],
+        diagnostic={"gates_passed": True, "checklist_passed": 5},
+        opportunity=replace(opp, suggested_stop=opp.suggested_stop * Decimal("1.1")),
+        evaluated_at=now + timedelta(minutes=2),
+        policy=policy,
+    )
+    assert reconfirmed.confirmed_opportunity == confirmed.confirmed_opportunity
+    expired = advance_top_gainer_watch_episode(
+        replace(confirmed, state=TopGainerWatchState.WATCHING, confirmed_opportunity=None),
+        symbol="NEARUSDT",
+        base_asset="NEAR",
+        quote=quotes_map["NEARUSDT"],
+        diagnostic={"gates_passed": True, "checklist_passed": 5},
+        opportunity=opp,
+        evaluated_at=now + timedelta(hours=72),
+        policy=policy,
+    )
+    assert expired.state == TopGainerWatchState.EXPIRED
     events = journal.snapshot()
     assert any(e["symbol"] == "NEARUSDT" and e["stage"] == "distribution_candidate" for e in events)
     assert any(e["symbol"] == "FLATUSDT" and e["stage"] == "distribution_rejection" for e in events)
@@ -242,14 +341,24 @@ async def test_short_decision_journal_and_top_gainer_watch_lifecycle(tmp_path: P
     assert snap1["watching"][0]["watch_tier"] == "lower_range_bounce_watch"
 
     # 3. Verify persistence across new store/service instances + collapse invalidation after 2 cycles
-    quotes_map["FLATUSDT"] = _quote_for("FLATUSDT", flat_1h[-1].close, Decimal("-4.0"), Decimal("2000000"), now + timedelta(hours=1))
+    quotes_map["FLATUSDT"] = _quote_for(
+        "FLATUSDT", flat_1h[-1].close, Decimal("-4.0"), Decimal("2000000"), now + timedelta(hours=1)
+    )
     service_reloaded = TopGainerShortWatchService(
         TopGainerShortWatchStore(tmp_path / "short_watch.sqlite3"),
         load_settings(),
         macro_provider=mock_macro,
     )
-    await service_reloaded.run_cycle(market, derivatives_port=deriv, evaluated_at=now + timedelta(hours=1))
-    snap3 = await service_reloaded.run_cycle(market, derivatives_port=deriv, evaluated_at=now + timedelta(hours=2))
+    for sym, quote in quotes_map.items():
+        quotes_map[sym] = replace(quote, observed_at=now + timedelta(hours=1))
+    await service_reloaded.run_cycle(
+        market, derivatives_port=deriv, evaluated_at=now + timedelta(hours=1)
+    )
+    for sym, quote in quotes_map.items():
+        quotes_map[sym] = replace(quote, observed_at=now + timedelta(hours=2))
+    snap3 = await service_reloaded.run_cycle(
+        market, derivatives_port=deriv, evaluated_at=now + timedelta(hours=2)
+    )
     assert snap3["counts"]["watching"] == 0
     assert any(
         e["symbol"] == "FLATUSDT" and e["invalidation_reason"] == "collapsed_below_upper_range"
@@ -257,7 +366,9 @@ async def test_short_decision_journal_and_top_gainer_watch_lifecycle(tmp_path: P
     )
 
 
-def test_portal_short_watch_endpoint_isolated_from_live_opportunities(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_portal_short_watch_endpoint_isolated_from_live_opportunities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = TopGainerShortWatchStore(tmp_path / "portal_watch.sqlite3")
     service = TopGainerShortWatchService(store, load_settings())
     monkeypatch.setattr(portal_module, "_short_watch_service", service)
@@ -266,7 +377,7 @@ def test_portal_short_watch_endpoint_isolated_from_live_opportunities(tmp_path: 
     resp = client.get("/api/screener/short-watch")
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["policy_version"] == "top-gainer-short-watch-v1"
+    assert payload["policy_version"] == TopGainerWatchPolicy().version
     assert payload["counts"] == {
         "watching": 0,
         "confirmed_short": 0,
@@ -282,7 +393,9 @@ async def test_exhaustion_short_checklist_parity_without_bearish_divergence(tmp_
 
     started = datetime(2026, 8, 1, tzinfo=UTC)
     now = started + timedelta(hours=320)
-    inst = make_instrument(venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="CLIMAXUSDT")
+    inst = make_instrument(
+        venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="CLIMAXUSDT"
+    )
 
     # Build monotonic vertical rally + final 4H climax rejection wick (RSI > 72, no 2-pivot bearish div)
     c4h: list[Candle] = []
@@ -363,7 +476,9 @@ async def test_exhaustion_short_checklist_parity_without_bearish_divergence(tmp_
         ask_depth_notional=Decimal("2000000"),
     )
     journal = ScanDecisionJournal()
-    screener = CryptoOpportunityScreener(load_settings(), evaluated_at=now, journal=journal, feature_contract="discovery_v2")
+    screener = CryptoOpportunityScreener(
+        load_settings(), evaluated_at=now, journal=journal, feature_contract="discovery_v2"
+    )
     opp = screener._score_distribution_setup(
         inst=inst,
         quote=quote,
@@ -380,3 +495,181 @@ async def test_exhaustion_short_checklist_parity_without_bearish_divergence(tmp_
     assert opp.checklist[1][0] == "Divergence / Climax Rejection"
 
 
+async def test_portal_short_watch_uses_configured_persistent_state_path(tmp_path, monkeypatch):
+    import httpx
+
+    from algotrader.api import portal as portal_module
+    from algotrader.api.portal_app import create_app
+    from algotrader.config import Settings
+
+    working = tmp_path / "app"
+    working.mkdir()
+    persistent = tmp_path / "state" / "atlas_state.sqlite3"
+    settings = Settings(_env_file=None, state_db_path=persistent, screener_cron_enabled=False)
+    monkeypatch.chdir(working)
+    monkeypatch.setattr(portal_module, "_short_watch_service", None)
+    monkeypatch.setattr(portal_module, "load_settings", lambda: settings)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(settings)), base_url="http://localhost"
+    ) as client:
+        response = await client.get("/api/screener/short-watch")
+    assert response.status_code == 200
+    assert response.json()["counts"]["confirmed_short"] == 0
+    assert persistent.is_file()
+    assert not (working / "atlas_state.sqlite3").exists()
+
+
+def test_stale_and_legacy_confirmations_are_not_published(tmp_path):
+    now = datetime(2026, 11, 21, tzinfo=UTC)
+    policy = TopGainerWatchPolicy()
+    ep = TopGainerWatchEpisode(
+        episode_id="old",
+        symbol="TESTUSDT",
+        base_asset="TEST",
+        state=TopGainerWatchState.CONFIRMED_SHORT,
+        enrolled_at=now,
+        updated_at=now,
+        anchor_price=Decimal("10"),
+        anchor_24h_pct=Decimal("10"),
+        peak_price=Decimal("10"),
+        peak_24h_pct=Decimal("10"),
+        latest_price=Decimal("10"),
+        latest_24h_pct=Decimal("10"),
+        gates_passed=True,
+        checklist_passed=5,
+        confirmed_opportunity={"suggested_entry": 10, "suggested_stop": 10.5},
+        policy_version=policy.version,
+    )
+    store = TopGainerShortWatchStore(tmp_path / "watch.sqlite3")
+    store.save_cycle({"cycle_id": "initial", "evaluated_at": now.isoformat()}, [ep])
+    service = TopGainerShortWatchService(store, load_settings())
+    assert service.snapshot(evaluated_at=now)["counts"]["confirmed_short"] == 1
+    stale = service.snapshot(evaluated_at=now + timedelta(hours=6))
+    assert stale["counts"]["confirmed_short"] == 0
+    assert stale["watching"][0]["state"] == "watching"
+    store.save_cycle(
+        {"cycle_id": "legacy", "evaluated_at": now.isoformat()},
+        [replace(ep, policy_version="top-gainer-short-watch-v1")],
+    )
+    assert service.snapshot(evaluated_at=now)["counts"]["confirmed_short"] == 0
+
+
+@pytest.mark.parametrize("quote_age_minutes", [None, 10, -10])
+async def test_missing_quotes_demote_and_expire_active_watch(
+    tmp_path, monkeypatch, quote_age_minutes
+):
+    now = datetime(2026, 11, 21, tzinfo=UTC)
+    store = TopGainerShortWatchStore(tmp_path / "watch.sqlite3")
+    ep = TopGainerWatchEpisode(
+        episode_id="missing",
+        symbol="TESTUSDT",
+        base_asset="TEST",
+        state=TopGainerWatchState.CONFIRMED_SHORT,
+        enrolled_at=now,
+        updated_at=now,
+        anchor_price=Decimal("10"),
+        anchor_24h_pct=Decimal("10"),
+        peak_price=Decimal("10"),
+        peak_24h_pct=Decimal("10"),
+        latest_price=Decimal("10"),
+        latest_24h_pct=Decimal("10"),
+        gates_passed=True,
+        checklist_passed=5,
+        confirmed_opportunity={"suggested_entry": 10, "suggested_stop": 10.5},
+        policy_version=TopGainerWatchPolicy().version,
+    )
+    store.save_cycle({"cycle_id": "initial", "evaluated_at": now.isoformat()}, [ep])
+    screen = AsyncMock(return_value=[])
+    monkeypatch.setattr(TopGainerDistributionScreener, "screen", screen)
+    market = AsyncMock()
+    market.instruments.return_value = []
+    market.quotes.return_value = []
+    if quote_age_minutes is not None:
+        market.instruments.return_value = [
+            make_instrument(
+                venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="TESTUSDT"
+            )
+        ]
+        market.quotes.return_value = [
+            _quote_for(
+                "TESTUSDT",
+                Decimal("10"),
+                Decimal("10"),
+                Decimal("2000000"),
+                now + timedelta(hours=1) - timedelta(minutes=quote_age_minutes),
+            )
+        ]
+    new_inst = make_instrument(
+        venue=Venue.BINANCE_USDM, market_kind=MarketKind.FUTURES, symbol="NEWUSDT"
+    )
+    market.instruments.return_value.append(new_inst)
+    market.quotes.return_value.append(
+        _quote_for(
+            "NEWUSDT", Decimal("10"), Decimal("20"), Decimal("3000000"), now + timedelta(hours=1)
+        )
+    )
+    service = TopGainerShortWatchService(
+        store, load_settings(), policy=TopGainerWatchPolicy(top_n_gainers=1, max_active_watches=1)
+    )
+    result = await service.run_cycle(
+        market, evaluated_at=now + timedelta(hours=1), macro_context=_macro(now)
+    )
+    assert screen.call_args.kwargs["enforce_quality"] is True
+    assert result["latest_cycle"]["watched_input_count"] == 0
+    assert len(store.active_episodes()) == 1
+    assert result["counts"]["confirmed_short"] == 0
+    assert result["watching"][0]["latest_blocker"] == "market_data_or_eligibility_unavailable"
+    result = await service.run_cycle(
+        market, evaluated_at=now + timedelta(hours=73), macro_context=_macro(now)
+    )
+    assert result["counts"]["expired"] == 1
+
+
+async def test_failed_cycle_withholds_confirmation_and_records_failure(tmp_path):
+    now = datetime(2026, 11, 21, tzinfo=UTC)
+    store = TopGainerShortWatchStore(tmp_path / "watch.sqlite3")
+    ep = TopGainerWatchEpisode(
+        episode_id="failed",
+        symbol="TESTUSDT",
+        base_asset="TEST",
+        state=TopGainerWatchState.CONFIRMED_SHORT,
+        enrolled_at=now,
+        updated_at=now,
+        anchor_price=Decimal("10"),
+        anchor_24h_pct=Decimal("10"),
+        peak_price=Decimal("10"),
+        peak_24h_pct=Decimal("10"),
+        latest_price=Decimal("10"),
+        latest_24h_pct=Decimal("10"),
+        gates_passed=True,
+        checklist_passed=5,
+        confirmed_opportunity={"suggested_entry": 10, "suggested_stop": 10.5},
+        policy_version=TopGainerWatchPolicy().version,
+    )
+    store.save_cycle({"cycle_id": "initial", "evaluated_at": now.isoformat()}, [ep])
+    service = TopGainerShortWatchService(store, load_settings())
+    market = AsyncMock()
+    market.instruments.side_effect = RuntimeError("upstream unavailable")
+    with pytest.raises(RuntimeError, match="upstream unavailable"):
+        await service.run_cycle(market, evaluated_at=now)
+    snapshot = service.snapshot(evaluated_at=now)
+    assert snapshot["counts"]["confirmed_short"] == 0
+    assert snapshot["latest_cycle"]["status"] == "failed"
+    assert snapshot["latest_cycle"]["error_type"] == "RuntimeError"
+    assert snapshot["watching"][0]["latest_blocker"] == "cycle_failed"
+
+
+def test_portal_binds_shared_macro_provider_after_snapshot_initialization(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from algotrader.config import Settings
+
+    settings = Settings(_env_file=None, state_db_path=tmp_path / "watch.sqlite3")
+    monkeypatch.setattr(portal_module, "_short_watch_service", None)
+    monkeypatch.setattr(portal_module, "load_settings", lambda: settings)
+    service = portal_module._get_short_watch_service()
+    assert service.macro_provider is None
+    provider = AsyncMock()
+    runtime = SimpleNamespace(settings=settings, macro_provider=provider)
+    assert portal_module._get_short_watch_service(runtime) is service
+    assert service.macro_provider is provider

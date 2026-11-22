@@ -58,8 +58,11 @@ def screening_identity() -> dict[str, Any]:
 
 def screening_configuration(settings: Settings) -> dict[str, Any]:
     # Only settings consumed by CryptoOpportunityScreener; never dump operator tokens.
-    return {"excluded_base_assets": settings.excluded_base_assets,
-            "support_resistance_lookback_bars": settings.support_resistance_lookback_bars}
+    config: dict[str, Any] = {"excluded_base_assets": settings.excluded_base_assets,
+                             "support_resistance_lookback_bars": settings.support_resistance_lookback_bars}
+    if settings.bearish_continuation_enabled:
+        config["bearish_continuation_enabled"] = True
+    return config
 
 
 class CallTape:
@@ -151,8 +154,10 @@ async def capture_scan(
     tape = CallTape()
     recorded_market = RecordingMarketData(market, derivatives, tape)
     journal = ScanDecisionJournal()
+    from algotrader.application.continuation_context import ContinuationContext
+    context = ContinuationContext(market, tape) if settings.bearish_continuation_enabled else None
     screener = CryptoOpportunityScreener(settings, RecordingMacroProvider(macro, tape), evaluated_at=started, journal=journal,
-                                        feature_contract=feature_contract)
+                                        feature_contract=feature_contract, continuation_context=context)
     result: list[CryptoOpportunity] = []
     failure: BaseException | None = None
     try:

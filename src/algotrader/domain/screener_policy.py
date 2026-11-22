@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from algotrader.domain.bearish_continuation import POLICY_VERSION as CONTINUATION_POLICY_VERSION
 from algotrader.domain.crypto_screener_models import CryptoOpportunity, SetupLabel
 from algotrader.domain.execution_brackets import valid_execution_prices
 from algotrader.domain.models import Direction
@@ -28,6 +29,13 @@ def publication_rejection_reasons(
         opportunity.suggested_stop, opportunity.suggested_targets,
     ):
         return ("invalid_execution_prices",)
+    if opportunity.setup_label is SetupLabel.BREAKDOWN_RETEST_SHORT:
+        evidence = opportunity.continuation_evidence or {}
+        if (evidence.get("policy_version") != CONTINUATION_POLICY_VERSION
+                or evidence.get("derivatives_confirmed") is not True
+                or len(opportunity.checklist) != 5
+                or not all(item[1] is True for item in opportunity.checklist)):
+            reasons.append("continuation_requires_five_current_gates")
     if opportunity.setup_label is SetupLabel.RECOVERY_RECLAIM_LONG and (
         len(opportunity.checklist) != 5 or not all(item[1] is True for item in opportunity.checklist)
     ):

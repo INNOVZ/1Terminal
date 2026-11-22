@@ -100,14 +100,16 @@ async def run_arm(record: ScanRecord, challenger: bool, supplemental=()) -> dict
     # Avoid ambient BaseSettings and dotenv. These are the only consumed screener settings.
     config = record.identity["configuration"]
     expected = {"excluded_base_assets", "support_resistance_lookback_bars"}
-    if set(config) != expected:
+    if set(config) not in (expected, expected | {"bearish_continuation_enabled"}):
         raise ReplayUnavailable("unsupported_screener_configuration")
     settings = Settings.model_construct(**config)
     cls = FundingCarryScreener if challenger else CryptoOpportunityScreener
     arguments = dict(record.request)
     feature_contract = arguments.pop("feature_contract", "legacy")
+    from algotrader.application.continuation_context import ReplayContinuationContext
+    context = ReplayContinuationContext(tape) if settings.bearish_continuation_enabled else None
     screener = cls(settings, market, evaluated_at=record.started_at, journal=journal,
-                   feature_contract=feature_contract)
+                   feature_contract=feature_contract, continuation_context=context)
     enabled = arguments.pop("derivatives_enabled")
     opportunities = await screener.screen(
         market, derivatives_port=market if enabled else None, **arguments

@@ -340,6 +340,7 @@ _FAMILIES = {
     },
     "active_expansion": {"BREAKOUT_LONG", "MOMENTUM_EMERGING_LONG"},
     "recovery_research": {"RECOVERY_RECLAIM_LONG"},
+    "bearish_continuation_research": {"BREAKDOWN_RETEST_SHORT"},
     "distribution_reversal_short": {
         "UTAD_DIVERGENCE_SHORT",
         "EXHAUSTION_REVERSAL_SHORT",

@@ -1,1 +1,0 @@
-scripts/generate_screener_architecture_pdf.py

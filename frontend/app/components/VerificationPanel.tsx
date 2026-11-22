@@ -10,6 +10,10 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { Opportunity } from "./CandidateSidebar";
+import RadarLifecycleCard from "./RadarLifecycleCard";
+import type { RadarQuote } from "../lib/radarInsights";
+import PlanDiagnosticsPanel from "./PlanDiagnosticsPanel";
+import { operatorRequestHeaders } from "../lib/operatorClient";
 
 export interface AdaptedLevels {
   pocPrice?: number;
@@ -26,6 +30,7 @@ interface VerificationPanelProps {
   onWatchlistAdded?: () => void;
   adaptedLevels?: AdaptedLevels;
   livePrice?: number;
+  radarQuote?: RadarQuote;
 }
 
 interface ChecklistItemProps {
@@ -128,6 +133,7 @@ function VerificationPanel({
   onWatchlistAdded,
   adaptedLevels,
   livePrice,
+  radarQuote,
 }: VerificationPanelProps) {
   const [added, setAdded] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -183,25 +189,27 @@ function VerificationPanel({
     opportunity?.breakout_readiness_status === "HIGH_REJECTION_RISK";
   const isGradeAPlus = passCount === totalCount && !isHighRejection;
   const isShort = opportunity?.direction?.toLowerCase() === "short";
+  const isContinuation = opportunity?.setup_label === "BREAKDOWN_RETEST_SHORT";
 
   // Memoize bracket calculations with adapted live levels and dynamic tick precision
   const bracket = useMemo(() => {
     if (!opportunity) return null;
+    const effectiveLevels = isContinuation ? undefined : adaptedLevels;
     const currentPriceNum = livePrice ?? Number(opportunity.current_price || 0);
     const stopPrice =
-      adaptedLevels?.stopPrice ?? Number(opportunity.suggested_stop || 0);
+      effectiveLevels?.stopPrice ?? Number(opportunity.suggested_stop || 0);
     const entryPrice =
-      adaptedLevels?.entryPrice ??
+      effectiveLevels?.entryPrice ??
       Number(opportunity.suggested_entry || opportunity.pullback_entry || 0);
     const triggerPrice =
-      adaptedLevels?.breakoutTrigger ??
+      effectiveLevels?.breakoutTrigger ??
       Number(
         opportunity.breakout_trigger ||
           currentPriceNum * (isShort ? 0.975 : 1.025),
       );
     const targets =
-      adaptedLevels?.targets && adaptedLevels.targets.length > 0
-        ? adaptedLevels.targets
+      effectiveLevels?.targets && effectiveLevels.targets.length > 0
+        ? effectiveLevels.targets
         : (opportunity.suggested_targets || []).map((t) => Number(t || 0));
 
     return {
@@ -216,7 +224,7 @@ function VerificationPanel({
       rawTarget1: targets[0] || currentPriceNum,
       rawTarget2: targets[1] || currentPriceNum,
     };
-  }, [opportunity, isShort, adaptedLevels, livePrice, decimals]);
+  }, [opportunity, isShort, isContinuation, adaptedLevels, livePrice, decimals]);
 
   const handleAddToWatchlist = useCallback(async () => {
     if (!opportunity || !bracket || adding || added) return;
@@ -268,17 +276,33 @@ function VerificationPanel({
         notes: `Added from Radar. 7d OI: ${opportunity.oi_change_7d_pct || "N/A"}.`,
       };
 
-      const res = await fetch("/api/watchlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        setAdded(true);
-        if (onWatchlistAdded) onWatchlistAdded();
-        setTimeout(() => setAdded(false), 3000);
-      }
+      const submitWatchlist = async () => {
+        const res = await fetch("/api/watchlist", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: operatorRequestHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify(payload),
+        });
+        if (res.status === 401) {
+          window.dispatchEvent(
+            new CustomEvent("atlas:operator-auth-required", {
+              detail: {
+                actionLabel: `adding ${opportunity.symbol} to the watchlist`,
+                retry: () => {
+                  void submitWatchlist();
+                },
+              },
+            }),
+          );
+          return;
+        }
+        if (res.ok) {
+          setAdded(true);
+          if (onWatchlistAdded) onWatchlistAdded();
+          setTimeout(() => setAdded(false), 3000);
+        }
+      };
+      await submitWatchlist();
     } catch (e) {
       console.error("Failed to add to watchlist:", e);
     } finally {
@@ -368,51 +392,7 @@ function VerificationPanel({
         </span>
       </div>
 
-      {/* Live Radar Lifecycle & System Gate Audit Banner */}
-      {(opportunity.radar_status_label || passCount < totalCount) && (
-        <div
-          style={{
-            marginBottom: "12px",
-            padding: "8px 10px",
-            borderRadius: "8px",
-            fontSize: "11px",
-            fontFamily: "var(--font-mono)",
-            background:
-              passCount === totalCount
-                ? "rgba(16, 185, 129, 0.08)"
-                : "rgba(244, 157, 13, 0.10)",
-            border:
-              passCount === totalCount
-                ? "1px solid rgba(16, 185, 129, 0.28)"
-                : "1px solid rgba(244, 157, 13, 0.35)",
-            display: "flex",
-            flexDirection: "column",
-            gap: "4px",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
-              RADAR LIFECYCLE:
-            </span>
-            <strong
-              style={{
-                color:
-                  passCount === totalCount ? "var(--accent-emerald)" : "#f49d0d",
-              }}
-            >
-              {opportunity.radar_status_label || "ACTIVE SETUP"}
-            </strong>
-          </div>
-          <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>
-            {checklist.some((c) => c.status === "unknown")
-              ? "Some checks lack fresh data. Unknown does not mean passed or failed."
-              : passCount === totalCount
-                ? "All displayed checks passed at the last verification."
-                : `Gate drift: ${checklist.filter((c) => !c.passed).map((c) => c.title).join(", ")}.`}
-
-          </div>
-        </div>
-      )}
+      <RadarLifecycleCard opportunity={opportunity} quote={radarQuote} />
 
       {/* Dynamic Verification Checklist */}
       <div
@@ -579,7 +559,9 @@ function VerificationPanel({
             }}
           >
             <ShieldCheck size={13} />
-            {opportunity.breakout_readiness_status === "BREAKOUT_CONFIRMED"
+            {isContinuation
+              ? "EXPERIMENTAL SHORT — AWAIT DOWNSIDE TRIGGER"
+              : opportunity.breakout_readiness_status === "BREAKOUT_CONFIRMED"
               ? "BREAKOUT CONFIRMED (ABSORPTION HIGH)"
               : opportunity.breakout_readiness_status === "HIGH_REJECTION_RISK"
                 ? "REJECTION RISK (BLEEDING OI / CVD)"
@@ -626,14 +608,18 @@ function VerificationPanel({
           >
             <div style={{ display: "flex", flexDirection: "column" }}>
               <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-                {opportunity.execution_mode === "CEILING_BREAKOUT"
+                {isContinuation
+                  ? "Conditional Breakdown Entry"
+                  : opportunity.execution_mode === "CEILING_BREAKOUT"
                   ? "Breakout Entry"
                   : opportunity.execution_mode?.includes("EXPANSION")
                     ? (isShort ? "Breakdown Entry" : "Breakout Entry")
                     : "Limit Retest Entry"}
               </span>
               <span style={{ fontSize: "9px", color: "var(--text-muted)" }}>
-                {opportunity.execution_mode === "CEILING_BREAKOUT"
+                {isContinuation
+                  ? "Below the failed support-retest rejection"
+                  : opportunity.execution_mode === "CEILING_BREAKOUT"
                   ? "Conditional on breakout trigger"
                   : isShort ? "POC / EMA50 Resistance Ceiling" : "POC / EMA50 Support Shelf"}
               </span>
@@ -689,12 +675,13 @@ function VerificationPanel({
             }}
           >
             <span style={{ color: "var(--accent-emerald)" }}>
-              {isShort ? "Target 1 (Floor / VAL)" : "Target 1 (Ceiling)"}
+              {isContinuation ? "Target 1 (Before Known Support)" : isShort ? "Target 1 (Floor / VAL)" : "Target 1 (Ceiling)"}
             </span>
             <strong style={{ color: "var(--accent-emerald)" }}>
               ${bracket.target1}
             </strong>
           </div>
+          {!isContinuation && <>
           <div
             style={{
               display: "flex",
@@ -724,7 +711,20 @@ function VerificationPanel({
               ${bracket.target3}
             </strong>
           </div>
+          </>}
         </div>
+
+        {opportunity.plan_diagnostics && (() => {
+          const d = opportunity.plan_diagnostics;
+          const tick = Number(opportunity.tick_size);
+          const matches = [[d.entry, bracket.entryPrice], [d.stop, bracket.stopPrice], [d.t1, bracket.target1]].every(([published, shown]) => {
+            if (published == null) return false;
+            const a = Number(published), b = Number(shown);
+            const tolerance = Math.max(Number.isFinite(tick) && tick > 0 ? tick / 2 : 0, Math.abs(a) * 1e-10);
+            return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= tolerance;
+          });
+          return matches ? <PlanDiagnosticsPanel diagnostics={d} precision={decimals} /> : null;
+        })()}
 
         {/* Strategy Context & Anti-Chasing Guidance */}
         <div
@@ -754,7 +754,13 @@ function VerificationPanel({
             Institutional Execution Rule ({isShort ? "SHORT" : "LONG"})
           </div>
           <div>
-            {isShort ? (
+            {isContinuation ? (
+              <>
+                Experimental conditional plan: trigger below the rejection structure,
+                invalidate above its frozen stop, and take the first target before
+                known support. A trigger observation is not an executed fill.
+              </>
+            ) : isShort ? (
               <>
                 Do not market-short into support. Accumulate short limit orders
                 on the <strong>POC/EMA50 resistance ceiling</strong>, or place a{" "}
@@ -1077,9 +1083,6 @@ function VerificationPanel({
             fontSize: "13px",
             border: "none",
             cursor: adding || added ? "default" : "pointer",
-            boxShadow: added
-              ? "0 4px 16px rgba(16, 185, 129, 0.3)"
-              : "0 4px 16px rgba(244, 157, 13, 0.3)",
             transition: "all 0.2s ease",
           }}
         >

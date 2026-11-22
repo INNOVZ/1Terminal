@@ -1,0 +1,296 @@
+[
+  {
+    "symbol": "HMSTRUSDT",
+    "inputs": {
+      "atr14_4h": "0.000004531978483146411138009455200",
+      "close": "0.0001390",
+      "ema50_4h": "0.0001356546796438122450336081482",
+      "handle_low_4h": "0.0001303",
+      "high_30d": "0.0001516",
+      "local_compression_high_4h": "0.0001469",
+      "poc_30d": "0.0001361",
+      "resistance_absorption_score": "73.0",
+      "swing_low_4h": "0.0001264",
+      "tick_size": "1E-7",
+      "vah_30d": "0.0001433",
+      "val_30d": "0.0001325"
+    },
+    "expected_bracket": {
+      "asymmetric_rr": "2.50",
+      "breakout_stop": "0.0001337",
+      "breakout_trigger": "0.0001473",
+      "effective_entry": "0.0001473",
+      "execution_mode": "CEILING_BREAKOUT",
+      "invalidation_stop": "0.0001337",
+      "r_t1": "1.50",
+      "r_t2": "2.50",
+      "r_t3": "3.80",
+      "retest_entry": "0.0001367",
+      "retest_stop": "0.0001227",
+      "risk_unit": "0.0000136",
+      "suggested_entry": "0.0001473",
+      "t1": "0.0001677",
+      "t2": "0.0001813",
+      "t3": "0.0001990",
+      "targets": [
+        "0.0001677",
+        "0.0001813",
+        "0.0001990"
+      ]
+    },
+    "expected_initial_t1": "0.0001541",
+    "target_extended": true
+  },
+  {
+    "symbol": "PREDICTUSDT",
+    "inputs": {
+      "atr14_4h": "0.04957211829577575826165382385",
+      "close": "1.1203000",
+      "ema50_4h": "1.083892487504752722734729530",
+      "handle_low_4h": "0.9718000",
+      "high_30d": "1.9900000",
+      "local_compression_high_4h": "1.1300000",
+      "poc_30d": "1.2781000",
+      "resistance_absorption_score": "65.0",
+      "swing_low_4h": "0.9275000",
+      "tick_size": "0.0001000",
+      "vah_30d": "1.5119000",
+      "val_30d": "1.1931000"
+    },
+    "expected_bracket": {
+      "asymmetric_rr": "4.11",
+      "breakout_stop": "1.2310000",
+      "breakout_trigger": "1.2806000",
+      "effective_entry": "1.1034000",
+      "execution_mode": "RETEST_ACCUMULATION",
+      "invalidation_stop": "0.8878000",
+      "r_t1": "1.89",
+      "r_t2": "4.11",
+      "r_t3": "4.23",
+      "retest_entry": "1.1034000",
+      "retest_stop": "0.8878000",
+      "risk_unit": "0.2156000",
+      "suggested_entry": "1.1034000",
+      "t1": "1.5119000",
+      "t2": "1.9900000",
+      "t3": "2.0148000",
+      "targets": [
+        "1.5119000",
+        "1.9900000",
+        "2.0148000"
+      ]
+    },
+    "expected_initial_t1": "1.2807000",
+    "target_extended": true
+  },
+  {
+    "symbol": "PROMUSDT",
+    "inputs": {
+      "atr14_4h": "0.1663740486485563244932802054",
+      "close": "5.0860000",
+      "ema50_4h": "5.056990837664031916272716902",
+      "handle_low_4h": "4.8740000",
+      "high_30d": "6.4990000",
+      "local_compression_high_4h": "5.1060000",
+      "poc_30d": "5.3900000",
+      "resistance_absorption_score": "56.0",
+      "swing_low_4h": "4.3240000",
+      "tick_size": "0.0010000",
+      "vah_30d": "5.8250000",
+      "val_30d": "4.9110000"
+    },
+    "expected_bracket": {
+      "asymmetric_rr": "2.50",
+      "breakout_stop": "5.2320000",
+      "breakout_trigger": "5.3990000",
+      "effective_entry": "5.0090000",
+      "execution_mode": "RETEST_ACCUMULATION",
+      "invalidation_stop": "4.1900000",
+      "r_t1": "1.50",
+      "r_t2": "2.50",
+      "r_t3": "3.50",
+      "retest_entry": "5.0090000",
+      "retest_stop": "4.1900000",
+      "risk_unit": "0.8190000",
+      "suggested_entry": "5.0090000",
+      "t1": "6.2380000",
+      "t2": "7.0570000",
+      "t3": "7.8760000",
+      "targets": [
+        "6.2380000",
+        "7.0570000",
+        "7.8760000"
+      ]
+    },
+    "expected_initial_t1": "5.4000000",
+    "target_extended": true
+  },
+  {
+    "symbol": "OPGUSDT",
+    "inputs": {
+      "atr14_4h": "0.005543493102315096578595364382",
+      "close": "0.1396000",
+      "ema50_4h": "0.1338892353326997084871381919",
+      "handle_low_4h": "0.1309000",
+      "high_30d": "0.1643000",
+      "local_compression_high_4h": "0.1424000",
+      "poc_30d": "0.1366000",
+      "resistance_absorption_score": "66.0",
+      "swing_low_4h": "0.1240000",
+      "tick_size": "0.0001000",
+      "vah_30d": "0.1502000",
+      "val_30d": "0.1230000"
+    },
+    "expected_bracket": {
+      "asymmetric_rr": "2.50",
+      "breakout_stop": "0.1451000",
+      "breakout_trigger": "0.1507000",
+      "effective_entry": "0.1374000",
+      "execution_mode": "RETEST_ACCUMULATION",
+      "invalidation_stop": "0.1195000",
+      "r_t1": "1.50",
+      "r_t2": "2.50",
+      "r_t3": "3.80",
+      "retest_entry": "0.1374000",
+      "retest_stop": "0.1195000",
+      "risk_unit": "0.0179000",
+      "suggested_entry": "0.1374000",
+      "t1": "0.1643000",
+      "t2": "0.1822000",
+      "t3": "0.2054000",
+      "targets": [
+        "0.1643000",
+        "0.1822000",
+        "0.2054000"
+      ]
+    },
+    "expected_initial_t1": "0.1643000",
+    "target_extended": false
+  },
+  {
+    "symbol": "OUSDT",
+    "inputs": {
+      "atr14_4h": "0.02353429614304186294412791263",
+      "close": "0.5251000",
+      "ema50_4h": "0.4783005674052145359578194287",
+      "handle_low_4h": "0.4381000",
+      "high_30d": "0.5479000",
+      "local_compression_high_4h": "0.5479000",
+      "poc_30d": "0.4248000",
+      "resistance_absorption_score": "65.0",
+      "swing_low_4h": "0.4381000",
+      "tick_size": "0.0001000",
+      "vah_30d": "0.4609000",
+      "val_30d": "0.3986000"
+    },
+    "expected_bracket": {
+      "asymmetric_rr": "2.50",
+      "breakout_stop": "0.4784000",
+      "breakout_trigger": "0.5491000",
+      "effective_entry": "0.5491000",
+      "execution_mode": "CEILING_BREAKOUT",
+      "invalidation_stop": "0.4784000",
+      "r_t1": "1.50",
+      "r_t2": "2.50",
+      "r_t3": "3.80",
+      "retest_entry": "0.4818000",
+      "retest_stop": "0.3844000",
+      "risk_unit": "0.0707000",
+      "suggested_entry": "0.5491000",
+      "t1": "0.6552000",
+      "t2": "0.7259000",
+      "t3": "0.8178000",
+      "targets": [
+        "0.6552000",
+        "0.7259000",
+        "0.8178000"
+      ]
+    },
+    "expected_initial_t1": "0.5844000",
+    "target_extended": true
+  },
+  {
+    "symbol": "GPSUSDT",
+    "inputs": {
+      "atr14_4h": "0.0002355124038375140986330822279",
+      "close": "0.0083500",
+      "ema50_4h": "0.008028876948088038731183916277",
+      "handle_low_4h": "0.0074280",
+      "high_30d": "0.0087210",
+      "local_compression_high_4h": "0.0084050",
+      "poc_30d": "0.0079580",
+      "resistance_absorption_score": "73.0",
+      "swing_low_4h": "0.0074280",
+      "tick_size": "0.0000010",
+      "vah_30d": "0.0083720",
+      "val_30d": "0.0078810"
+    },
+    "expected_bracket": {
+      "asymmetric_rr": "2.50",
+      "breakout_stop": "0.0077100",
+      "breakout_trigger": "0.0084170",
+      "effective_entry": "0.0084170",
+      "execution_mode": "CEILING_BREAKOUT",
+      "invalidation_stop": "0.0077100",
+      "r_t1": "1.50",
+      "r_t2": "2.50",
+      "r_t3": "3.80",
+      "retest_entry": "0.0080640",
+      "retest_stop": "0.0072390",
+      "risk_unit": "0.0007070",
+      "suggested_entry": "0.0084170",
+      "t1": "0.0094780",
+      "t2": "0.0101850",
+      "t3": "0.0111040",
+      "targets": [
+        "0.0094780",
+        "0.0101850",
+        "0.0111040"
+      ]
+    },
+    "expected_initial_t1": "0.0090740",
+    "target_extended": true
+  },
+  {
+    "symbol": "CROSSUSDT",
+    "inputs": {
+      "atr14_4h": "0.003386584277277684508928428299",
+      "close": "0.1149400",
+      "ema50_4h": "0.1076502960603740393388412504",
+      "handle_low_4h": "0.1057000",
+      "high_30d": "0.1184500",
+      "local_compression_high_4h": "0.1184500",
+      "poc_30d": "0.1032500",
+      "resistance_absorption_score": "73.0",
+      "swing_low_4h": "0.0962700",
+      "tick_size": "0.0000100",
+      "vah_30d": "0.1093300",
+      "val_30d": "0.1013800"
+    },
+    "expected_bracket": {
+      "asymmetric_rr": "2.50",
+      "breakout_stop": "0.1084600",
+      "breakout_trigger": "0.1186200",
+      "effective_entry": "0.1186200",
+      "execution_mode": "CEILING_BREAKOUT",
+      "invalidation_stop": "0.1084600",
+      "r_t1": "1.50",
+      "r_t2": "2.50",
+      "r_t3": "3.80",
+      "retest_entry": "0.1081500",
+      "retest_stop": "0.0935600",
+      "risk_unit": "0.0101600",
+      "suggested_entry": "0.1186200",
+      "t1": "0.1338600",
+      "t2": "0.1440200",
+      "t3": "0.1572300",
+      "targets": [
+        "0.1338600",
+        "0.1440200",
+        "0.1572300"
+      ]
+    },
+    "expected_initial_t1": "0.1244800",
+    "target_extended": true
+  }
+]

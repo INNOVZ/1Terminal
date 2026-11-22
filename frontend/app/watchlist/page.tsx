@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import {
   BookmarkCheck,
@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import WatchlistCard, { getEffectiveAudit } from "./components/WatchlistCard";
 import type { CandidateFormData } from "./components/AddCandidateModal";
+import OperatorAuthModal from "../components/OperatorAuthModal";
+import { operatorRequestHeaders } from "../lib/operatorClient";
 
 export interface WatchlistLiveAudit {
   symbol: string;
@@ -203,17 +205,40 @@ export default function WatchlistPage() {
     };
   }, [items]);
 
+  const [operatorAuthOpen, setOperatorAuthOpen] = useState(false);
+  const [operatorAuthLabel, setOperatorAuthLabel] = useState("watchlist mutation");
+  const pendingOperatorActionRef = useRef<(() => void) | null>(null);
+
+  const requestOperatorAuth = useCallback((actionLabel: string, retry: () => void) => {
+    pendingOperatorActionRef.current = retry;
+    setOperatorAuthLabel(actionLabel);
+    setOperatorAuthOpen(true);
+  }, []);
+
   const handleDelete = useCallback(async (symbol: string) => {
     if (!confirm(`Remove ${symbol} from watchlist?`)) return;
-    try {
-      const res = await fetch(`/api/watchlist/${symbol}`, { method: "DELETE" });
-      if (res.ok) {
-        setItems((prev) => prev.filter((item) => item.symbol !== symbol));
+    const performDelete = async () => {
+      try {
+        const res = await fetch(`/api/watchlist/${symbol}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+          headers: operatorRequestHeaders(),
+        });
+        if (res.status === 401) {
+          requestOperatorAuth(`removing ${symbol} from the watchlist`, () => {
+            void performDelete();
+          });
+          return;
+        }
+        if (res.ok) {
+          setItems((prev) => prev.filter((item) => item.symbol !== symbol));
+        }
+      } catch (e) {
+        console.error("Delete failed:", e);
       }
-    } catch (e) {
-      console.error("Delete failed:", e);
-    }
-  }, []);
+    };
+    await performDelete();
+  }, [requestOperatorAuth]);
 
   const handleEditNotes = useCallback((item: WatchlistItem) => {
     setEditingItem(item);
@@ -230,24 +255,36 @@ export default function WatchlistPage() {
 
   const handleSaveNotes = useCallback(async () => {
     if (!editingItem) return;
-    try {
-      const res = await fetch(`/api/watchlist/${editingItem.symbol}/notes`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: editNotesText }),
-      });
-      if (res.ok) {
-        setItems((prev) =>
-          prev.map((i) =>
-            i.symbol === editingItem.symbol ? { ...i, notes: editNotesText } : i
-          )
-        );
-        setEditingItem(null);
+    const targetSymbol = editingItem.symbol;
+    const notesSnapshot = editNotesText;
+    const performPatch = async () => {
+      try {
+        const res = await fetch(`/api/watchlist/${targetSymbol}/notes`, {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: operatorRequestHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ notes: notesSnapshot }),
+        });
+        if (res.status === 401) {
+          requestOperatorAuth(`updating notes for ${targetSymbol}`, () => {
+            void performPatch();
+          });
+          return;
+        }
+        if (res.ok) {
+          setItems((prev) =>
+            prev.map((i) =>
+              i.symbol === targetSymbol ? { ...i, notes: notesSnapshot } : i
+            )
+          );
+          setEditingItem(null);
+        }
+      } catch (e) {
+        console.error("Update notes failed:", e);
       }
-    } catch (e) {
-      console.error("Update notes failed:", e);
-    }
-  }, [editingItem, editNotesText]);
+    };
+    await performPatch();
+  }, [editingItem, editNotesText, requestOperatorAuth]);
 
   const handleOpenAddModal = useCallback(() => {
     setIsAddModalOpen(true);
@@ -279,20 +316,30 @@ export default function WatchlistPage() {
       notes: formData.notes,
     };
 
-    try {
-      const res = await fetch("/api/watchlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        setIsAddModalOpen(false);
-        fetchWatchlist(true);
+    const performAdd = async () => {
+      try {
+        const res = await fetch("/api/watchlist", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: operatorRequestHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify(payload),
+        });
+        if (res.status === 401) {
+          requestOperatorAuth(`adding ${payload.symbol} to the watchlist`, () => {
+            void performAdd();
+          });
+          return;
+        }
+        if (res.ok) {
+          setIsAddModalOpen(false);
+          fetchWatchlist(true);
+        }
+      } catch (err) {
+        console.error("Add failed:", err);
       }
-    } catch (err) {
-      console.error("Add failed:", err);
-    }
-  }, [fetchWatchlist]);
+    };
+    await performAdd();
+  }, [fetchWatchlist, requestOperatorAuth]);
 
   // Memoize filtered items list
   const filteredItems = useMemo(() => {
@@ -377,7 +424,6 @@ export default function WatchlistPage() {
                   height: "6px",
                   borderRadius: "50%",
                   background: wsConnected ? "var(--accent-emerald)" : "#f49d0d",
-                  boxShadow: `0 0 6px ${wsConnected ? "var(--accent-emerald)" : "#f49d0d"}`,
                 }}
               />
               {wsConnected
@@ -439,7 +485,6 @@ export default function WatchlistPage() {
               borderRadius: "10px",
               border: "none",
               cursor: "pointer",
-              boxShadow: "0 4px 16px rgba(244, 157, 13, 0.3)",
               transition: "all 0.2s ease",
             }}
           >
@@ -498,7 +543,7 @@ export default function WatchlistPage() {
             Gate Monitor Status
           </div>
           <div style={{ fontSize: "28px", fontWeight: 800, color: "#ffffff", marginTop: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 10px #10b981" }} />
+            <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#10b981" }} />
             Active
           </div>
           <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
@@ -570,6 +615,21 @@ export default function WatchlistPage() {
           onSubmit={handleAddTokenSubmit}
         />
       )}
+
+      <OperatorAuthModal
+        open={operatorAuthOpen}
+        actionLabel={operatorAuthLabel}
+        onClose={() => {
+          setOperatorAuthOpen(false);
+          pendingOperatorActionRef.current = null;
+        }}
+        onAuthenticated={() => {
+          setOperatorAuthOpen(false);
+          const retry = pendingOperatorActionRef.current;
+          pendingOperatorActionRef.current = null;
+          if (retry) retry();
+        }}
+      />
     </div>
   );
 }

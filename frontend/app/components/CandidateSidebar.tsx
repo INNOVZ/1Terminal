@@ -1,10 +1,14 @@
 "use client";
 
+import type { RadarQuote, RadarSignal } from "../lib/radarInsights";
+
 import { useState, useMemo, useCallback, memo } from "react";
 import { Search, ShieldCheck } from "lucide-react";
 import type { Candle } from "./TradingChart";
+import type { PlanDiagnostics } from "./PlanDiagnosticsPanel";
 
 export interface Opportunity {
+  plan_diagnostics?: PlanDiagnostics;
   symbol: string;
   base_asset?: string;
   direction: string;
@@ -59,6 +63,15 @@ export interface Opportunity {
   is_discovery_tier?: boolean;
   radar_status?: "FRESH_COIL" | "AT_ENTRY_ZONE" | "IN_ACTIVE_TRADE" | "ACTIVE_COIL" | string;
   radar_status_label?: string;
+  first_seen_at?: string;
+  evaluated_at?: string;
+  radar_checked_at?: string;
+  radar_triggered_at?: string;
+  radar_trigger_basis?: string;
+  radar_trigger_entry?: string;
+  radar_trigger_stop?: string;
+  radar_signal?: RadarSignal;
+  radar_quote?: RadarQuote | null;
   trade_pnl_pct?: string;
   gates_passed?: number;
   gates_total?: number;
@@ -104,6 +117,19 @@ export interface CoilGainerInsight {
 }
 
 export function computeCoilToGainerProbability(opp: Opportunity): CoilGainerInsight {
+  if (opp.setup_label === "BREAKDOWN_RETEST_SHORT") {
+    const gates = opp.checklist || [];
+    const passed = gates.filter((gate) => gate.passed === true).length;
+    const insights = gates.map((gate) => `[${gate.passed ? "✓" : "✗"}] ${gate.title}: ${gate.detail}`);
+    const actionThesis = "Experimental failed-support-retest short. Await the conditional downside trigger; invalidate above the frozen rejection structure. No execution or validated win rate.";
+    return {
+      score: Math.min(passed, 5), archetype: "BEARISH CONTINUATION (RESEARCH)",
+      shortLabel: "RETEST SHORT", telemetrySummary: `${passed}/${gates.length} selection gates verified`,
+      actionThesis, tooltipText: ["EXPERIMENTAL SHORT — GATE CHECKS, NOT A PROBABILITY", actionThesis, ...insights].join("\n"),
+      badgeBg: "rgba(239, 68, 68, 0.12)", badgeColor: "var(--accent-crimson)",
+      badgeBorder: "rgba(239, 68, 68, 0.3)", insights,
+    };
+  }
   const fundBps = parseFloat(String(opp.funding_rate_bps || "0").replace("bps", ""));
   const oi7d = parseFloat(String(opp.oi_change_7d_pct || "0").replace("%", "").replace("+", ""));
   const oi1h = parseFloat(String(opp.oi_change_1h_pct || "0").replace("%", "").replace("+", ""));
@@ -327,7 +353,6 @@ const CandidateCard = memo(function CandidateCard({
         cursor: "pointer",
         background: isActive ? "var(--bg-card-active)" : "var(--bg-card)",
         border: `1px solid ${isActive ? (isShort ? "var(--accent-crimson)" : "#f49d0d") : "var(--border-subtle)"}`,
-        boxShadow: isActive ? `0 0 16px ${isShort ? "rgba(239, 68, 68, 0.25)" : "rgba(244, 157, 13, 0.2)"}` : "none",
         transition: "all 0.18s ease",
       }}
     >
@@ -533,11 +558,6 @@ const CandidateCard = memo(function CandidateCard({
                           ? "#f49d0d"
                           : "var(--accent-crimson)"
                       : "rgba(255, 255, 255, 0.15)",
-                    boxShadow: active
-                      ? coilInfo.score >= 4
-                        ? "0 0 5px rgba(16, 185, 129, 0.7)"
-                        : "0 0 4px rgba(244, 157, 13, 0.6)"
-                      : "none",
                     transition: "all 0.15s ease",
                   }}
                 />

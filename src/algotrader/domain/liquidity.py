@@ -42,8 +42,10 @@ class RankedLiquiditySymbol:
     symbol: str
     ili: Decimal
     quote_vol_24h: Decimal
-    median_quote_vol_30d: Decimal
-    open_interest_usd: Decimal
+    median_quote_vol_30d: Decimal | None
+    open_interest_usd: Decimal | None
+    inputs_mode: str = "full_3_factor"
+    missing_inputs: tuple[str, ...] = ()
 
 
 def compute_ili_ranks(
@@ -52,6 +54,9 @@ def compute_ili_ranks(
     """Compute Institutional Liquidity Index (ILI) across candidate symbols:
 
     ILI = 0.50 * pct_rank(median_quote_vol_30d) + 0.35 * pct_rank(open_interest_usd) + 0.15 * pct_rank(quote_vol_24h)
+
+    Missing 30d median volume or open interest USD falls back to 24h quote volume for ranking only,
+    while preserving explicit `None` and `missing_inputs` provenance on the returned record.
     """
     if not metrics:
         return []
@@ -80,6 +85,23 @@ def compute_ili_ranks(
 
     results: list[RankedLiquiditySymbol] = []
     for i, m in enumerate(metrics):
+        has_med = m.median_quote_vol_30d is not None and m.median_quote_vol_30d > Decimal("0")
+        has_oi = m.open_interest_usd is not None and m.open_interest_usd > Decimal("0")
+        missing = tuple(
+            name
+            for name, present in (
+                ("median_quote_vol_30d", has_med),
+                ("open_interest_usd", has_oi),
+            )
+            if not present
+        )
+        mode = (
+            "full_3_factor"
+            if not missing
+            else "volume_24h_proxy_only"
+            if len(missing) == 2
+            else "partial_proxy"
+        )
         ili = (w_med * rank_med[i] + w_oi * rank_oi[i] + w_24h * rank_24h[i]).quantize(
             Decimal("0.0001")
         )
@@ -88,8 +110,10 @@ def compute_ili_ranks(
                 symbol=m.symbol,
                 ili=ili,
                 quote_vol_24h=m.quote_vol_24h,
-                median_quote_vol_30d=med_30d_list[i],
-                open_interest_usd=oi_usd_list[i],
+                median_quote_vol_30d=m.median_quote_vol_30d if has_med else None,
+                open_interest_usd=m.open_interest_usd if has_oi else None,
+                inputs_mode=mode,
+                missing_inputs=missing,
             )
         )
 

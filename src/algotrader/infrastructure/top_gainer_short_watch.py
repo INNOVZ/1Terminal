@@ -155,7 +155,7 @@ class TopGainerShortWatchStore:
     def latest_cycle(self) -> dict[str, Any] | None:
         with self._lock, self._connect() as conn:
             row = conn.execute(
-                "SELECT payload FROM top_gainer_short_cycles ORDER BY evaluated_at DESC LIMIT 1"
+                "SELECT payload FROM top_gainer_short_cycles ORDER BY evaluated_at DESC, rowid DESC LIMIT 1"
             ).fetchone()
         if row is None:
             return None
@@ -195,7 +195,7 @@ class TopGainerShortWatchStore:
                 """
                 DELETE FROM top_gainer_short_cycles
                 WHERE cycle_id NOT IN (
-                    SELECT cycle_id FROM top_gainer_short_cycles ORDER BY evaluated_at DESC LIMIT 200
+                    SELECT cycle_id FROM top_gainer_short_cycles ORDER BY evaluated_at DESC, rowid DESC LIMIT 200
                 )
                 """
             )

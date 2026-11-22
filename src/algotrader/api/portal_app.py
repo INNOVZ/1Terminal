@@ -82,9 +82,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cron_ready = not app_settings.screener_cron_enabled or (
             portal._cron_task is not None and not portal._cron_task.done()
         )
+        initial_scan_in_progress = (
+            portal._is_refreshing
+            and portal._last_scan_succeeded_at is None
+            and portal._consecutive_scan_failures == 0
+        )
+        cache_stale = (
+            False
+            if initial_scan_in_progress
+            else portal.is_screener_cache_stale(app_settings)
+        )
+        cache_status = str(portal._screener_cache.get("data_status") or "")
+        scan_degraded = (
+            cache_status in ("scan_failed", "degraded_zero_usable_inputs")
+            or portal._consecutive_scan_failures >= 2
+        )
         if not cron_ready:
             details = {**details, "status": "not_ready", "scheduler": "stopped"}
-        return JSONResponse(details, status_code=200 if ready and cron_ready else 503)
+        if cache_stale:
+            details = {**details, "status": "not_ready", "data_status": "stale"}
+        elif scan_degraded:
+            details = {
+                **details,
+                "status": "not_ready",
+                "data_status": cache_status or "scan_failed",
+                "consecutive_scan_failures": portal._consecutive_scan_failures,
+            }
+        is_ready = ready and cron_ready and not cache_stale and not scan_degraded
+        return JSONResponse(details, status_code=200 if is_ready else 503)
 
     return application
 

@@ -82,6 +82,7 @@ def _sync_directory(path: Path) -> None:
 class LocalScanArchive:
     def __init__(self, root: Path) -> None:
         self.root = root
+        self.last_prune_stats: dict[str, int] = {}
 
     def _write(self, target: Path, payload: Any) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -168,6 +169,7 @@ class LocalScanArchive:
         max_bytes: int = 2_684_354_560,
         now: datetime | None = None,
         preserve_scan_ids: set[str] | frozenset[str] = frozenset(),
+        exclude_pinned_from_count: bool = False,
     ) -> tuple[str, ...]:
         """Prune old or excess scan archives using age, count, and byte safety caps."""
         directory = self.root / "scans"
@@ -209,22 +211,46 @@ class LocalScanArchive:
 
         entries.sort(key=lambda item: (item[0], item[1]), reverse=True)
         pruned: list[str] = []
-        kept_count = 0
-        kept_bytes = 0
+        protected_count = 0
+        protected_bytes = 0
+        unpinned_count = 0
+        unpinned_bytes = 0
+        # Account for protected pinned evidence separately so pinned active-episode
+        # origins never silently starve or misreport the rolling unpinned budget.
+        for _mtime, scan_id, _path, size_bytes in entries:
+            if scan_id in preserve_scan_ids:
+                protected_count += 1
+                protected_bytes += size_bytes
+
+        unpinned_count_budget = (
+            max_scans if exclude_pinned_from_count else max(0, max_scans - protected_count)
+        )
+        unpinned_byte_budget = max(0, max_bytes - protected_bytes)
         for mtime, scan_id, path, size_bytes in entries:
             if scan_id in preserve_scan_ids:
-                kept_count += 1
-                kept_bytes += size_bytes
                 continue
             too_old = mtime < cutoff_ts
-            too_many = kept_count >= max_scans
-            too_large = (kept_bytes + size_bytes) > max_bytes
+            too_many = unpinned_count >= unpinned_count_budget
+            too_large = (unpinned_bytes + size_bytes) > unpinned_byte_budget
             if too_old or too_many or too_large:
                 shutil.rmtree(path, ignore_errors=True)
                 pruned.append(scan_id)
             else:
-                kept_count += 1
-                kept_bytes += size_bytes
+                unpinned_count += 1
+                unpinned_bytes += size_bytes
+
+        self.last_prune_stats = {
+            "protected_count": protected_count,
+            "protected_bytes": protected_bytes,
+            "unpinned_count": unpinned_count,
+            "unpinned_bytes": unpinned_bytes,
+            "total_kept_count": protected_count + unpinned_count,
+            "total_kept_bytes": protected_bytes + unpinned_bytes,
+            "unpinned_count_budget": unpinned_count_budget,
+            "unpinned_byte_budget": unpinned_byte_budget,
+            "max_bytes": max_bytes,
+            "pruned_count": len(pruned),
+        }
         return tuple(pruned)
 
     def _outcome_directory(self, scan_id: str, horizon: int, symbol: str) -> Path:

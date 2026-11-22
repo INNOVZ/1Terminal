@@ -1,5 +1,7 @@
 "use client";
 
+import { bookQuote } from "./lib/radarInsights";
+
 import { useEffect, useState, useMemo, useCallback, useRef, Suspense } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
@@ -8,6 +10,8 @@ import type { Candle, CandleInterval } from "./components/TradingChart";
 import { Zap, RefreshCw, AlertCircle } from "lucide-react";
 import baselineCandles from "@/public/baseline_candles.json";
 import { useLocalStorage } from "./hooks/useLocalStorage";
+import OperatorAuthModal from "./components/OperatorAuthModal";
+import { operatorRequestHeaders } from "./lib/operatorClient";
 
 const candleStore = baselineCandles as Record<string, Candle[]>;
 
@@ -21,6 +25,11 @@ interface ScreenerResponse {
   qualifying_count?: number;
   macro_narrative?: string;
   is_scanning?: boolean;
+  scan_source?: string;
+  data_status?: string;
+  stale?: boolean;
+  stale_reason?: string;
+  last_scan_error?: string;
   screening_policy_version?: string;
   opportunities?: Opportunity[];
 }
@@ -175,6 +184,46 @@ const VerificationPanel = dynamic(
   },
 );
 
+interface ChartApiResponse {
+  record_kind?: "published_radar_candidate" | "watchlist_view" | "chart_inspection";
+  symbol?: string;
+  candles?: Candle[];
+  opportunity?: Opportunity | null;
+  watchlist_view?: {
+    symbol: string;
+    stage?: string;
+    timeframe?: string;
+    thesis?: string;
+    current_price?: string | null;
+    tick_size?: string;
+    support_price?: string;
+    trigger_price?: string;
+    invalidation_price?: string;
+    target_1?: string;
+    target_2?: string;
+    risk_reward_ratio?: string | null;
+    audit_verified?: boolean;
+    checklist?: { title: string; passed: boolean; status?: string; detail: string }[];
+    notes?: string;
+  } | null;
+  inspection?: {
+    symbol: string;
+    current_price?: string | null;
+    tick_size?: string;
+    note?: string;
+  } | null;
+}
+
+interface InspectedSymbolView {
+  record_kind: "watchlist_view" | "chart_inspection";
+  symbol: string;
+  candles: Candle[];
+  current_price?: string | null;
+  tick_size?: string;
+  note?: string;
+  watchlist_view?: ChartApiResponse["watchlist_view"];
+}
+
 function RadarPageContent() {
   const searchParams = useSearchParams();
   const symbolParam = searchParams ? searchParams.get("symbol") : null;
@@ -182,14 +231,22 @@ function RadarPageContent() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [activeOpportunity, setActiveOpportunity] =
     useState<Opportunity | null>(null);
+  const [inspectedView, setInspectedView] = useState<InspectedSymbolView | null>(null);
   const [activeCandle, setActiveCandle] = useState<Candle | null>(null);
+  const [radarQuotes, setRadarQuotes] = useState<Record<string, { price: number; observed_at: string }>>({});
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const [priceChanges24h, setPriceChanges24h] = useState<
     Record<string, number>
   >({});
   const [loading, setLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
+  const [scanSource, setScanSource] = useState<string | null>(null);
+  const [dataStatus, setDataStatus] = useState<string>("current");
+  const [statusDetail, setStatusDetail] = useState<string | null>(null);
   const [scanNotification, setScanNotification] = useState<string | null>(null);
+  const [operatorAuthOpen, setOperatorAuthOpen] = useState(false);
+  const [operatorAuthActionLabel, setOperatorAuthActionLabel] = useState("manual universe rescan");
+  const pendingOperatorActionRef = useRef<(() => void) | null>(null);
   const [policyVersion, setPolicyVersion] = useState<string>("atlas-v3.1-discovery-guards-1");
   const fetchInFlightRef = useRef(false);
   const fetchScreenerRef = useRef<((isLiveRefresh?: boolean, scope?: "core" | "full") => Promise<void>) | null>(null);
@@ -269,6 +326,7 @@ function RadarPageContent() {
         ? opp.candles
         : candleStore[opp.symbol] || [];
 
+    setInspectedView(null);
     setActiveOpportunity({ ...opp, candles: existingCandles });
     if (existingCandles && existingCandles.length > 0) {
       setActiveCandle(existingCandles[existingCandles.length - 1]);
@@ -366,24 +424,42 @@ function RadarPageContent() {
               `/api/chart/${cleanTarget}`,
             ).catch(() => null);
             if (chartRes && chartRes.ok) {
-              const chartData = (await chartRes.json()) as { opportunity?: Opportunity; candles?: Candle[] };
-              if (chartData && chartData.opportunity) {
+              const chartData = (await chartRes.json()) as ChartApiResponse;
+              const chartCandles =
+                chartData.candles && chartData.candles.length > 0
+                  ? chartData.candles
+                  : candleStore[cleanTarget] || [];
+              if (chartData.record_kind === "published_radar_candidate" && chartData.opportunity) {
                 matchedTarget = {
                   ...chartData.opportunity,
-                  candles:
-                    chartData.candles && chartData.candles.length > 0
-                      ? chartData.candles
-                      : candleStore[cleanTarget] || [],
+                  candles: chartCandles,
                 };
+                setInspectedView(null);
                 enriched.unshift(matchedTarget);
+              } else {
+                // Keep unqualified inspections and watchlist views strictly outside the qualified radar candidate list
+                setInspectedView({
+                  record_kind: chartData.record_kind === "watchlist_view" ? "watchlist_view" : "chart_inspection",
+                  symbol: cleanTarget,
+                  candles: chartCandles,
+                  current_price: chartData.watchlist_view?.current_price ?? chartData.inspection?.current_price ?? null,
+                  tick_size: chartData.watchlist_view?.tick_size ?? chartData.inspection?.tick_size,
+                  note: chartData.inspection?.note,
+                  watchlist_view: chartData.watchlist_view ?? null,
+                });
+                if (chartCandles.length > 0) {
+                  setActiveCandle(chartCandles[chartCandles.length - 1]);
+                }
               }
             }
           } catch (cErr) {
             console.warn(
-              "Could not load targeted watchlist candidate:",
+              "Could not load targeted symbol chart:",
               cErr,
             );
           }
+        } else {
+          setInspectedView(null);
         }
       }
 
@@ -455,22 +531,65 @@ function RadarPageContent() {
 
       const controller = new AbortController();
       const requestTimeout = setTimeout(() => controller.abort(), 25000);
-      const res = await fetch(url, { cache: "no-store", signal: controller.signal })
+      const res = await fetch(url, {
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: isLiveRefresh ? operatorRequestHeaders() : undefined,
+        signal: controller.signal,
+      })
         .catch(() => null)
         .finally(() => clearTimeout(requestTimeout));
       let data: ScreenerResponse | null = null;
       if (res && res.ok) {
         data = (await res.json()) as ScreenerResponse;
+      } else if (isLiveRefresh && res && !res.ok) {
+        setIsScanning(false);
+        setScanSource(null);
+        awaitingScanCompletionRef.current = false;
+        manualScanRequestedRef.current = false;
+        scanStartedAtRef.current = null;
+        if (res.status === 401) {
+          pendingOperatorActionRef.current = () => {
+            void fetchScreenerRef.current?.(true, scope);
+          };
+          setOperatorAuthActionLabel("manual universe rescan");
+          setOperatorAuthOpen(true);
+        }
+        const msg =
+          res.status === 401 || res.status === 403 || res.status === 503
+            ? "Manual rescan requires operator authorization"
+            : res.status === 429
+              ? "Rescan cooldown active; please wait 60s"
+              : `Rescan unavailable (HTTP ${res.status})`;
+        scheduleTransientNotification(msg);
+        window.dispatchEvent(new CustomEvent("atlas:scan-error"));
+        return;
       }
 
       if (data?.screening_policy_version) {
         setPolicyVersion(data.screening_policy_version);
       }
 
-      // If backend reports an active background scan, render immediately and schedule a single adaptive follow-up poll
+      // If backend reports an active background scan:
+      // - For scheduled hourly refreshes carrying current verified cards, render them immediately
+      //   so visitors see active setups while the background scan runs.
+      // - Schedule a single adaptive follow-up poll.
       if (data && data.is_scanning) {
         setLoading(false);
         setIsScanning(true);
+        setScanSource(data.scan_source || "manual_or_init");
+        if (
+          data.scan_source === "scheduled" &&
+          data.data_status !== "stale" &&
+          data.data_status !== "scan_failed" &&
+          data.data_status !== "degraded_zero_usable_inputs" &&
+          Array.isArray(data.opportunities) &&
+          data.opportunities.length > 0
+        ) {
+          setDataStatus(data.data_status || "current");
+          setStatusDetail(null);
+          await applyScreenerData(data, false);
+        }
         awaitingScanCompletionRef.current = true;
         if (!scanStartedAtRef.current) {
           scanStartedAtRef.current = Date.now();
@@ -495,6 +614,7 @@ function RadarPageContent() {
           }, 5000);
         } else if (isLiveRefresh) {
           setIsScanning(false);
+          setScanSource(null);
           manualScanRequestedRef.current = false;
           scheduleTransientNotification("Rescan error: connection timeout");
           window.dispatchEvent(new CustomEvent("atlas:scan-error"));
@@ -509,6 +629,36 @@ function RadarPageContent() {
       manualScanRequestedRef.current = false;
       scanStartedAtRef.current = null;
       setIsScanning(false);
+      setScanSource(null);
+
+      const resolvedStatus = data.data_status || (data.stale ? "stale" : "current");
+      setDataStatus(resolvedStatus);
+      const isDegradedOrStale =
+        resolvedStatus === "stale" ||
+        resolvedStatus === "scan_failed" ||
+        resolvedStatus === "degraded_zero_usable_inputs";
+      if (isDegradedOrStale) {
+        const detail =
+          data.macro_narrative ||
+          data.last_scan_error ||
+          (resolvedStatus === "stale"
+            ? "Cached qualifications expired past freshness TTL; awaiting fresh live scan."
+            : "Live scan unavailable; prior qualifications withheld.");
+        setStatusDetail(detail);
+        setOpportunities([]);
+        setActiveOpportunity(null);
+        setActiveCandle(null);
+        if (notifyCompletion) {
+          scheduleTransientNotification(
+            resolvedStatus === "stale"
+              ? "Qualifications expired (stale) — withheld until next live scan"
+              : "Scan failed or inputs unavailable — qualifications withheld",
+          );
+          window.dispatchEvent(new CustomEvent("atlas:scan-error"));
+        }
+        return;
+      }
+      setStatusDetail(null);
 
       // Apply newly verified live scan data
       if (Array.isArray(data.opportunities) && data.opportunities.length > 0) {
@@ -527,34 +677,44 @@ function RadarPageContent() {
             }),
           );
         } else if (symbolParam) {
-          // Screener returned 0 items, but we have a symbol query parameter!
+          // Screener returned 0 items; load direct inspection/watchlist chart without fabricating a radar candidate
           const cleanTarget = symbolParam.toUpperCase();
           try {
             const chartRes = await fetch(`/api/chart/${cleanTarget}`, { cache: "no-store" }).catch(
               () => null,
             );
             if (chartRes && chartRes.ok) {
-              const chartData = (await chartRes.json()) as { opportunity?: Opportunity; candles?: Candle[] };
-              if (chartData && chartData.opportunity) {
+              const chartData = (await chartRes.json()) as ChartApiResponse;
+              const chartCandles =
+                chartData.candles && chartData.candles.length > 0
+                  ? chartData.candles
+                  : [];
+              if (chartData.record_kind === "published_radar_candidate" && chartData.opportunity) {
                 const targetOpp: Opportunity = {
                   ...chartData.opportunity,
-                  candles:
-                    chartData.candles && chartData.candles.length > 0
-                      ? chartData.candles
-                      : [],
+                  candles: chartCandles,
                 };
+                setInspectedView(null);
                 setOpportunities([targetOpp]);
                 setActiveOpportunity(targetOpp);
-                if (targetOpp.candles && targetOpp.candles.length > 0) {
-                  setActiveCandle(
-                    targetOpp.candles[targetOpp.candles.length - 1],
-                  );
-                }
+              } else {
+                setInspectedView({
+                  record_kind: chartData.record_kind === "watchlist_view" ? "watchlist_view" : "chart_inspection",
+                  symbol: cleanTarget,
+                  candles: chartCandles,
+                  current_price: chartData.watchlist_view?.current_price ?? chartData.inspection?.current_price ?? null,
+                  tick_size: chartData.watchlist_view?.tick_size ?? chartData.inspection?.tick_size,
+                  note: chartData.inspection?.note,
+                  watchlist_view: chartData.watchlist_view ?? null,
+                });
+              }
+              if (chartCandles.length > 0) {
+                setActiveCandle(chartCandles[chartCandles.length - 1]);
               }
             }
           } catch (cErr) {
             console.warn(
-              "Could not load targeted watchlist candidate:",
+              "Could not load targeted symbol chart:",
               cErr,
             );
           }
@@ -624,15 +784,17 @@ function RadarPageContent() {
       try {
         const res = await fetch(`/api/chart/${cleanTarget}`).catch(() => null);
         if (res && res.ok && isMounted) {
-          const chartData = (await res.json()) as { opportunity?: Opportunity; candles?: Candle[] };
-          if (chartData && chartData.opportunity) {
+          const chartData = (await res.json()) as ChartApiResponse;
+          const chartCandles =
+            chartData.candles && chartData.candles.length > 0
+              ? chartData.candles
+              : [];
+          if (chartData.record_kind === "published_radar_candidate" && chartData.opportunity) {
             const oppWithCandles: Opportunity = {
               ...chartData.opportunity,
-              candles:
-                chartData.candles && chartData.candles.length > 0
-                  ? chartData.candles
-                  : [],
+              candles: chartCandles,
             };
+            setInspectedView(null);
             setOpportunities((prev) => {
               const targetBase = cleanTarget.replace(/USDT$/, "").replace(/USDC$/, "");
               const filtered = prev.filter((o) => {
@@ -642,18 +804,24 @@ function RadarPageContent() {
               return [oppWithCandles, ...filtered];
             });
             setActiveOpportunity(oppWithCandles);
-            if (
-              oppWithCandles.candles &&
-              oppWithCandles.candles.length > 0
-            ) {
-              setActiveCandle(
-                oppWithCandles.candles[oppWithCandles.candles.length - 1],
-              );
-            }
+          } else {
+            // Keep unqualified chart inspections and watchlist views out of the qualified radar list
+            setInspectedView({
+              record_kind: chartData.record_kind === "watchlist_view" ? "watchlist_view" : "chart_inspection",
+              symbol: cleanTarget,
+              candles: chartCandles,
+              current_price: chartData.watchlist_view?.current_price ?? chartData.inspection?.current_price ?? null,
+              tick_size: chartData.watchlist_view?.tick_size ?? chartData.inspection?.tick_size,
+              note: chartData.inspection?.note,
+              watchlist_view: chartData.watchlist_view ?? null,
+            });
+          }
+          if (chartCandles.length > 0) {
+            setActiveCandle(chartCandles[chartCandles.length - 1]);
           }
         }
       } catch (err) {
-        console.warn("Error loading targeted candidate chart:", err);
+        console.warn("Error loading targeted symbol chart:", err);
       }
     };
     void loadSymbol();
@@ -669,9 +837,18 @@ function RadarPageContent() {
       const scope = customEvt.detail?.scope || "core";
       void fetchScreener(true, scope);
     };
+    const handleOperatorAuthRequired = (e: Event) => {
+      const customEvt = e as CustomEvent<{ actionLabel?: string; retry?: () => void }>;
+      pendingOperatorActionRef.current = customEvt.detail?.retry || null;
+      setOperatorAuthActionLabel(customEvt.detail?.actionLabel || "privileged operator action");
+      setOperatorAuthOpen(true);
+    };
     window.addEventListener("atlas:trigger-rescan", handleTriggerRescan);
-    return () =>
+    window.addEventListener("atlas:operator-auth-required", handleOperatorAuthRequired);
+    return () => {
       window.removeEventListener("atlas:trigger-rescan", handleTriggerRescan);
+      window.removeEventListener("atlas:operator-auth-required", handleOperatorAuthRequired);
+    };
   }, [fetchScreener]);
 
   // --------------------------------------------------------------------------
@@ -693,17 +870,27 @@ function RadarPageContent() {
     const fetchSnapshot = async () => {
       try {
         const res = await fetch(
-          "https://fapi.binance.com/fapi/v1/ticker/price",
+          "https://fapi.binance.com/fapi/v1/ticker/bookTicker",
         ).catch(() => null);
         if (res && res.ok && isSubscribed) {
           const data = await res.json();
           if (Array.isArray(data)) {
             const symSet = new Set(symbols);
             const prices: Record<string, number> = {};
-            data.forEach((item: { symbol: string; price: string }) => {
-              if (symSet.has(item.symbol)) {
-                prices[item.symbol] = parseFloat(item.price);
+            const quotes: Record<string, { price: number; observed_at: string }> = {};
+            data.forEach((item: { symbol: string; bidPrice: string; askPrice: string; time?: number }) => {
+              const quote = bookQuote(item.bidPrice, item.askPrice, item.time, Date.now());
+              if (symSet.has(item.symbol) && quote) {
+                prices[item.symbol] = Number(quote.price);
+                quotes[item.symbol] = { price: Number(quote.price), observed_at: quote.observed_at };
               }
+            });
+            setRadarQuotes(prev => {
+              const next = { ...prev };
+              for (const [symbol, quote] of Object.entries(quotes)) {
+                if (!prev[symbol] || quote.observed_at >= prev[symbol].observed_at) next[symbol] = quote;
+              }
+              return next;
             });
             setLivePrices((prev) => ({ ...prev, ...prices }));
           }
@@ -716,8 +903,8 @@ function RadarPageContent() {
     fetchSnapshot();
 
     // 2. Real-time Multi-ticker WebSocket stream (Binance combined stream)
-    const streams = symbols.map((s) => `${s.toLowerCase()}@ticker`).join("/");
-    const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+    const streams = symbols.flatMap((s) => [`${s.toLowerCase()}@ticker`, `${s.toLowerCase()}@bookTicker`]).join("/");
+    const wsUrl = `wss://fstream.binance.com/stream?streams=${streams}`;
 
     const startPollingFallback = () => {
       if (pollTimer) clearInterval(pollTimer);
@@ -732,9 +919,20 @@ function RadarPageContent() {
         try {
           const payload = JSON.parse(event.data);
           const data = payload.data || payload;
-          if (data && data.s && data.c) {
+          if (data?.e === "bookTicker" && typeof data.s === "string" && symbols.includes(data.s)) {
+            const quote = bookQuote(data.b, data.a, data.E, Date.now());
+            if (quote) {
+              const sym = data.s;
+              setRadarQuotes(prev => prev[sym] && prev[sym].observed_at > quote.observed_at
+                ? prev : { ...prev, [sym]: { price: Number(quote.price), observed_at: quote.observed_at } });
+            }
+            return;
+          }
+          if (data && typeof data.s === "string" && data.c) {
             const sym = data.s.toUpperCase();
             const curPrice = parseFloat(data.c);
+            if (!symbols.includes(sym) || !Number.isFinite(curPrice) || curPrice <= 0
+              || typeof data.E !== "number" || Date.now() - data.E < -5000 || Date.now() - data.E > 60000) return;
             const pct = data.P !== undefined ? parseFloat(data.P) : undefined;
 
             setLivePrices((prev) => {
@@ -742,7 +940,7 @@ function RadarPageContent() {
               return { ...prev, [sym]: curPrice };
             });
 
-            if (pct !== undefined) {
+            if (pct !== undefined && Number.isFinite(pct)) {
               setPriceChanges24h((prev) => {
                 if (prev[sym] === pct) return prev;
                 return { ...prev, [sym]: pct };
@@ -872,18 +1070,19 @@ function RadarPageContent() {
   }, [activeOpportunity?.candles]);
 
   const memoizedTargets = useMemo(() => {
-    const adapted = adaptedLevelsMap[activeOpportunity?.symbol || ""];
+    const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity?.symbol || ""];
     if (adapted?.targets && adapted.targets.length > 0) return adapted.targets;
     return (activeOpportunity?.suggested_targets || []).map((t) => Number(t));
   }, [
     activeOpportunity?.symbol,
+    activeOpportunity?.setup_label,
     activeOpportunity?.suggested_targets,
     adaptedLevelsMap,
   ]);
 
   const breakoutTriggerPrice = useMemo(() => {
     if (!activeOpportunity) return 0;
-    const adapted = adaptedLevelsMap[activeOpportunity.symbol];
+    const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity.symbol];
     if (adapted?.breakoutTrigger) return adapted.breakoutTrigger;
     return Number(
       activeOpportunity.breakout_trigger ||
@@ -894,7 +1093,7 @@ function RadarPageContent() {
 
   const entryPriceVal = useMemo(() => {
     if (!activeOpportunity) return 0;
-    const adapted = adaptedLevelsMap[activeOpportunity.symbol];
+    const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity.symbol];
     if (adapted?.entryPrice) return adapted.entryPrice;
     return Number(
       activeOpportunity.suggested_entry ||
@@ -934,16 +1133,17 @@ function RadarPageContent() {
   ]);
 
   const stopPriceVal = useMemo(() => {
-    const adapted = adaptedLevelsMap[activeOpportunity?.symbol || ""];
+    const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity?.symbol || ""];
     if (adapted?.stopPrice) return adapted.stopPrice;
     return Number(activeOpportunity?.suggested_stop || 0);
   }, [
     activeOpportunity?.symbol,
+    activeOpportunity?.setup_label,
     activeOpportunity?.suggested_stop,
     adaptedLevelsMap,
   ]);
 
-  if (!activeOpportunity) {
+  if (!activeOpportunity && !inspectedView) {
     if (loading || isScanning) {
       return (
         <div
@@ -971,7 +1171,6 @@ function RadarPageContent() {
               alignItems: "center",
               justifyContent: "center",
               marginBottom: "24px",
-              boxShadow: "0 0 35px rgba(244, 157, 13, 0.12)",
             }}
           >
             <div
@@ -1031,6 +1230,23 @@ function RadarPageContent() {
       );
     }
 
+    const isDegradedState =
+      dataStatus === "stale" ||
+      dataStatus === "scan_failed" ||
+      dataStatus === "degraded_zero_usable_inputs";
+    const emptyHeading =
+      dataStatus === "stale"
+        ? "Cached Qualifications Expired (Stale)"
+        : dataStatus === "degraded_zero_usable_inputs"
+          ? "Market Inputs Unavailable — Qualifications Withheld"
+          : dataStatus === "scan_failed"
+            ? "Live Scan Failed — Qualifications Withheld"
+            : "No Active Pre-Breakout Setups Qualified";
+    const emptyMessage = isDegradedState
+      ? statusDetail ||
+        "Prior qualifications are withheld until a fresh live scan verifies current market structure."
+      : "All evaluated contracts are either in active expansion or failed strict risk-reward bounds. The screener runs automatically every hour on UTC candle closes.";
+
     return (
       <div
         style={{
@@ -1046,25 +1262,23 @@ function RadarPageContent() {
       >
         <AlertCircle
           size={38}
-          color="#f49d0d"
+          color={isDegradedState ? "#ef4444" : "#f49d0d"}
           style={{ marginBottom: "16px" }}
         />
         <h2 style={{ fontSize: "18px", fontWeight: 800, margin: "0 0 8px 0" }}>
-          No Active Pre-Breakout Setups Qualified
+          {emptyHeading}
         </h2>
         <p
           style={{
             color: "var(--text-muted)",
             fontSize: "13px",
             fontFamily: "var(--font-mono)",
-            maxWidth: "460px",
+            maxWidth: "480px",
             textAlign: "center",
             marginBottom: "20px",
           }}
         >
-          All evaluated contracts are either in active expansion or failed
-          strict risk-reward bounds. The screener runs automatically every hour on
-          UTC candle closes.
+          {emptyMessage}
         </p>
         <button
           onClick={() => fetchScreener(true)}
@@ -1073,7 +1287,7 @@ function RadarPageContent() {
             display: "inline-flex",
             alignItems: "center",
             gap: "8px",
-            background: "linear-gradient(135deg, #f49d0d 0%, #d97706 100%)",
+            background: "#f49d0d",
             color: "#000",
             fontWeight: 700,
             fontSize: "13px",
@@ -1089,6 +1303,20 @@ function RadarPageContent() {
             ? "Deep Scanning Futures Universe..."
             : "Refresh Screener Now"}
         </button>
+        <OperatorAuthModal
+          open={operatorAuthOpen}
+          actionLabel={operatorAuthActionLabel}
+          onClose={() => {
+            setOperatorAuthOpen(false);
+            pendingOperatorActionRef.current = null;
+          }}
+          onAuthenticated={() => {
+            setOperatorAuthOpen(false);
+            const retry = pendingOperatorActionRef.current;
+            pendingOperatorActionRef.current = null;
+            if (retry) retry();
+          }}
+        />
       </div>
     );
   }
@@ -1349,8 +1577,10 @@ function RadarPageContent() {
                 letterSpacing: "0.04em",
               }}
             >
-              <RefreshCw size={10} className="animate-spin" /> SCANNING LIVE
-              UNIVERSE...
+              <RefreshCw size={10} className="animate-spin" />{" "}
+              {scanSource === "scheduled"
+                ? "REFRESHING HOURLY SCAN..."
+                : "SCANNING LIVE UNIVERSE..."}
             </div>
           )}
 
@@ -1410,7 +1640,7 @@ function RadarPageContent() {
         </div>
 
         {/* Column 2: TradingView Chart Canvas */}
-        {activeOpportunity && (
+        {(inspectedView || activeOpportunity) && (
           <section
             className="portal-chart-column"
             style={{
@@ -1425,41 +1655,82 @@ function RadarPageContent() {
               position: "relative",
             }}
           >
-            <TradingChart
-              key={activeOpportunity.symbol}
-              symbol={activeOpportunity.symbol}
-              direction={activeOpportunity.direction}
-              preservePublishedLevels={activeOpportunity.risk_reward_target_index != null}
-              tickSize={Number(activeOpportunity.tick_size) || undefined}
-              candles={activeCandles}
-              pocPrice={pocPriceVal}
-              vahPrice={vahPriceVal}
-              valPrice={valPriceVal}
-              entryPrice={entryPriceVal}
-              breakoutTrigger={breakoutTriggerPrice}
-              stopPrice={stopPriceVal}
-              targets={memoizedTargets}
-              showLeftSidebar={showLeftSidebar}
-              onToggleLeftSidebar={handleToggleLeftSidebar}
-              showRightPanel={showRightPanel}
-              onToggleRightPanel={handleToggleRightPanel}
-              showLevels={showLevels}
-              onToggleLevels={handleToggleLevels}
-              showTargets={showTargets}
-              onToggleTargets={handleToggleTargets}
-              showVolume={showVolume}
-              onToggleVolume={handleToggleVolume}
-              candleInterval={candleInterval}
-              onChangeInterval={handleChangeInterval}
-              onCandleChange={handleCandleChange}
-              onLiveTick={handleLiveTick}
-              onLevelsUpdated={handleLevelsUpdated}
-            />
+            {inspectedView ? (
+              <TradingChart
+                key={`inspect-${inspectedView.symbol}`}
+                symbol={inspectedView.symbol}
+                direction="long"
+                preservePublishedLevels={true}
+                tickSize={Number(inspectedView.tick_size) || undefined}
+                candles={inspectedView.candles}
+                pocPrice={Number(inspectedView.watchlist_view?.support_price || 0)}
+                vahPrice={Number(inspectedView.watchlist_view?.trigger_price || 0)}
+                valPrice={Number(inspectedView.watchlist_view?.invalidation_price || 0)}
+                entryPrice={Number(inspectedView.watchlist_view?.support_price || 0)}
+                breakoutTrigger={Number(inspectedView.watchlist_view?.trigger_price || 0)}
+                stopPrice={Number(inspectedView.watchlist_view?.invalidation_price || 0)}
+                targets={
+                  inspectedView.watchlist_view
+                    ? [
+                        Number(inspectedView.watchlist_view.target_1 || 0),
+                        Number(inspectedView.watchlist_view.target_2 || 0),
+                      ].filter((v) => v > 0)
+                    : []
+                }
+                showLeftSidebar={showLeftSidebar}
+                onToggleLeftSidebar={handleToggleLeftSidebar}
+                showRightPanel={showRightPanel}
+                onToggleRightPanel={handleToggleRightPanel}
+                showLevels={inspectedView.record_kind === "watchlist_view" ? showLevels : false}
+                onToggleLevels={handleToggleLevels}
+                showTargets={inspectedView.record_kind === "watchlist_view" ? showTargets : false}
+                onToggleTargets={handleToggleTargets}
+                showVolume={showVolume}
+                onToggleVolume={handleToggleVolume}
+                candleInterval={candleInterval}
+                onChangeInterval={handleChangeInterval}
+                onCandleChange={handleCandleChange}
+                onLiveTick={handleLiveTick}
+              />
+            ) : (
+              activeOpportunity && (
+                <TradingChart
+                  key={activeOpportunity.symbol}
+                  symbol={activeOpportunity.symbol}
+                  direction={activeOpportunity.direction}
+                  preservePublishedLevels={activeOpportunity.risk_reward_target_index != null}
+                  tickSize={Number(activeOpportunity.tick_size) || undefined}
+                  candles={activeCandles}
+                  pocPrice={pocPriceVal}
+                  vahPrice={vahPriceVal}
+                  valPrice={valPriceVal}
+                  entryPrice={entryPriceVal}
+                  breakoutTrigger={breakoutTriggerPrice}
+                  stopPrice={stopPriceVal}
+                  targets={memoizedTargets}
+                  showLeftSidebar={showLeftSidebar}
+                  onToggleLeftSidebar={handleToggleLeftSidebar}
+                  showRightPanel={showRightPanel}
+                  onToggleRightPanel={handleToggleRightPanel}
+                  showLevels={showLevels}
+                  onToggleLevels={handleToggleLevels}
+                  showTargets={showTargets}
+                  onToggleTargets={handleToggleTargets}
+                  showVolume={showVolume}
+                  onToggleVolume={handleToggleVolume}
+                  candleInterval={candleInterval}
+                  onChangeInterval={handleChangeInterval}
+                  onCandleChange={handleCandleChange}
+                  onLiveTick={handleLiveTick}
+                  onLevelsUpdated={handleLevelsUpdated}
+                />
+              )
+            )}
           </section>
         )}
 
-        {/* Column 3: Collapsible Institutional Verification Panel */}
-        {activeOpportunity && (
+        {/* Column 3: Collapsible Institutional Verification Panel (or Non-Qualified Inspection Card) */}
+        {(inspectedView || activeOpportunity) && (
           <div
             className="portal-verification-column"
             style={{
@@ -1474,15 +1745,116 @@ function RadarPageContent() {
             }}
           >
             <div style={{ width: "360px", height: "100%" }}>
-              <VerificationPanel
-                opportunity={activeOpportunity}
-                adaptedLevels={adaptedLevelsMap[activeOpportunity.symbol]}
-                livePrice={livePrices[activeOpportunity.symbol]}
-              />
+              {inspectedView ? (
+                <aside
+                  style={{
+                    width: "360px",
+                    height: "100%",
+                    overflowY: "auto",
+                    padding: "16px",
+                    background: "rgba(10, 14, 24, 0.98)",
+                    borderLeft: "1px solid var(--border-subtle)",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "12px",
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: "8px",
+                      background: "rgba(244, 157, 13, 0.1)",
+                      border: "1px solid rgba(244, 157, 13, 0.35)",
+                      color: "#f49d0d",
+                      fontSize: "11px",
+                      fontWeight: 800,
+                      letterSpacing: "0.05em",
+                    }}
+                  >
+                    {inspectedView.record_kind === "watchlist_view"
+                      ? "SAVED WATCHLIST VIEW — NOT A PUBLISHED RADAR SIGNAL"
+                      : "CHART INSPECTION ONLY — NOT QUALIFIED"}
+                  </div>
+                  <div style={{ fontSize: "18px", fontWeight: 800, color: "var(--text-primary)" }}>
+                    {inspectedView.symbol}
+                  </div>
+                  <p style={{ margin: 0, fontSize: "12px", color: "var(--text-muted)", lineHeight: 1.5 }}>
+                    {inspectedView.record_kind === "watchlist_view"
+                      ? inspectedView.watchlist_view?.thesis || "Saved watchlist item displayed with raw Binance USD-M candles. Live audit required before qualification."
+                      : inspectedView.note || "Direct Binance USD-M futures chart inspection. No screener score, POC, win rate, or gate pass is synthesized."}
+                  </p>
+                  {inspectedView.watchlist_view?.checklist && inspectedView.watchlist_view.checklist.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-secondary)" }}>
+                        WATCHLIST AUDIT STATUS ({inspectedView.watchlist_view.audit_verified ? "AUDITED" : "UNVERIFIED"})
+                      </div>
+                      {inspectedView.watchlist_view.checklist.map((item, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            padding: "8px 10px",
+                            borderRadius: "6px",
+                            background: "rgba(255,255,255,0.03)",
+                            border: "1px solid var(--border-subtle)",
+                            fontSize: "11px",
+                          }}
+                        >
+                          <div style={{ fontWeight: 700, color: item.passed ? "var(--accent-emerald)" : "#f49d0d" }}>
+                            {item.title} ({item.status || (item.passed ? "passed" : "unknown")})
+                          </div>
+                          <div style={{ color: "var(--text-muted)", marginTop: "2px" }}>{item.detail}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {activeOpportunity && (
+                    <button
+                      type="button"
+                      onClick={() => setInspectedView(null)}
+                      style={{
+                        marginTop: "4px",
+                        padding: "8px 12px",
+                        borderRadius: "6px",
+                        border: "1px solid var(--border-subtle)",
+                        background: "rgba(255,255,255,0.06)",
+                        color: "var(--text-primary)",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Return to Active Radar Candidate ({activeOpportunity.symbol})
+                    </button>
+                  )}
+                </aside>
+              ) : (
+                activeOpportunity && (
+                  <VerificationPanel
+                    opportunity={activeOpportunity}
+                    adaptedLevels={adaptedLevelsMap[activeOpportunity.symbol]}
+                    livePrice={livePrices[activeOpportunity.symbol]}
+                    radarQuote={radarQuotes[activeOpportunity.symbol]}
+                  />
+                )
+              )}
             </div>
           </div>
         )}
       </main>
+      <OperatorAuthModal
+        open={operatorAuthOpen}
+        actionLabel={operatorAuthActionLabel}
+        onClose={() => {
+          setOperatorAuthOpen(false);
+          pendingOperatorActionRef.current = null;
+        }}
+        onAuthenticated={() => {
+          setOperatorAuthOpen(false);
+          const retry = pendingOperatorActionRef.current;
+          pendingOperatorActionRef.current = null;
+          if (retry) retry();
+        }}
+      />
     </div>
   );
 }

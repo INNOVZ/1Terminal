@@ -294,6 +294,7 @@ function TradingChart({
 
   // Real-Time Connection Status
   const [connectionMode, setConnectionMode] = useState<"connecting" | "live_ws" | "live_poll">("connecting");
+  const [futuresHistoryWarning, setFuturesHistoryWarning] = useState<string | null>(null);
   const tickSizeRef = useRef(tickSize);
   useEffect(() => {
     tickSizeRef.current = tickSize;
@@ -501,18 +502,22 @@ function TradingChart({
       onCandleChangeRef.current?.(lastInit);
     }
 
-    // Step A: Fetch historical klines for this interval from Binance REST
+    // Step A: Fetch historical klines for this interval strictly from Binance USD-M Futures REST (never fall back to Spot)
     const fetchIntervalKlines = async () => {
       try {
-        let res = await fetch(
+        const res = await fetch(
           `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol.toUpperCase()}&interval=${candleInterval}&limit=1000`
         );
         if (!res.ok) {
-          res = await fetch(
-            `https://api.binance.com/api/v3/klines?symbol=${symbol.toUpperCase()}&interval=${candleInterval}&limit=1000`
-          );
+          if (isCurrent) {
+            setFuturesHistoryWarning(
+              `USD-M futures klines unavailable (HTTP ${res.status}); holding last known futures bars`
+            );
+          }
+          return;
         }
         if (res.ok && isCurrent) {
+          setFuturesHistoryWarning(null);
           const raw = await res.json();
           if (Array.isArray(raw) && raw.length > 0) {
             const fetchedCandles: Candle[] = raw.map((item: (number | string)[]) => ({
@@ -583,6 +588,11 @@ function TradingChart({
         }
       } catch (err) {
         console.warn(`Binance ${candleInterval} klines fetch error:`, err);
+        if (isCurrent) {
+          setFuturesHistoryWarning(
+            "USD-M futures klines fetch failed; holding last known futures bars"
+          );
+        }
       }
     };
 
@@ -1003,11 +1013,27 @@ function TradingChart({
                 height: "7px",
                 borderRadius: "50%",
                 background: connectionMode === "live_ws" ? "#10b981" : "#f49d0d",
-                boxShadow: connectionMode === "live_ws" ? "0 0 8px #10b981" : "0 0 8px #f49d0d",
               }}
               className="pulse-indicator"
             />
           </span>
+          {futuresHistoryWarning && (
+            <span
+              title={futuresHistoryWarning}
+              style={{
+                padding: "2px 7px",
+                borderRadius: "6px",
+                background: "rgba(245, 158, 11, 0.16)",
+                border: "1px solid rgba(245, 158, 11, 0.4)",
+                color: "#fbbf24",
+                fontSize: "10px",
+                fontWeight: 700,
+                whiteSpace: "nowrap",
+              }}
+            >
+              USD-M HISTORY STALE
+            </span>
+          )}
         </div>
 
         {/* Right: Candle Interval Switch + Overlays + Pane Toggles */}

@@ -6,12 +6,17 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 import structlog
 
 from algotrader.adapters.external.macro_provider import MacroSentimentProvider
 from algotrader.adapters.external.models import MacroSentimentContext
 from algotrader.application.alt_momentum import _participation_ratio, _return_over
+from algotrader.application.bearish_continuation import (
+    publication_inputs_current,
+    score_continuation,
+)
 from algotrader.application.research import beta_correlation
 from algotrader.application.scan_recording import MacroContextSource
 from algotrader.config import Settings
@@ -107,6 +112,49 @@ ZERO = Decimal("0")
 ONE = Decimal("1")
 HUNDRED = Decimal("100")
 
+def _select_canonical_pairs(
+    instruments: Sequence[Instrument],
+    quotes_by_symbol: dict[str, Quote],
+) -> dict[str, Instrument]:
+    """Deterministically select one canonical contract per base asset, invariant to input order.
+
+    Rule:
+      1. Prefer contracts that have an available quote.
+      2. Within the top 5% 24h quote-volume band (`vol * 1.05 >= max_vol`), strictly prefer USDT.
+      3. Break remaining ties by higher 24h quote volume, then canonical symbol name.
+    """
+    grouped: dict[str, list[Instrument]] = {}
+    for inst in instruments:
+        grouped.setdefault(inst.base_asset, []).append(inst)
+
+    selected: dict[str, Instrument] = {}
+    for base, group in grouped.items():
+        with_quotes = [i for i in group if i.id.symbol in quotes_by_symbol]
+        pool = with_quotes if with_quotes else group
+        if with_quotes:
+            max_vol = max(quotes_by_symbol[i.id.symbol].quote_volume_24h for i in with_quotes)
+            band = [
+                i
+                for i in with_quotes
+                if quotes_by_symbol[i.id.symbol].quote_volume_24h * Decimal("1.05") >= max_vol
+            ]
+            pool = band if band else with_quotes
+            pool.sort(
+                key=lambda i: (
+                    0 if i.quote_asset == "USDT" else 1,
+                    -quotes_by_symbol[i.id.symbol].quote_volume_24h,
+                    i.id.symbol,
+                )
+            )
+        else:
+            pool = sorted(
+                pool,
+                key=lambda i: (0 if i.quote_asset == "USDT" else 1, i.id.symbol),
+            )
+        selected[base] = pool[0]
+    return selected
+
+
 class CryptoOpportunityScreener:
     """Institutional-grade multi-factor crypto screening engine."""
 
@@ -118,7 +166,10 @@ class CryptoOpportunityScreener:
         evaluated_at: datetime | None = None,
         journal: ScanDecisionJournal | None = None,
         feature_contract: str = "legacy",
+        continuation_context: Any = None,
     ) -> None:
+        self._continuation_context = continuation_context
+        self._continuation_current: dict[str, dict[str, Any]] = {}
         self._settings = settings
         self._macro_provider = macro_provider or MacroSentimentProvider()
         self.scan_counts: dict[str, int] = {}
@@ -128,6 +179,8 @@ class CryptoOpportunityScreener:
         if feature_contract not in ("legacy", "discovery_v2"):
             raise ValueError("unsupported screener feature contract")
         self._feature_contract = feature_contract
+        self._effective_coi: Decimal = Decimal("50.0")
+        self._coi_active: bool = False
         self._feature_unavailable: set[str] = set()
         self._ready_waiting_symbols: set[str] = set()
         self._stage1_ready_symbols: set[str] = set()
@@ -187,6 +240,9 @@ class CryptoOpportunityScreener:
         enforce_quality: bool = False,
         top_gainer_symbols: set[str] | frozenset[str] | None = None,
     ) -> list[CryptoOpportunity]:
+        self._continuation_current.clear()
+        if self._continuation_context is not None and hasattr(self._continuation_context, "reset"):
+            self._continuation_context.reset()
         self._fetch_failures.clear()
         self._feature_unavailable.clear()
         self._ready_waiting_symbols.clear()
@@ -214,6 +270,10 @@ class CryptoOpportunityScreener:
             effective_coi = float(coi_score)
         elif hasattr(macro_context, "coi_score") and macro_context.coi_score is not None:
             effective_coi = float(macro_context.coi_score)
+        self._effective_coi = Decimal(str(effective_coi)) if effective_coi is not None else Decimal("50.0")
+        self._coi_active = effective_coi is not None
+        if self._feature_contract == "discovery_v2":
+            self.scan_counts["coi_regime_active"] = int(self._coi_active)
 
         # 2. Universe & Liquidity Filtering (Stages 1-5 of AGENT.md V2.5)
         instruments = await market.instruments()
@@ -246,27 +306,24 @@ class CryptoOpportunityScreener:
         quotes_by_symbol = {q.instrument_id.symbol: q for q in quotes}
         if self._journal is not None:
             # Canonical eligible cohort, including quote-less and illiquid tokens, for recall.
-            cohort: dict[str, Instrument] = {}
-            for inst in eligible_instruments:
-                current = cohort.get(inst.base_asset)
-                q = quotes_by_symbol.get(inst.id.symbol)
-                previous_q = quotes_by_symbol.get(current.id.symbol) if current else None
-                if current is None or (q is not None and previous_q is None):
-                    cohort[inst.base_asset] = inst
-                elif q is not None and previous_q is not None:
-                    if (q.quote_volume_24h > previous_q.quote_volume_24h * Decimal("1.05")
-                        or (previous_q.quote_volume_24h <= q.quote_volume_24h * Decimal("1.05")
-                            and ((inst.quote_asset == "USDT" and current.quote_asset != "USDT")
-                                 or q.quote_volume_24h > previous_q.quote_volume_24h))):
-                        cohort[inst.base_asset] = inst
+            cohort = _select_canonical_pairs(eligible_instruments, quotes_by_symbol)
             self._journal.cohort = tuple(cohort.values())
 
-        # Stage 4: Filter by liquidity: min $500k 24h volume, max 50 bps spread
+        # Stage 4: Filter by quote validity, freshness, and liquidity: min $500k 24h volume, max 50 bps spread
+        quote_ref_now = self._evaluated_at or datetime.now(UTC)
         liquid_instruments: list[Instrument] = []
         for inst in eligible_instruments:
             q = quotes_by_symbol.get(inst.id.symbol)
             if q is None:
                 self._note(inst.id.symbol, "liquidity", "missing_quote")
+                continue
+            if not q.is_valid_book:
+                self._note(inst.id.symbol, "liquidity", "invalid_book")
+                continue
+            if (q.received_at is not None or q.exchange_observed_at is not None) and not q.is_fresh_at(
+                q.received_at or quote_ref_now, max_age_seconds=300.0, max_future_seconds=5.0
+            ):
+                self._note(inst.id.symbol, "liquidity", "stale_or_unverified_quote_time")
                 continue
             if q.quote_volume_24h < Decimal("500000"):
                 self._note(inst.id.symbol, "liquidity", "low_volume")
@@ -276,24 +333,8 @@ class CryptoOpportunityScreener:
                 continue
             liquid_instruments.append(inst)
 
-        # Stage 4b: Canonical Single-Pair-Per-Asset Deduplication (Best of USDT/USDC)
-        # Avoid duplicate scanning of the same underlying asset (e.g. NEARUSDT vs NEARUSDC).
-        # Retain the single contract with highest 24h quote liquidity, strictly favoring USDT when comparable.
-        best_by_base: dict[str, Instrument] = {}
-        for inst in liquid_instruments:
-            base = inst.base_asset
-            if base not in best_by_base:
-                best_by_base[base] = inst
-            else:
-                curr = best_by_base[base]
-                vol_new = quotes_by_symbol[inst.id.symbol].quote_volume_24h
-                vol_curr = quotes_by_symbol[curr.id.symbol].quote_volume_24h
-                if vol_new > vol_curr * Decimal("1.05"):
-                    best_by_base[base] = inst
-                elif vol_curr > vol_new * Decimal("1.05"):
-                    pass  # keep curr
-                elif (inst.quote_asset == "USDT" and curr.quote_asset != "USDT") or vol_new > vol_curr:
-                    best_by_base[base] = inst
+        # Stage 4b: Canonical Single-Pair-Per-Asset Deduplication (Best of USDT/USDC, permutation-invariant)
+        best_by_base = _select_canonical_pairs(liquid_instruments, quotes_by_symbol)
         canonical_ids = {inst.id for inst in best_by_base.values()}
         for inst in liquid_instruments:
             if inst.id not in canonical_ids:
@@ -429,6 +470,13 @@ class CryptoOpportunityScreener:
         discovery_tier_set.update(i.id.symbol for i in selected_instruments if i.id.symbol not in core_set)
 
         self.scan_counts["selected"] = len(selected_instruments)
+        if self._feature_contract == "discovery_v2":
+            self.scan_counts["core_selected"] = len(core_symbols)
+            self.scan_counts["discovery_selected"] = len(discovery_symbols)
+            requested_cap = max_symbols if max_symbols is not None else (target_core + target_discovery)
+            self.scan_counts["requested_budget"] = requested_cap
+            self.scan_counts["unused_budget"] = max(0, requested_cap - len(selected_instruments))
+            self.scan_counts["not_selected"] = max(0, len(liquid_instruments) - len(selected_instruments))
         selected_ids = {inst.id for inst in selected_instruments}
         for inst in liquid_instruments:
             self._note(inst.id.symbol, "selection", "selected" if inst.id in selected_ids else "selection_limit")
@@ -495,8 +543,18 @@ class CryptoOpportunityScreener:
             *(eval_instrument(inst) for inst in selected_instruments),
             return_exceptions=True,
         )
-        self.scan_counts["evaluated"] = sum(isinstance(result, list) for result in results)
-        self.scan_counts["failed"] = len(results) - self.scan_counts["evaluated"]
+        fetch_or_eval_failed = sum(
+            1
+            for inst, result in zip(selected_instruments, results, strict=True)
+            if isinstance(result, BaseException)
+            or (not result and inst.id.symbol in self._fetch_failures)
+        )
+        self.scan_counts["failed"] = fetch_or_eval_failed
+        self.scan_counts["evaluated"] = len(selected_instruments) - fetch_or_eval_failed
+        if self._feature_contract == "discovery_v2":
+            self.scan_counts["attempted"] = len(selected_instruments)
+            self.scan_counts["usable_input_symbols"] = len(selected_instruments) - fetch_or_eval_failed
+            self.scan_counts["unavailable_input_symbols"] = fetch_or_eval_failed
         for inst, result in zip(selected_instruments, results, strict=True):
             self._note(inst.id.symbol, "stage1", "fetch_or_evaluation_failure" if isinstance(result, BaseException) or (not result and inst.id.symbol in self._fetch_failures)
                        else "no_setup" if not result else "setup", error=type(result).__name__ if isinstance(result, BaseException) else None)
@@ -517,6 +575,15 @@ class CryptoOpportunityScreener:
         self.scan_counts["stage1_survivors"] = len(stage1_survivors)
         # Cap Stage 2 derivatives enrichment at top 45 Stage 1 survivors
         stage2_shortlist = stage1_survivors[:45]
+        if self._settings.bearish_continuation_enabled:
+            # Reserve at most three of the existing 45 places; no extra requests.
+            continuation = sorted(
+                (o for o in stage1_survivors if o.setup_label is SetupLabel.BREAKDOWN_RETEST_SHORT),
+                key=lambda o: (-o.score, o.instrument.id.symbol),
+            )[:3]
+            others = [o for o in stage1_survivors if o.setup_label is not SetupLabel.BREAKDOWN_RETEST_SHORT]
+            stage2_shortlist = continuation + others[:45 - len(continuation)]
+            self.scan_counts["continuation_stage2_reserved"] = len(continuation)
         self.scan_counts["stage2_shortlist"] = len(stage2_shortlist)
 
         # A derivatives-led setup may have no Stage 1 archetype before OI is fetched.
@@ -578,6 +645,9 @@ class CryptoOpportunityScreener:
                        additional_probe_priority=self._additional_probe_priority(inst.id.symbol),
                        probe_overflow=inst.id.symbol in probe_overflow_symbols)
 
+        if self._continuation_context is not None and hasattr(self._continuation_context, "set_budget"):
+            self._continuation_context.set_budget(56 + len(selected_instruments)*5
+                                                  + (len(stage2_shortlist)+len(stage2_probes))*4)
         # Stage 2: Deep Derivatives Enrichment ONLY for surviving shortlist
         stage2_semaphore = asyncio.Semaphore(8)
 
@@ -598,7 +668,7 @@ class CryptoOpportunityScreener:
                         )
                     )
                     if isinstance(deriv_res, DerivativesSnapshot):
-                        if (deriv_res.degraded_telemetry or deriv_res.open_interest_change_7d is None) and is_mandatory_deriv_setup:
+                        if (deriv_res.degraded_telemetry or (deriv_res.open_interest_change_7d is None and opp.setup_label is not SetupLabel.BREAKDOWN_RETEST_SHORT)) and is_mandatory_deriv_setup:
                             log.warning(
                                 "candidate_dropped_due_to_degraded_stage2_telemetry",
                                 symbol=opp.instrument.id.symbol,
@@ -609,6 +679,11 @@ class CryptoOpportunityScreener:
                             c1h_cached = cached_c[0]
                             c4h_cached = cached_c[1]
                             c1w_cached = cached_c[2] if len(cached_c) > 2 else ()
+                            if (opp.setup_label is SetupLabel.BREAKDOWN_RETEST_SHORT
+                                    and self._continuation_context is not None):
+                                self._continuation_current[opp.instrument.id.symbol] = await self._continuation_context.get(
+                                    opp.instrument, quotes_by_symbol[opp.instrument.id.symbol], c1h_cached, c4h_cached,
+                                )
                             res_enriched = await self._evaluate_single(
                                 inst=opp.instrument,
                                 quote=quotes_by_symbol[opp.instrument.id.symbol],
@@ -677,6 +752,13 @@ class CryptoOpportunityScreener:
             return_exceptions=True,
         )
         candle_cache.clear()
+        continuation_publication_at = None
+        if self._continuation_context is not None and any(
+            isinstance(item, CryptoOpportunity)
+            and item.setup_label is SetupLabel.BREAKDOWN_RETEST_SHORT
+            for item in enriched_results
+        ):
+            continuation_publication_at = await self._continuation_context.publication_time()
 
         opportunities: list[CryptoOpportunity] = []
         stage2_symbols = [opp.instrument.id.symbol for opp in stage2_shortlist] + [inst.id.symbol for inst in stage2_probes]
@@ -685,6 +767,17 @@ class CryptoOpportunityScreener:
                 self._note(symbol, "stage2", "enrichment_unavailable_or_no_setup")
             if isinstance(enriched, CryptoOpportunity):
                 opp = enriched
+                if opp.setup_label is SetupLabel.BREAKDOWN_RETEST_SHORT:
+                    if continuation_publication_at is not None and not publication_inputs_current(
+                        opp.continuation_evidence, continuation_publication_at
+                    ):
+                        self._note(symbol, "publication", "publication:stale_continuation_inputs")
+                        continue
+                    continuation_reasons = publication_rejection_reasons(opp, coi_score=effective_coi)
+                    if continuation_reasons:
+                        for reason in continuation_reasons:
+                            self._note(symbol, "publication", "publication:" + reason)
+                        continue
                 if not valid_execution_prices(opp.direction, opp.suggested_entry, opp.suggested_stop, opp.suggested_targets):
                     self._note(symbol, "publication", "publication:invalid_execution_prices")
                     continue
@@ -707,6 +800,9 @@ class CryptoOpportunityScreener:
                     continue
                 opportunities.append(opp)
 
+        if self._settings.bearish_continuation_enabled and self._continuation_context is not None:
+            self.scan_counts["continuation_refresh_requests"] = sum(int(c.get("refresh_requests", 0)) for c in self._continuation_current.values())
+            self.scan_counts["continuation_refresh_weight"] = sum(int(c.get("refresh_weight", 0)) for c in self._continuation_current.values())
         # Estimate & Log Binance API request weight
         if self._feature_contract == "discovery_v2":
             self.scan_counts["ready_waiting_activation"] = len(self._ready_waiting_symbols)
@@ -878,6 +974,23 @@ class CryptoOpportunityScreener:
         if len(closed_1h) < 120 or len(closed_4h) < 40:
             return []
 
+        # The legacy indicator snapshot requires 210 bars; continuation has its
+        # own validated OHLCV contract and must not inherit that unrelated blocker.
+        if (self._settings.bearish_continuation_enabled and len(closed_1h) < 210
+                and target_direction in (None, Direction.SHORT)
+                and mode in (ScreenerMode.ALL, ScreenerMode.DISTRIBUTION)):
+            context = self._continuation_current.get(inst.id.symbol, {})
+            if context.get("status", "current") != "current":
+                self._note(inst.id.symbol, "continuation_rejection", "refresh_unavailable")
+                return []
+            continuation = score_continuation(
+                inst, context.get("quote", quote), context.get("hourly", closed_1h), context.get("four_hour", closed_4h),
+                now=context.get("decision_at", self._evaluated_at or datetime.now(UTC)), derivatives=explicit_derivatives,
+                note=self._note, macro_narrative="Experimental bearish continuation",
+                beta=Decimal("1"), residual=ZERO, is_discovery_tier=is_discovery_tier,
+            )
+            return [continuation] if continuation is not None else []
+
         # Indicators
         await asyncio.sleep(0)  # Cooperative yield to event loop for healthchecks
         snap_1h = snapshot(closed_1h)
@@ -909,6 +1022,8 @@ class CryptoOpportunityScreener:
             temporal_details = {k: v for k, v in temporal.items() if k != "reason"}
             self._note(inst.id.symbol, "temporal_features", temporal_reason, **temporal_details)
 
+        if inst.id.symbol in self._continuation_current:
+            target_direction = Direction.SHORT
         # Regime classification
         regime = self._classify_regime(snap_1h, ema20_4h, ema50_4h)
 
@@ -1026,7 +1141,7 @@ class CryptoOpportunityScreener:
 
         # Fix 2: Hard veto on finalized Stage 2 candidates if derivatives or 7d OI is missing ("N/A")
         if explicit_derivatives is not None:
-            if dist_opp is not None and dist_opp.oi_change_7d is None:
+            if dist_opp is not None and dist_opp.oi_change_7d is None and dist_opp.setup_label is not SetupLabel.BREAKDOWN_RETEST_SHORT:
                 dist_opp = None
             if accum_opp is not None and accum_opp.setup_label in (
                 SetupLabel.OI_ACCUMULATION_LONG,
@@ -1625,8 +1740,8 @@ class CryptoOpportunityScreener:
             derivatives_positioning=is_deriv_flow_ok,
         )
 
-        # Macro Overextension & Conviction
-        coi = Decimal("50.0")
+        # Macro Overextension & Conviction (uses supplied COI when active, else explicit neutral 50.0)
+        coi = self._effective_coi
         p_win, conviction = compute_p_win_and_conviction(
             direction=Direction.LONG,
             archetype=archetype,
@@ -1767,6 +1882,7 @@ class CryptoOpportunityScreener:
             regime=CryptoMarketRegime.VOLATILITY_SQUEEZE,
             setup_label=archetype,
             execution_mode=bracket.execution_mode,
+            bracket_context=bracket.diagnostic_context,
             resistance_absorption_score=Decimal(str(absorption_score)),
             breakout_readiness_status=breakout_status,
             score=final_score,
@@ -1815,6 +1931,85 @@ class CryptoOpportunityScreener:
         )
 
     def _score_distribution_setup(
+        self,
+        inst: Instrument,
+        quote: Quote,
+        snap_1h: IndicatorSnapshot,
+        closed_1h: Sequence[Candle],
+        closed_4h: Sequence[Candle],
+        derivatives: DerivativesSnapshot | None,
+        macro_context: MacroSentimentContext,
+        is_btc_cascade: bool = False,
+        btc_ret_1h: Decimal = ZERO,
+        beta: Decimal = Decimal("1.0"),
+        residual_24h: Decimal = ZERO,
+        candles_1d: Sequence[Candle] | None = None,
+        candles_1w: Sequence[Candle] | None = None,
+        is_discovery_tier: bool = False,
+    ) -> CryptoOpportunity | None:
+        # Disabled operation retains the exact original evaluator and signature.
+        if not self._settings.bearish_continuation_enabled:
+            return self._score_reversal_distribution_setup(
+                inst=inst,
+                quote=quote,
+                snap_1h=snap_1h,
+                closed_1h=closed_1h,
+                closed_4h=closed_4h,
+                derivatives=derivatives,
+                macro_context=macro_context,
+                is_btc_cascade=is_btc_cascade,
+                btc_ret_1h=btc_ret_1h,
+                beta=beta,
+                residual_24h=residual_24h,
+                candles_1d=candles_1d,
+                candles_1w=candles_1w,
+                is_discovery_tier=is_discovery_tier,
+            )
+        # The old reversal scorer needs 210 hourly bars. That must not become
+        # an accidental admission requirement for the independent continuation path.
+        reversal = (
+            self._score_reversal_distribution_setup(
+                inst=inst,
+                quote=quote,
+                snap_1h=snap_1h,
+                closed_1h=closed_1h,
+                closed_4h=closed_4h,
+                derivatives=derivatives,
+                macro_context=macro_context,
+                is_btc_cascade=is_btc_cascade,
+                btc_ret_1h=btc_ret_1h,
+                beta=beta,
+                residual_24h=residual_24h,
+                candles_1d=candles_1d,
+                candles_1w=candles_1w,
+                is_discovery_tier=is_discovery_tier,
+            )
+            if len(closed_1h) >= 210 and inst.id.symbol not in self._continuation_current
+            else None
+        )
+        if reversal is not None:
+            return reversal
+        if derivatives is not None and self._continuation_context is not None and inst.id.symbol not in self._continuation_current:
+            return None
+        context = self._continuation_current.get(inst.id.symbol, {})
+        if context.get("status", "current") != "current":
+            self._note(inst.id.symbol, "continuation_rejection", "refresh_unavailable")
+            return None
+        return score_continuation(
+            inst,
+            context.get("quote", quote),
+            context.get("hourly", closed_1h),
+            context.get("four_hour", closed_4h),
+            now=context.get("decision_at", self._evaluated_at or datetime.now(UTC)),
+            derivatives=derivatives,
+            note=self._note,
+            macro_narrative="Experimental bearish continuation",
+            beta=beta,
+            residual=residual_24h,
+            is_discovery_tier=is_discovery_tier,
+        )
+
+    def _score_reversal_distribution_setup(
         self,
         inst: Instrument,
         quote: Quote,
@@ -2281,7 +2476,7 @@ class CryptoOpportunityScreener:
         )
 
         # 13. Composite Conviction, 3-Tier EV_R, and Opportunity Grade
-        coi = Decimal("50.0")
+        coi = self._effective_coi
         p_win, conviction = compute_p_win_and_conviction(
             direction=Direction.SHORT,
             archetype=archetype,

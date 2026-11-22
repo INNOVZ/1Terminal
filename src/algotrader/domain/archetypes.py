@@ -316,7 +316,7 @@ def classify_short_archetype(features: ShortArchetypeFeatures) -> SetupLabel | N
     Strict Institutional Rules:
       1. Bottom Grinder Exclusion:
          No short setup is valid if the token is sitting in the bottom of its 30-day range
-         (pos_in_range_30d < 0.40). Shorting into support floors or ATL is strictly prohibited.
+         (pos_in_range_30d < 0.45). Shorting into support floors or ATL is strictly prohibited.
       2. Valid Archetypes:
          - UTAD_DIVERGENCE_SHORT: Wyckoff Phase C Upthrust after Distribution (Sweep of 30d high + Bearish Div)
          - EXHAUSTION_REVERSAL_SHORT: Multi-Timeframe Climax Overbought Blowoff (Violent run-up + Extreme RSI + Wick)

@@ -665,7 +665,13 @@ async def test_refresh_uses_real_four_hour_metrics_and_complete_volume_window(li
             ]
 
         async def derivatives_snapshot(self, inst):
-            return SimpleNamespace(observed_at=now, open_interest_change_7d=Decimal("0.1"))
+            return SimpleNamespace(
+                observed_at=now,
+                open_interest_change_7d=Decimal("0.1"),
+                open_interest_change_1h=Decimal("0.01"),
+                funding_rate=Decimal("0.0001"),
+                taker_buy_sell_ratio=Decimal("1.05"),
+            )
 
     rows = await reconcile_radar_cohort([c], set(), Provider(), now)
     assert rows[0]["gates_passed"] == 5

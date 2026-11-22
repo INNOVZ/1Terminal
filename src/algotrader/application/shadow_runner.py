@@ -123,7 +123,7 @@ class ShadowRunner:
                 raise ValueError("parent screening identity mismatch: " + key)
         if self.market.budget.policy != policy:
             raise ValueError("market budget and run policy differ")
-        settings = Settings(**{**parent.identity["configuration"], "_env_file": None})
+        settings = Settings(**{"bearish_continuation_canary_enabled": False, "bearish_continuation_enabled": False, **parent.identity["configuration"], "_env_file": None})
         tape, journal = CallTape(), ScanDecisionJournal()
         # The evaluator consumes preloaded bars/derivatives; it cannot start another universe scan.
         recorded = RecordingMarketData(cast(Any, self.market), cast(Any, self.market), tape)

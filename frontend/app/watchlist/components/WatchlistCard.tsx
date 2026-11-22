@@ -273,7 +273,6 @@ function WatchlistCard({
                     height: "6px",
                     borderRadius: "50%",
                     background: "var(--accent-emerald)",
-                    boxShadow: "0 0 6px var(--accent-emerald)",
                   }}
                   title="Streaming live from Binance"
                 />
@@ -346,7 +345,6 @@ function WatchlistCard({
           display: "flex",
           flexDirection: "column",
           gap: "10px",
-          boxShadow: "0 4px 14px rgba(0,0,0,0.3)",
         }}
       >
         {/* Diagnostic Header */}

@@ -97,11 +97,27 @@ def reverify_candidate_gates(
     current_price: Decimal,
     recent_candles_1h: Sequence[Mapping[str, Any]] = (),
     ema50_4h: Decimal | None = None,
+    continuation_gates: tuple[bool | None, ...] | None = None,
+    is_triggered: bool = False,
+    trigger_entry_price: Decimal | None = None,
 ) -> tuple[tuple[dict[str, Any], ...], int, int, tuple[str, ...]]:
     """Re-evaluates the 5 institutional verification gates (L1–L6) on live market structure.
 
     Returns (updated_checklist, passed_count, total_count, failed_gate_titles).
+    Profit-expansion tolerances apply ONLY after an observed setup trigger (never on pending
+    unfilled retest entries).
     """
+    if candidate.get("setup_label") == "BREAKDOWN_RETEST_SHORT":
+        from algotrader.domain.bearish_continuation import TITLES
+
+        gates = continuation_gates if continuation_gates is not None and len(continuation_gates) == 5 else (None,) * 5
+        items = tuple({"title": title, "passed": passed is True,
+                       "status": "passed" if passed is True else "unknown" if passed is None else "failed",
+                       "detail": "Current continuation gate" if passed is not None else "Fresh continuation inputs required"}
+                      for title, passed in zip(TITLES, gates, strict=True))
+        return items, sum(g is True for g in gates), 5, tuple(
+            title for title, passed in zip(TITLES, gates, strict=True) if passed is not True)
+
     direction = str(candidate.get("direction", "long")).lower()
     is_short = direction == "short"
 
@@ -115,6 +131,24 @@ def reverify_candidate_gates(
     vah = _to_dec(candidate.get("vah_price")) or _to_dec(candidate.get("vah_30d"))
     val = _to_dec(candidate.get("val_price")) or _to_dec(candidate.get("val_30d"))
     entry = _to_dec(candidate.get("suggested_entry")) or _to_dec(candidate.get("pullback_entry"))
+
+    effective_is_triggered = bool(
+        is_triggered or (_parse_iso(candidate.get("radar_triggered_at")) is not None)
+    )
+    profit_entry = (
+        trigger_entry_price
+        or _to_dec(candidate.get("radar_trigger_entry"))
+        or (entry if effective_is_triggered else None)
+    )
+    in_profit_expansion = bool(
+        effective_is_triggered
+        and profit_entry is not None
+        and profit_entry > Decimal("0")
+        and (
+            (not is_short and current_price > profit_entry * Decimal("1.02"))
+            or (is_short and current_price < profit_entry * Decimal("0.98"))
+        )
+    )
 
     # 1. Gate L1: Trend Baseline (4H EMA50)
     trend_passed = True
@@ -171,39 +205,73 @@ def reverify_candidate_gates(
         h72 = max(highs_72h)
         l72 = min(lows_72h)
         rng_72_pct = (h72 - l72) / max(l72, Decimal("1e-8")) * Decimal("100")
-        in_profit = (
-            entry is not None
-            and entry > Decimal("0")
-            and (
-                (not is_short and current_price > entry * Decimal("1.02"))
-                or (is_short and current_price < entry * Decimal("0.98"))
-            )
-        )
-        anti_chase_passed = rng_72_pct <= Decimal("28.0") or bool(in_profit)
+        anti_chase_passed = rng_72_pct <= Decimal("28.0") or in_profit_expansion
         if anti_chase_passed:
             state_word = (
-                "expanding in profit" if (in_profit and rng_72_pct > Decimal("20.0")) else "tight"
+                "expanding in profit" if (in_profit_expansion and rng_72_pct > Decimal("20.0")) else "tight"
             )
             anti_chase_detail = f"72h range {state_word} ({float(rng_72_pct):.1f}%){rsi_suffix}"
         else:
             anti_chase_detail = f"72h excursion wide ({float(rng_72_pct):.1f}%){rsi_suffix}"
 
-    # 3. Gate L3: Value Acceptance (30d POC & Value Area)
+    # 3. Gate L3: Value Acceptance (archetype- and state-aware: preserves below-POC emerging base reclaims)
     value_passed = True
     value_detail = "Accepted above 30d POC"
+    setup_label = str(candidate.get("setup_label", "")).upper()
+    discovery_price = _to_dec(candidate.get("discovery_price")) or _to_dec(
+        candidate.get("current_price")
+    )
+    is_below_poc_reclaim_long = (not is_short) and (
+        setup_label
+        in {
+            "MOMENTUM_EMERGING_LONG",
+            "RECOVERY_RECLAIM_LONG",
+            "RANGE_BOTTOM_ACCUMULATION_LONG",
+        }
+        or (
+            poc is not None
+            and poc > Decimal("0")
+            and discovery_price is not None
+            and discovery_price < poc * Decimal("0.990")
+        )
+    )
     if poc is not None and poc > Decimal("0"):
         diff_poc = (current_price - poc) / poc * Decimal("100")
         vah_str = f" | VAH: ${_fmt_price(vah)}" if vah is not None else ""
         if not is_short:
-            # Passes if holding at/above POC (with 1.0% retest shelf tolerance)
-            value_passed = current_price >= poc * Decimal("0.990")
             if current_price >= poc:
+                value_passed = True
                 value_detail = f"Accepted above 30d POC (${_fmt_price(poc)}){vah_str}"
-            elif value_passed:
+            elif current_price >= poc * Decimal("0.990"):
+                value_passed = True
                 value_detail = (
                     f"Testing 30d POC shelf (${_fmt_price(poc)}, {float(diff_poc):+.1f}%){vah_str}"
                 )
+            elif is_below_poc_reclaim_long:
+                holds_ema = eff_ema50 is not None and eff_ema50 > 0 and current_price >= eff_ema50 * Decimal("0.992")
+                holds_val = val is not None and val > 0 and current_price >= val * Decimal("0.985")
+                holds_entry = entry is not None and entry > 0 and current_price >= entry * Decimal("0.985")
+                value_passed = bool(holds_ema or holds_val or holds_entry)
+                if value_passed:
+                    base_ref = (
+                        f"4H EMA50 ${_fmt_price(eff_ema50)}"
+                        if holds_ema and eff_ema50 is not None
+                        else f"VAL ${_fmt_price(val)}"
+                        if holds_val and val is not None
+                        else f"Entry shelf ${_fmt_price(entry)}"
+                        if entry is not None
+                        else "base shelf"
+                    )
+                    value_detail = (
+                        f"Holding emerging base reclaim ({base_ref} | POC ${_fmt_price(poc)})"
+                    )
+                else:
+                    val_str = f" | Below VAL (${_fmt_price(val)})" if val is not None else ""
+                    value_detail = (
+                        f"Lost emerging base below 30d POC (${_fmt_price(poc)}, {float(diff_poc):.1f}%){val_str}"
+                    )
             else:
+                value_passed = False
                 val_str = f" | Testing VAL (${_fmt_price(val)})" if val is not None else ""
                 value_detail = (
                     f"Below 30d POC (${_fmt_price(poc)}, {float(diff_poc):.1f}%){val_str}"
@@ -228,8 +296,8 @@ def reverify_candidate_gates(
     bbw = _to_dec(metrics.get("bb_bandwidth_4h"))
     kc_sq = metrics.get("kc_squeeze_4h")
     if bbw is not None:
-        in_favorable_expansion = (not is_short and vah is not None and current_price >= vah) or (
-            not is_short and entry is not None and current_price >= entry * Decimal("1.02")
+        in_favorable_expansion = effective_is_triggered and (
+            (not is_short and vah is not None and current_price >= vah) or in_profit_expansion
         )
         vol_passed = bbw <= Decimal("0.24") or in_favorable_expansion
         if bbw <= Decimal("0.13") or kc_sq is True and bbw <= Decimal("0.15"):
@@ -241,33 +309,49 @@ def reverify_candidate_gates(
         else:
             vol_detail = f"Bandwidth loosened ({float(bbw):.2f}) without upside breakout"
 
-    # 5. Gate L5/L6: Smart Money & Derivatives Absorption
+    # 5. Gate L5/L6: Smart Money & Derivatives Absorption (enforces acute 1h OI, taker flow, and funding crowding)
     oi_7d = _to_dec(metrics.get("oi_change_7d_pct"))
+    oi_1h = _to_dec(metrics.get("oi_change_1h_pct"))
     funding_bps = _to_dec(metrics.get("funding_rate_bps"))
     taker_r = _to_dec(metrics.get("taker_buy_sell_ratio"))
     vcr = _to_dec(metrics.get("volume_contraction_ratio"))
     sm_passed = True
-    if oi_7d is not None and not is_short and oi_7d < Decimal("-8.0"):
-        sm_passed = False
-    if (
-        vcr is not None
-        and vcr > Decimal("1.45")
-        and not (
-            entry is not None
-            and (
-                (not is_short and current_price > entry * Decimal("1.02"))
-                or (is_short and current_price < entry * Decimal("0.98"))
-            )
-        )
-    ):
+    if not is_short:
+        if oi_7d is not None and oi_7d < Decimal("-8.0"):
+            sm_passed = False
+        if oi_1h is not None and oi_1h <= Decimal("-5.0"):
+            sm_passed = False
+        if taker_r is not None and (
+            taker_r < Decimal("0.85")
+            or (not in_profit_expansion and taker_r < Decimal("0.92"))
+        ):
+            sm_passed = False
+        if (
+            not in_profit_expansion
+            and funding_bps is not None
+            and funding_bps >= Decimal("15.0")
+        ):
+            sm_passed = False
+    else:
+        if (
+            funding_bps is not None
+            and funding_bps <= Decimal("-5.0")
+            and taker_r is not None
+            and taker_r >= Decimal("1.15")
+        ):
+            sm_passed = False
+        if not in_profit_expansion and taker_r is not None and taker_r >= Decimal("1.25"):
+            sm_passed = False
+    if vcr is not None and vcr > Decimal("1.45") and not in_profit_expansion:
         sm_passed = False
     oi_str = f"7d OI {float(oi_7d):+.1f}%" if oi_7d is not None else "7d OI unavailable"
+    oi1_str = f", 1h OI {float(oi_1h):+.1f}%" if oi_1h is not None else ""
     fund_str = f", funding {float(funding_bps):+.2f} bps" if funding_bps is not None else ""
     taker_str = f", taker {float(taker_r):.2f}" if taker_r is not None else ""
     sm_detail = (
-        f"{oi_str}{fund_str}{taker_str}"
+        f"{oi_str}{oi1_str}{fund_str}{taker_str}"
         if sm_passed
-        else f"Orderflow weakened ({oi_str}{fund_str}{taker_str})"
+        else f"Orderflow weakened ({oi_str}{oi1_str}{fund_str}{taker_str})"
     )
 
     availability = (
@@ -275,7 +359,11 @@ def reverify_candidate_gates(
         len(closes_1h) >= 72,
         poc is not None and poc > 0,
         bbw is not None,
-        oi_7d is not None and vcr is not None,
+        oi_7d is not None
+        and oi_1h is not None
+        and taker_r is not None
+        and funding_bps is not None
+        and vcr is not None,
     )
     checks = (
         ("Trend Baseline", trend_passed, trend_detail),
@@ -308,6 +396,7 @@ def evaluate_radar_candidate_lifecycle(
     ema50_4h: Decimal | None = None,
     now: datetime | None = None,
     max_age_hours: float = 72.0,
+    continuation_gates: tuple[bool | None, ...] | None = None,
 ) -> RadarLifecycleDecision:
     """Evaluate whether a previously discovered radar candidate remains an active trade setup
     and re-verify its 5/5 (L1–L6) institutional screening gates against live price action.
@@ -448,19 +537,13 @@ def evaluate_radar_candidate_lifecycle(
             current_price=current_price,
             gates_passed=0,
         )
-    # 3. Re-Verify Live System Gates (5/5 Checklist)
-    updated_checklist, gates_passed, gates_total, failed_gates = reverify_candidate_gates(
-        candidate,
-        current_price=current_price,
-        recent_candles_1h=recent_candles_1h,
-        ema50_4h=ema50_4h,
-    )
 
-    # 4. Classify Active Trade State (AT_ENTRY_ZONE vs IN_ACTIVE_TRADE vs ACTIVE_COIL)
+    # 3. Classify Active Trigger State FIRST so profit-expansion tolerances only apply
+    # after an observed trigger (never on pending unfilled retest setups).
     # Trigger is an observed setup event, never an assertion of an executed fill.
     execution_mode = str(candidate.get("execution_mode", "")).upper()
     allow_breakout_trigger = execution_mode != "WAIT_FOR_RETEST_ONLY"
-    allow_retest_trigger = execution_mode != "CEILING_BREAKOUT"
+    allow_retest_trigger = execution_mode not in ("CEILING_BREAKOUT", "BREAKDOWN_TRIGGER")
 
     first_trigger_basis = raw_prior_basis if has_locked_reference else None
     deadline = evaluated_at + timedelta(hours=max_age_hours)
@@ -540,6 +623,17 @@ def evaluate_radar_candidate_lifecycle(
                 trigger_entry_price=trigger_entry_basis,
                 trigger_stop_price=trigger_stop_basis,
             )
+
+    # 4. Re-Verify Live System Gates (5/5 Checklist) using observed trigger state & locked entry basis
+    updated_checklist, gates_passed, gates_total, failed_gates = reverify_candidate_gates(
+        candidate,
+        current_price=current_price,
+        recent_candles_1h=recent_candles_1h,
+        ema50_4h=ema50_4h,
+        continuation_gates=continuation_gates,
+        is_triggered=triggered_at is not None,
+        trigger_entry_price=trigger_entry_basis,
+    )
 
     pnl_pct: Decimal | None = None
     if trigger_entry_basis is not None and trigger_entry_basis > Decimal("0"):
@@ -655,4 +749,16 @@ def same_radar_episode(previous: Mapping[str, Any], fresh: Mapping[str, Any]) ->
     A changed direction or archetype is a new thesis. An active original thesis must
     be reconciled before it can be replaced. Score/price drift alone is not renewal.
     """
+    if previous.get("setup_label") == "BREAKDOWN_RETEST_SHORT":
+        left = previous.get("continuation_evidence") or {}
+        right = fresh.get("continuation_evidence") or {}
+        if not isinstance(left, dict) or not isinstance(right, dict):
+            return False
+        lp, rp = left.get("plan"), right.get("plan")
+        if not isinstance(lp, dict) or not isinstance(rp, dict):
+            return False
+        anchors = ("support", "support_known_at", "break_at", "rejection_at")
+        if (left.get("policy_version") != right.get("policy_version")
+                or any(lp.get(k) != rp.get(k) for k in anchors)):
+            return False
     return all(previous.get(k) == fresh.get(k) for k in ("symbol", "direction", "setup_label"))

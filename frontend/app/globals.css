@@ -95,21 +95,14 @@ body {
   border-color: var(--border-medium);
   background: rgba(22, 32, 53, 0.85);
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
-/* Glowing text and indicators */
-.glow-amber {
-  text-shadow: 0 0 12px rgba(244, 157, 13, 0.35);
-}
-.glow-cyan {
-  text-shadow: 0 0 12px rgba(244, 157, 13, 0.35);
-}
-.glow-emerald {
-  text-shadow: 0 0 12px var(--accent-emerald-glow);
-}
+/* Text indicators (flat, no glow shadows) */
+.glow-amber,
+.glow-cyan,
+.glow-emerald,
 .glow-gold {
-  text-shadow: 0 0 12px rgba(244, 157, 13, 0.35);
+  text-shadow: none;
 }
 
 /* Bottom macOS Dock */
@@ -135,13 +128,11 @@ body {
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--dock-border);
   border-radius: 24px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
   transition: all 0.1s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .floating-dock:hover {
   border-color: rgba(255, 255, 255, 0.24);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.7), 0 0 24px rgba(244, 157, 13, 0.15);
 }
 
 .dock-item {
@@ -166,14 +157,12 @@ body {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.2);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
 }
 
 .dock-item.active {
   color: #f49d0d;
   background: rgba(244, 157, 13, 0.12);
   border-color: rgba(244, 157, 13, 0.35);
-  box-shadow: 0 0 16px rgba(244, 157, 13, 0.25);
 }
 
 .dock-active-dot {
@@ -183,7 +172,6 @@ body {
   height: 4px;
   border-radius: 50%;
   background: #f49d0d;
-  box-shadow: 0 0 8px #f49d0d;
 }
 
 .dock-tooltip {
@@ -201,7 +189,6 @@ body {
   pointer-events: none;
   transform: translateY(6px);
   transition: all 0.15s ease;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5);
 }
 
 .dock-item:hover .dock-tooltip {

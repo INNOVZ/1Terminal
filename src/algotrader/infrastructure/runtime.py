@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Any
 
 import structlog
 
@@ -37,6 +38,7 @@ class Runtime:
     futures_market: BinanceUsdmAdapter
     macro_provider: MacroSentimentProvider
     last_scan_counts: dict[str, int] = field(default_factory=dict)
+    _canary_task: asyncio.Task[None] | None = field(default=None, repr=False, init=False)
     _closed: bool = False
 
     async def run_crypto_scan(
@@ -69,7 +71,24 @@ class Runtime:
         if captured.failure is not None:
             structlog.get_logger(__name__).warning("scan_failed", scan_id=receipt.scan_id, archive_status=receipt.status)
             raise captured.failure
+        if (effective.bearish_continuation_canary_enabled and receipt.status == "saved"
+                and captured.record.status == "complete" and not self._closed):
+            if self._canary_task is None or self._canary_task.done():
+                self._canary_task = asyncio.create_task(self._continuation_canary(captured.record, effective))
+            else:
+                structlog.get_logger(__name__).warning("continuation_canary_skipped_busy")
         return ScreeningRun(captured.opportunities, dict(captured.record.counts), receipt)
+
+    async def _continuation_canary(self, record: Any, settings: Settings) -> None:
+        from algotrader.application.continuation_canary import evaluate_canary, write_canary
+        try:
+            report = await asyncio.to_thread(evaluate_canary, record,
+                                            max_symbols=settings.continuation_canary_max_symbols,
+                                            seconds=settings.continuation_canary_seconds)
+            await asyncio.to_thread(write_canary, settings.research_archive_dir, report,
+                                    keep=settings.continuation_canary_reports)
+        except Exception as exc:
+            structlog.get_logger(__name__).error("continuation_canary_failed", error=type(exc).__name__)
 
     async def crypto_screen(
         self, *, settings: Settings | None = None, min_score: Decimal | None = None,
@@ -85,6 +104,8 @@ class Runtime:
         if self._closed:
             return
         self._closed = True
+        if self._canary_task is not None:
+            await asyncio.shield(self._canary_task)
         results = await asyncio.gather(
             *(client.close() for client in self.clients),
             self.macro_provider.close(),

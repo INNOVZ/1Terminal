@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ("localhost", "127.0.0.1")
     screener_cron_enabled: bool = True
     screener_interval_hours: int = Field(default=1, ge=1, le=24)
+    bearish_continuation_enabled: bool = False
+    bearish_continuation_canary_enabled: bool = False
+    continuation_canary_max_symbols: int = Field(default=30, ge=1, le=100)
+    continuation_canary_seconds: float = Field(default=10.0, gt=0, le=30)
+    continuation_canary_reports: int = Field(default=48, ge=1, le=168)
     research_archive_dir: Path = Path("data/research")
 
     # The following parameters are retained for offline research simulations only.
@@ -273,6 +278,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_research_parameters(self) -> Settings:
+        if self.bearish_continuation_enabled and self.bearish_continuation_canary_enabled:
+            raise ValueError("continuation publication and private canary are mutually exclusive")
         if self.max_structural_stop_distance_atr < self.atr_stop_multiple:
             raise ValueError(
                 "maximum structural stop distance must be at least the ATR stop multiple"

@@ -165,9 +165,9 @@ def read_bundle(path: Path) -> dict[str, Any]:
 
 def semantic_digest(value: Any) -> str:
     """Hash the existing canonical archive bytes without materializing the whole encoding."""
-    from dataclasses import fields, is_dataclass
+    from dataclasses import is_dataclass
 
-    from algotrader.domain.scan_observations import _TYPES
+    from algotrader.domain.scan_observations import _TYPES, _wire_field_names
 
     def scalar(item):
         return json.dumps(item, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -198,7 +198,7 @@ def semantic_digest(value: Any) -> str:
             yield scalar(type(item).__name__)
             yield b',"fields":'
             yield from mapping(
-                (f.name, getattr(item, f.name)) for f in sorted(fields(item), key=lambda f: f.name)
+                (name, getattr(item, name)) for name in _wire_field_names(item)
             )
             yield b"}"
         elif isinstance(item, tuple):

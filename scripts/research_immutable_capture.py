@@ -100,6 +100,11 @@ async def capture_control(market, derivatives, macro, settings, arguments):
     This mirrors capture bookkeeping, never strategy/gates. Regression tests require exact
     typed input encoding, outputs, funnel, cohort and journal against ordinary capture_scan.
     """
+    if settings.bearish_continuation_enabled:
+        raise ValueError(
+            "raw HTTP evidence v4 does not attest live continuation context; "
+            "use typed capture_scan/replay or the private baseline canary"
+        )
     started = datetime.now(UTC)
     identity = await asyncio.to_thread(screening_identity)
     identity["configuration"] = screening_configuration(settings)
@@ -107,7 +112,7 @@ async def capture_control(market, derivatives, macro, settings, arguments):
     recorded = RecordingMarketData(market, derivatives, tape)
     journal = ScanDecisionJournal()
     engine = CryptoOpportunityScreener(
-        settings, RecordingMacroProvider(macro, tape), evaluated_at=started, journal=journal
+        settings, RecordingMacroProvider(macro, tape), evaluated_at=started, journal=journal,
     )
     result, failure = [], None
     try:

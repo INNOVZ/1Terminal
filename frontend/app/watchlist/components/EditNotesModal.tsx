@@ -40,7 +40,6 @@ function EditNotesModal({
           width: "480px",
           padding: "24px",
           background: "var(--bg-surface)",
-          boxShadow: "0 24px 60px rgba(0, 0, 0, 0.8)",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>

@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from algotrader.adapters.binance.base import BinanceMarketDataBase, _decimal
+from algotrader.domain.continuation_inputs import aligned_inputs
 from algotrader.domain.errors import VenueError
 from algotrader.domain.models import (
     Candle,
@@ -221,6 +222,9 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
                 Decimal("0"),
             )
 
+        observed = datetime.now(UTC)
+        continuation = aligned_inputs(oi_samples, taker_samples, premium, reference_at, observed)
+
         return DerivativesSnapshot(
             funding_rate=funding_rate,
             basis_rate=basis,
@@ -235,6 +239,8 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
             taker_buy_sell_ratio_4h=taker_ratio_4h,
             taker_buy_sell_ratio_24h=taker_ratio_24h,
             degraded_telemetry=has_degraded_telemetry,
+            continuation_inputs=continuation,
+            observed_at=observed,
         )
 
     async def quotes(self, instruments: Sequence[Instrument]) -> Sequence[Quote]:
@@ -261,6 +267,18 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
             if item.get("symbol") in wanted
         }
 
+        def _parse_ms_utc(raw: Any) -> datetime | None:
+            if raw is None or isinstance(raw, bool):
+                return None
+            try:
+                ms = int(raw)
+                if ms <= 0:
+                    return None
+                return datetime.fromtimestamp(ms / 1000, UTC)
+            except (TypeError, ValueError, OverflowError, OSError):
+                return None
+
+        received_at = datetime.now(UTC)
         quotes: list[Quote] = []
         for item in books_list:
             symbol = str(item.get("symbol", ""))
@@ -268,7 +286,7 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
                 continue
             bid = _decimal(item.get("bidPrice"))
             ask = _decimal(item.get("askPrice"))
-            if bid <= 0 or ask <= 0:
+            if not (bid.is_finite() and ask.is_finite() and bid > 0 and ask > 0 and bid <= ask):
                 continue
             t = tickers_by_symbol.get(symbol)
             p = premiums_by_symbol.get(symbol)
@@ -276,6 +294,18 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
             low_24h = _decimal(t.get("lowPrice")) if t else None
             price_change_pct_24h = _decimal(t.get("priceChangePercent")) if t else None
             quote_volume_24h = _decimal(t.get("quoteVolume")) if t else Decimal("0")
+            if not quote_volume_24h.is_finite() or quote_volume_24h < 0:
+                continue
+
+            book_time = _parse_ms_utc(item.get("time"))
+            ticker_time = _parse_ms_utc(t.get("closeTime")) if t else None
+            # Require BOTH live exchange component timestamps (bookTicker.time and 24hr.closeTime).
+            # Missing either component leaves exchange_observed_at=None so live freshness fails closed.
+            exchange_observed_at = (
+                min(book_time, ticker_time)
+                if book_time is not None and ticker_time is not None
+                else None
+            )
 
             funding_rate: Decimal | None = None
             basis_pct: Decimal | None = None
@@ -294,11 +324,16 @@ class BinanceUsdmAdapter(BinanceMarketDataBase):
                     ask=ask,
                     last=(bid + ask) / Decimal("2"),
                     quote_volume_24h=quote_volume_24h,
+                    observed_at=exchange_observed_at if exchange_observed_at is not None else received_at,
                     high_24h=high_24h,
                     low_24h=low_24h,
                     price_change_pct_24h=price_change_pct_24h,
                     funding_rate=funding_rate,
                     basis_pct=basis_pct,
+                    exchange_observed_at=exchange_observed_at,
+                    received_at=received_at,
+                    book_observed_at=book_time,
+                    ticker_observed_at=ticker_time,
                 )
             )
         return quotes

@@ -15,6 +15,7 @@ from decimal import Decimal
 from algotrader.adapters.binance import base, futures
 from algotrader.application.scan_replay import replay_scan
 from algotrader.domain.errors import VenueError
+from algotrader.domain.models import DerivativesSnapshot, Quote
 from algotrader.infrastructure.scan_archive import canonical_bytes
 from scripts.replay_contract import (
     ReplayUnavailable,
@@ -73,6 +74,20 @@ def normalized(value):
     # Arrival time is checked independently; it is not a market-derived number.
     if isinstance(value, (list, tuple)):
         return [normalized(x) for x in value]
+    if isinstance(value, DerivativesSnapshot) and value.continuation_inputs is not None:
+        # The local arrival stamp is independently bounded below. Preserve all
+        # provider timestamps, quantities and window keys for raw re-derivation.
+        return replace(value, observed_at=datetime(2000, 1, 1, tzinfo=UTC),
+                       continuation_inputs={**value.continuation_inputs,
+                                            "observed_at": datetime(2000, 1, 1, tzinfo=UTC)})
+    if isinstance(value, Quote):
+        norm_received = datetime(2000, 1, 1, tzinfo=UTC) if value.received_at is not None else None
+        norm_observed = (
+            value.exchange_observed_at
+            if value.exchange_observed_at is not None
+            else datetime(2000, 1, 1, tzinfo=UTC)
+        )
+        return replace(value, observed_at=norm_observed, received_at=norm_received)
     if hasattr(value, "observed_at"):
         return replace(value, observed_at=datetime(2000, 1, 1, tzinfo=UTC))
     return value
@@ -100,8 +115,12 @@ async def verify_call(call, frame, receipts, decision, *, acquisition_freshness=
     if canonical_bytes(normalized(derived)) != canonical_bytes(normalized(call.result)):
         raise ReplayUnavailable("raw_response_adapter_result_mismatch")
     for item in call.result if isinstance(call.result, (list, tuple)) else (call.result,):
-        if hasattr(item, "observed_at") and not start <= timestamp(item.observed_at) <= end:
+        arrival_at = getattr(item, "received_at", None) or getattr(item, "observed_at", None)
+        if arrival_at is not None and not start <= timestamp(arrival_at) <= end:
             raise ReplayUnavailable("value_arrival_outside_call")
+        if isinstance(item, DerivativesSnapshot) and item.continuation_inputs is not None:
+            if not start <= timestamp(item.continuation_inputs.get("observed_at")) <= end:
+                raise ReplayUnavailable("continuation_arrival_outside_call")
     if call.method == "candles":
         # Production returns at most one current partial bar; the engine consumes only closed bars.
         partial = [i for i, c in enumerate(call.result) if not c.closed]

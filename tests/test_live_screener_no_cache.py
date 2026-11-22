@@ -25,9 +25,21 @@ def test_baseline_opportunities_never_contains_cached_candidates() -> None:
 @pytest.mark.asyncio
 async def test_live_screener_sets_no_cache_headers() -> None:
     """Verifies that /screener/live sets strict cache prevention headers."""
+    from datetime import UTC, datetime
+
     resp = Response()
     # Mock _screener_cache to avoid initiating a real scan during test
-    with patch.object(portal_module, "_screener_cache", {"opportunities": [], "qualifying_count": 0, "radar_lifecycle_version": portal_module.RADAR_PUBLICATION_VERSION, "screening_policy_version": portal_module.SCREENING_POLICY_VERSION}):
+    with patch.object(
+        portal_module,
+        "_screener_cache",
+        {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "opportunities": [],
+            "qualifying_count": 0,
+            "radar_lifecycle_version": portal_module.RADAR_PUBLICATION_VERSION,
+            "screening_policy_version": portal_module.SCREENING_POLICY_VERSION,
+        },
+    ):
         await get_live_screener(response=resp)
 
     assert resp.headers.get("Cache-Control") == "no-store, no-cache, must-revalidate, max-age=0"

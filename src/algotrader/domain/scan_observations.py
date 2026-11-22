@@ -98,6 +98,26 @@ def _sorted_field_names(cls: type) -> tuple[str, ...]:
     return names
 
 
+def _wire_field_names(value: Any) -> tuple[str, ...]:
+    names = _sorted_field_names(type(value))
+    # Additive optional evidence must not change old archive canonical bytes.
+    if isinstance(value, DerivativesSnapshot) and value.continuation_inputs is None:
+        return tuple(name for name in names if name != "continuation_inputs")
+    if isinstance(value, Quote):
+        omit = set()
+        if value.exchange_observed_at is None:
+            omit.add("exchange_observed_at")
+        if value.received_at is None:
+            omit.add("received_at")
+        if value.book_observed_at is None:
+            omit.add("book_observed_at")
+        if value.ticker_observed_at is None:
+            omit.add("ticker_observed_at")
+        if omit:
+            return tuple(name for name in names if name not in omit)
+    return names
+
+
 def _normalize_utc_datetime(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("archive timestamps must be timezone-aware")
@@ -177,11 +197,48 @@ def snapshot_recorded_value(value: Any) -> Any:
             and (value.price_change_pct_24h is None or type(value.price_change_pct_24h) is Decimal)
             and (value.funding_rate is None or type(value.funding_rate) is Decimal)
             and (value.basis_pct is None or type(value.basis_pct) is Decimal)
+            and (value.exchange_observed_at is None or type(value.exchange_observed_at) is datetime)
+            and (value.received_at is None or type(value.received_at) is datetime)
+            and (value.book_observed_at is None or type(value.book_observed_at) is datetime)
+            and (value.ticker_observed_at is None or type(value.ticker_observed_at) is datetime)
         ):
             obs = _normalize_utc_datetime(value.observed_at)
-            if obs is value.observed_at:
+            exch = (
+                _normalize_utc_datetime(value.exchange_observed_at)
+                if value.exchange_observed_at is not None
+                else None
+            )
+            recv = (
+                _normalize_utc_datetime(value.received_at)
+                if value.received_at is not None
+                else None
+            )
+            book_t = (
+                _normalize_utc_datetime(value.book_observed_at)
+                if value.book_observed_at is not None
+                else None
+            )
+            tick_t = (
+                _normalize_utc_datetime(value.ticker_observed_at)
+                if value.ticker_observed_at is not None
+                else None
+            )
+            if (
+                obs is value.observed_at
+                and exch is value.exchange_observed_at
+                and recv is value.received_at
+                and book_t is value.book_observed_at
+                and tick_t is value.ticker_observed_at
+            ):
                 return value
-            return replace(value, observed_at=obs)
+            return replace(
+                value,
+                observed_at=obs,
+                exchange_observed_at=exch,
+                received_at=recv,
+                book_observed_at=book_t,
+                ticker_observed_at=tick_t,
+            )
     if isinstance(value, Enum):
         cls_name = type(value).__name__
         if cls_name not in _TYPES:
@@ -264,7 +321,7 @@ def recorded_call_key(value: Any) -> Any:
         return (
             "dataclass",
             cls_name,
-            tuple((fname, recorded_call_key(getattr(value, fname))) for fname in _sorted_field_names(cls)),
+            tuple((fname, recorded_call_key(getattr(value, fname))) for fname in _wire_field_names(value)),
         )
     if isinstance(value, tuple):
         return ("tuple", tuple(recorded_call_key(item) for item in value))
@@ -367,7 +424,7 @@ def iter_canonical_json(value: Any) -> Iterator[str]:
         yield json.dumps(cls_name, ensure_ascii=True)
         yield ',"fields":{'
         first = True
-        for fname in _sorted_field_names(cls):
+        for fname in _wire_field_names(value):
             if not first:
                 yield ","
             first = False
@@ -432,7 +489,7 @@ def encode_value(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         if type(value).__name__ not in _TYPES:
             raise ValueError("unsupported archive record type")
-        return {"@": type(value).__name__, "fields": {f.name: encode_value(getattr(value, f.name)) for f in fields(value)}}
+        return {"@": type(value).__name__, "fields": {f.name: encode_value(getattr(value, f.name)) for f in fields(value) if f.name in _wire_field_names(value)}}
     if isinstance(value, tuple):
         return {"@": "tuple", "items": [encode_value(item) for item in value]}
     if isinstance(value, list):

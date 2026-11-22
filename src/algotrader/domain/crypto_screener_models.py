@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Any
 
 from algotrader.domain.models import Direction, Instrument
+from algotrader.domain.plan_diagnostics import BracketContext, describe_plan
 
 
 class CryptoMarketRegime(StrEnum):
@@ -46,6 +47,7 @@ class SetupLabel(StrEnum):
 
     # Pre-Breakdown & Distribution Setups (BEFORE the dump)
     COIL_BREAKDOWN_SHORT = "COIL_BREAKDOWN_SHORT"
+    BREAKDOWN_RETEST_SHORT = "BREAKDOWN_RETEST_SHORT"
     DISTRIBUTION_SHORT = "DISTRIBUTION_SHORT"
     VCP_DISTRIBUTION_SHORT = "VCP_DISTRIBUTION_SHORT"
     UTAD_DIVERGENCE_SHORT = "UTAD_DIVERGENCE_SHORT"
@@ -178,7 +180,9 @@ class CryptoOpportunity:
     risk_reward_target_index: int = 2
     retest_stop: Decimal | None = None
     breakout_stop: Decimal | None = None
+    continuation_evidence: dict[str, Any] | None = None
     research_policy_version: str | None = None
+    bracket_context: BracketContext | None = None
 
     def as_dict(self) -> dict[str, object]:
         tick = self.instrument.price_tick
@@ -267,6 +271,17 @@ class CryptoOpportunity:
             "candles": list(self.candles),
             "is_discovery_tier": self.is_discovery_tier,
         }
+        result["plan_diagnostics"] = describe_plan(
+            direction=self.direction, execution_mode=self.execution_mode,
+            entry=self.suggested_entry, stop=self.suggested_stop, targets=self.suggested_targets,
+            reference_price=self.current_price, evaluated_at=self.evaluated_at,
+            rr_target_index=self.risk_reward_target_index, context=self.bracket_context,
+            fallback_levels=tuple((label, price) for label, price in (
+                ("30d POC", self.poc_price), ("30d VAH", self.vah_price), ("30d VAL", self.val_price)
+            ) if price is not None),
+        )
+        if self.continuation_evidence is not None:
+            result["continuation_evidence"] = self.continuation_evidence
         if self.research_policy_version is not None:
             result["research_policy_version"] = self.research_policy_version
         return result
