@@ -259,7 +259,7 @@ export default function RadarLifecycleCard({ opportunity, quote }: { opportunity
           {info.quote ? (
             <span>
               <strong style={{ color: COLORS.white }}>{price(Number(info.quote.price))}</strong>
-              <span style={{ color: COLORS.softWhite }}> · {utc(info.quote.observed_at)} · </span>
+              <span style={{ color: COLORS.softWhite }}> · </span>
               <strong style={{ color: info.fresh ? COLORS.green : COLORS.red }}>
                 {info.fresh ? "LIVE" : "STALE"}
               </strong>

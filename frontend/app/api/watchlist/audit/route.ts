@@ -5,3 +5,8 @@ import { proxyToBackend } from "../../_lib/backendProxy";
 export async function GET(request: NextRequest) {
   return proxyToBackend(request, "/api/watchlist/audit");
 }
+
+export async function POST(request: NextRequest) {
+  return proxyToBackend(request, "/api/watchlist/audit", { attachOperatorAuth: false });
+}
+

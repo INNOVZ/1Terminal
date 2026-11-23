@@ -3,7 +3,7 @@ import contextlib
 import os
 import sqlite3
 from collections.abc import Iterator, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -22,6 +22,15 @@ from algotrader.domain.watchlist_models import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _CachedSymbolTelemetry:
+    live_price: Decimal
+    c1h: tuple[Candle, ...]
+    c4h: tuple[Candle, ...]
+    taker_ratio: Decimal | None
+    fetched_at: datetime
+
+
 class WatchlistService:
     """Manages persistent watchlists of high-probability crypto setups for coming days."""
 
@@ -34,6 +43,10 @@ class WatchlistService:
         self._audit_lock = asyncio.Lock()
         self._audit_cache: dict[str, WatchlistLiveAudit] = {}
         self._audit_cache_time: datetime | None = None
+        self._telemetry_cache: dict[str, _CachedSymbolTelemetry] = {}
+        self._telemetry_inflight: dict[str, asyncio.Task[_CachedSymbolTelemetry]] = {}
+        self._price_map_cache: dict[str, Decimal] = {}
+        self._price_map_cache_time: datetime | None = None
         self._ensure_table()
         self._seed_if_empty()
 
@@ -664,6 +677,166 @@ class WatchlistService:
             self._audit_cache_time = datetime.now(UTC)
             return audits
 
+    async def run_live_audit_for_items(
+        self,
+        items: Sequence[WatchlistItem],
+        market_data: MarketDataPort,
+        instruments: Sequence[Instrument],
+        force_refresh: bool = False,
+    ) -> dict[str, WatchlistLiveAudit]:
+        """Runs concurrent audits for an arbitrary list of user watchlist items with shared 30s symbol telemetry caching."""
+        if not items:
+            return {}
+
+        # Deduplicate items by symbol (last item wins) and cap batch to 25 unique symbols
+        deduped_by_sym: dict[str, WatchlistItem] = {}
+        for item in items:
+            sym = item.symbol.upper().strip()
+            if sym and len(deduped_by_sym) < 25:
+                deduped_by_sym[sym] = item
+
+        if not deduped_by_sym:
+            return {}
+
+        now = datetime.now(UTC)
+        inst_map = {i.id.symbol: i for i in instruments}
+        sem = asyncio.Semaphore(8)
+
+        # Shared 15-second bulk ticker price map across all users
+        live_price_map: dict[str, Decimal] = {}
+        if (
+            not force_refresh
+            and self._price_map_cache
+            and self._price_map_cache_time
+            and (now - self._price_map_cache_time).total_seconds() < 15.0
+        ):
+            live_price_map = self._price_map_cache
+        elif hasattr(market_data, "_client"):
+            try:
+                price_payload = await asyncio.wait_for(
+                    market_data._client.request("GET", "/fapi/v1/ticker/price"),
+                    timeout=3.0,
+                )
+                if isinstance(price_payload, list):
+                    for p in price_payload:
+                        sym = p.get("symbol")
+                        pr = p.get("price")
+                        if sym and pr:
+                            live_price_map[sym] = Decimal(str(pr))
+                    if live_price_map:
+                        self._price_map_cache = live_price_map
+                        self._price_map_cache_time = datetime.now(UTC)
+            except Exception:
+                live_price_map = self._price_map_cache
+
+        async def _fetch_telemetry_inner(sym: str, item: WatchlistItem, inst: Instrument) -> _CachedSymbolTelemetry:
+            cached = self._telemetry_cache.get(sym)
+            live_price = live_price_map.get(sym) or (
+                cached.live_price if cached else item.current_price
+            )
+            c1h: Sequence[Candle] = cached.c1h if cached else ()
+            c4h: Sequence[Candle] = cached.c4h if cached else ()
+            taker_ratio: Decimal | None = cached.taker_ratio if cached else None
+
+            async with sem:
+                with contextlib.suppress(Exception):
+                    c1h = await asyncio.wait_for(market_data.candles(inst, "1h", 35), timeout=2.5)
+                    if c1h and c1h[-1].close > 0 and sym not in live_price_map:
+                        live_price = c1h[-1].close
+
+                with contextlib.suppress(Exception):
+                    c4h = await asyncio.wait_for(market_data.candles(inst, "4h", 25), timeout=2.5)
+
+                if hasattr(market_data, "_client"):
+                    try:
+                        t_res = await asyncio.wait_for(
+                            market_data._client.request(
+                                "GET",
+                                "/futures/data/takerlongshortRatio",
+                                params={"symbol": inst.id.symbol, "period": "1h", "limit": 1},
+                            ),
+                            timeout=2.0,
+                        )
+                        if isinstance(t_res, list) and len(t_res) > 0:
+                            taker_ratio = Decimal(str(t_res[0].get("buySellRatio", "1.0")))
+                    except Exception:
+                        pass
+
+            telem = _CachedSymbolTelemetry(
+                live_price=live_price,
+                c1h=tuple(c1h),
+                c4h=tuple(c4h),
+                taker_ratio=taker_ratio,
+                fetched_at=datetime.now(UTC),
+            )
+            # Bounded LRU-style eviction if cache exceeds 512 listed instruments
+            if len(self._telemetry_cache) >= 512 and sym not in self._telemetry_cache:
+                oldest_key = min(
+                    self._telemetry_cache, key=lambda k: self._telemetry_cache[k].fetched_at
+                )
+                self._telemetry_cache.pop(oldest_key, None)
+            self._telemetry_cache[sym] = telem
+            return telem
+
+        async def _get_or_fetch_telemetry(item: WatchlistItem) -> _CachedSymbolTelemetry:
+            sym = item.symbol.upper()
+            inst = inst_map.get(sym)
+            # Security invariant: unverified / fake symbols not in active exchange instruments
+            # never allocate cache entries or trigger external network I/O.
+            if inst is None:
+                return _CachedSymbolTelemetry(
+                    live_price=live_price_map.get(sym) or item.current_price,
+                    c1h=(),
+                    c4h=(),
+                    taker_ratio=None,
+                    fetched_at=now,
+                )
+
+            cached = self._telemetry_cache.get(sym)
+            if (
+                cached is not None
+                and not force_refresh
+                and (datetime.now(UTC) - cached.fetched_at).total_seconds() < 30.0
+            ):
+                fresh_price = live_price_map.get(sym) or cached.live_price
+                return replace(cached, live_price=fresh_price)
+
+            # Singleflight coalescing: concurrent callers for the same cold symbol share 1 in-flight task
+            existing_task = self._telemetry_inflight.get(sym)
+            if existing_task is not None and not existing_task.done():
+                return await existing_task
+
+            task = asyncio.create_task(_fetch_telemetry_inner(sym, item, inst))
+            self._telemetry_inflight[sym] = task
+            try:
+                return await task
+            finally:
+                if self._telemetry_inflight.get(sym) is task:
+                    self._telemetry_inflight.pop(sym, None)
+
+        async def _audit_single_item(item: WatchlistItem) -> tuple[str, WatchlistLiveAudit]:
+            telem = await _get_or_fetch_telemetry(item)
+            deriv = None
+            if telem.taker_ratio is not None:
+                deriv = DerivativesSnapshot(
+                    funding_rate=Decimal("0.0001"),
+                    basis_rate=Decimal("0"),
+                    open_interest=Decimal("0"),
+                    open_interest_change_1h=None,
+                    taker_buy_sell_ratio=telem.taker_ratio,
+                    bid_depth_notional=Decimal("100000"),
+                    ask_depth_notional=Decimal("100000"),
+                    open_interest_change_7d=None,
+                )
+
+            audit = self.audit_item(item, telem.live_price, telem.c1h, telem.c4h, deriv)
+            return item.symbol, audit
+
+        results = await asyncio.gather(
+            *[_audit_single_item(item) for item in deduped_by_sym.values()]
+        )
+        return {sym: aud for sym, aud in results}
+
     async def list_items_with_audit(
         self,
         market_data: MarketDataPort,
@@ -673,6 +846,32 @@ class WatchlistService:
         """Returns watchlist items enriched with real-time audit diagnostics and updated prices."""
         audits = await self.run_live_audit(market_data, instruments, force_refresh)
         items = self.list_items()
+        enriched: list[WatchlistItem] = []
+        for item in items:
+            audit = audits.get(item.symbol) or self.audit_item(item, item.current_price, [], [], None)
+            enriched.append(
+                replace(
+                    item,
+                    current_price=audit.live_price,
+                    distance_to_trigger_pct=(
+                        abs(item.trigger_price - audit.live_price) / audit.live_price * Decimal("100")
+                        if audit.live_price > 0
+                        else item.distance_to_trigger_pct
+                    ),
+                    audit=audit,
+                )
+            )
+        return enriched
+
+    async def enrich_items_with_audit(
+        self,
+        items: Sequence[WatchlistItem],
+        market_data: MarketDataPort,
+        instruments: Sequence[Instrument],
+        force_refresh: bool = False,
+    ) -> list[WatchlistItem]:
+        """Enriches user-specific watchlist items with real-time Binance gate audits."""
+        audits = await self.run_live_audit_for_items(items, market_data, instruments, force_refresh=force_refresh)
         enriched: list[WatchlistItem] = []
         for item in items:
             audit = audits.get(item.symbol) or self.audit_item(item, item.current_price, [], [], None)

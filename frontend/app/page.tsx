@@ -13,6 +13,63 @@ import { useLocalStorage } from "./hooks/useLocalStorage";
 import OperatorAuthModal from "./components/OperatorAuthModal";
 import { operatorRequestHeaders } from "./lib/operatorClient";
 import { isWithheldStatus, screenerPublication } from "./lib/screenerPublication";
+import { getSupabaseClient, type UserWatchlistRow } from "./lib/supabaseClient";
+
+async function resolveUserWatchlistView(
+  symbol: string,
+  fallbackPrice?: string | null,
+  tickSize?: string,
+): Promise<ChartApiResponse["watchlist_view"] | null> {
+  try {
+    const supabase = getSupabaseClient();
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user?.id;
+    if (!userId) return null;
+
+    const { data: row, error } = await supabase
+      .from("user_watchlists")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("symbol", symbol.toUpperCase())
+      .maybeSingle();
+
+    if (error || !row) return null;
+    const typed = row as UserWatchlistRow;
+    const supportP = Number(typed.support_price);
+    const stopP = Number(typed.invalidation_price);
+    const t1 = Number(typed.target_1);
+    const risk = Math.abs(supportP - stopP);
+    const reward = Math.abs(t1 - supportP);
+    const rr = risk > 0 && reward > 0 ? (reward / risk).toFixed(2) : null;
+
+    return {
+      symbol: typed.symbol,
+      stage: typed.stage,
+      timeframe: typed.timeframe,
+      thesis: typed.thesis,
+      current_price: fallbackPrice ?? String(typed.current_price),
+      tick_size: tickSize,
+      support_price: String(typed.support_price),
+      trigger_price: String(typed.trigger_price),
+      invalidation_price: String(typed.invalidation_price),
+      target_1: String(typed.target_1),
+      target_2: String(typed.target_2),
+      risk_reward_ratio: rr,
+      audit_verified: false,
+      checklist: [
+        {
+          title: "Personal Watchlist Setup (Supabase RLS)",
+          passed: false,
+          status: "unknown",
+          detail: "Displaying your private saved bracket levels on raw Binance USD-M candles.",
+        },
+      ],
+      notes: typed.notes,
+    };
+  } catch {
+    return null;
+  }
+}
 
 const candleStore = baselineCandles as Record<string, Candle[]>;
 
@@ -444,15 +501,21 @@ function RadarPageContent() {
                 setInspectedView(null);
                 enriched.unshift(matchedTarget);
               } else {
-                // Keep unqualified inspections and watchlist views strictly outside the qualified radar candidate list
+                // Prefer the signed-in user's personal Supabase watchlist item when inspecting a chart
+                const personalWv = await resolveUserWatchlistView(
+                  cleanTarget,
+                  chartData.inspection?.current_price ?? chartData.watchlist_view?.current_price ?? null,
+                  chartData.inspection?.tick_size ?? chartData.watchlist_view?.tick_size,
+                );
+                const effectiveWv = personalWv ?? chartData.watchlist_view ?? null;
                 setInspectedView({
-                  record_kind: chartData.record_kind === "watchlist_view" ? "watchlist_view" : "chart_inspection",
+                  record_kind: effectiveWv ? "watchlist_view" : "chart_inspection",
                   symbol: cleanTarget,
                   candles: chartCandles,
-                  current_price: chartData.watchlist_view?.current_price ?? chartData.inspection?.current_price ?? null,
-                  tick_size: chartData.watchlist_view?.tick_size ?? chartData.inspection?.tick_size,
+                  current_price: effectiveWv?.current_price ?? chartData.inspection?.current_price ?? null,
+                  tick_size: effectiveWv?.tick_size ?? chartData.inspection?.tick_size,
                   note: chartData.inspection?.note,
-                  watchlist_view: chartData.watchlist_view ?? null,
+                  watchlist_view: effectiveWv,
                 });
                 if (chartCandles.length > 0) {
                   setActiveCandle(chartCandles[chartCandles.length - 1]);
@@ -711,14 +774,20 @@ function RadarPageContent() {
                 setOpportunities([targetOpp]);
                 setActiveOpportunity(targetOpp);
               } else {
+                const personalWv = await resolveUserWatchlistView(
+                  cleanTarget,
+                  chartData.inspection?.current_price ?? chartData.watchlist_view?.current_price ?? null,
+                  chartData.inspection?.tick_size ?? chartData.watchlist_view?.tick_size,
+                );
+                const effectiveWv = personalWv ?? chartData.watchlist_view ?? null;
                 setInspectedView({
-                  record_kind: chartData.record_kind === "watchlist_view" ? "watchlist_view" : "chart_inspection",
+                  record_kind: effectiveWv ? "watchlist_view" : "chart_inspection",
                   symbol: cleanTarget,
                   candles: chartCandles,
-                  current_price: chartData.watchlist_view?.current_price ?? chartData.inspection?.current_price ?? null,
-                  tick_size: chartData.watchlist_view?.tick_size ?? chartData.inspection?.tick_size,
+                  current_price: effectiveWv?.current_price ?? chartData.inspection?.current_price ?? null,
+                  tick_size: effectiveWv?.tick_size ?? chartData.inspection?.tick_size,
                   note: chartData.inspection?.note,
-                  watchlist_view: chartData.watchlist_view ?? null,
+                  watchlist_view: effectiveWv,
                 });
               }
               if (chartCandles.length > 0) {
@@ -819,14 +888,20 @@ function RadarPageContent() {
             setActiveOpportunity(oppWithCandles);
           } else {
             // Keep unqualified chart inspections and watchlist views out of the qualified radar list
+            const personalWv = await resolveUserWatchlistView(
+              cleanTarget,
+              chartData.inspection?.current_price ?? chartData.watchlist_view?.current_price ?? null,
+              chartData.inspection?.tick_size ?? chartData.watchlist_view?.tick_size,
+            );
+            const effectiveWv = personalWv ?? chartData.watchlist_view ?? null;
             setInspectedView({
-              record_kind: chartData.record_kind === "watchlist_view" ? "watchlist_view" : "chart_inspection",
+              record_kind: effectiveWv ? "watchlist_view" : "chart_inspection",
               symbol: cleanTarget,
               candles: chartCandles,
-              current_price: chartData.watchlist_view?.current_price ?? chartData.inspection?.current_price ?? null,
-              tick_size: chartData.watchlist_view?.tick_size ?? chartData.inspection?.tick_size,
+              current_price: effectiveWv?.current_price ?? chartData.inspection?.current_price ?? null,
+              tick_size: effectiveWv?.tick_size ?? chartData.inspection?.tick_size,
               note: chartData.inspection?.note,
-              watchlist_view: chartData.watchlist_view ?? null,
+              watchlist_view: effectiveWv,
             });
           }
           if (chartCandles.length > 0) {

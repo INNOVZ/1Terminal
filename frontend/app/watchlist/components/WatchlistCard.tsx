@@ -222,9 +222,9 @@ function WatchlistCard({
                   padding: "2px 7px",
                   borderRadius: "6px",
                 }}
-                title="Research score has not been calibrated against forward outcomes"
+                title="Do Your Own Research — win-rate is not calibrated against forward outcomes"
               >
-                Uncalibrated
+                DYOR
               </span>
             )}
             <span className={isGradeAPlus ? "badge-grade-a-plus" : "badge-grade-a"}>
@@ -250,7 +250,7 @@ function WatchlistCard({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
+          gridTemplateColumns: "repeat(3, 1fr)",
           gap: "8px",
           background: "rgba(255, 255, 255, 0.02)",
           border: "1px solid var(--border-subtle)",
@@ -302,6 +302,18 @@ function WatchlistCard({
           <div style={{ color: "var(--accent-crimson)", fontSize: "10px" }}>INVALIDATION</div>
           <div style={{ fontWeight: 700, color: "var(--accent-crimson)", marginTop: "2px" }}>
             ${item.invalidation_price.toFixed(4)}
+          </div>
+        </div>
+        <div>
+          <div style={{ color: "var(--accent-emerald)", fontSize: "10px" }}>TARGET 1</div>
+          <div style={{ fontWeight: 700, color: "var(--accent-emerald)", marginTop: "2px" }}>
+            ${item.target_1.toFixed(4)}
+          </div>
+        </div>
+        <div>
+          <div style={{ color: "var(--accent-emerald)", fontSize: "10px" }}>TARGET 2</div>
+          <div style={{ fontWeight: 700, color: "var(--accent-emerald)", marginTop: "2px" }}>
+            ${item.target_2.toFixed(4)}
           </div>
         </div>
       </div>
@@ -568,7 +580,7 @@ function WatchlistCard({
               fontSize: "11px",
             }}
           >
-            <Edit3 size={12} /> Notes
+            <Edit3 size={12} /> Edit Levels &amp; Notes
           </button>
           <button
             type="button"

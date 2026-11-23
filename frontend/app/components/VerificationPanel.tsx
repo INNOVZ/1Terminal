@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, memo } from "react";
+import { useState, useMemo, useCallback, useEffect, memo } from "react";
 import {
   Check,
   X,
@@ -13,7 +13,7 @@ import { Opportunity } from "./CandidateSidebar";
 import RadarLifecycleCard from "./RadarLifecycleCard";
 import type { RadarQuote } from "../lib/radarInsights";
 import PlanDiagnosticsPanel from "./PlanDiagnosticsPanel";
-import { operatorRequestHeaders } from "../lib/operatorClient";
+import { getSupabaseClient } from "../lib/supabaseClient";
 
 export interface AdaptedLevels {
   pocPrice?: number;
@@ -137,6 +137,46 @@ function VerificationPanel({
 }: VerificationPanelProps) {
   const [added, setAdded] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [alreadySaved, setAlreadySaved] = useState(false);
+
+  // Check if the current opportunity is already in the signed-in user's personal watchlist
+  useEffect(() => {
+    let active = true;
+    if (!opportunity?.symbol) return;
+
+    const checkSaved = async () => {
+      try {
+        const supabase = getSupabaseClient();
+        const { data: sessionData } = await supabase.auth.getSession();
+        const uid = sessionData.session?.user?.id;
+        if (!uid || !active) {
+          if (active) setAlreadySaved(false);
+          return;
+        }
+
+        const { data } = await supabase
+          .from("user_watchlists")
+          .select("symbol")
+          .eq("user_id", uid)
+          .eq("symbol", opportunity.symbol.toUpperCase())
+          .maybeSingle();
+
+        if (active) {
+          setAlreadySaved(Boolean(data?.symbol));
+        }
+      } catch {
+        // ignore check failure
+      }
+    };
+
+    void checkSaved();
+    const handleUpdated = () => void checkSaved();
+    window.addEventListener("atlas:watchlist-updated", handleUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener("atlas:watchlist-updated", handleUpdated);
+    };
+  }, [opportunity?.symbol]);
 
   const decimals = useMemo(() => {
     return getPrecision(
@@ -218,12 +258,34 @@ function VerificationPanel({
   }, [opportunity, isShort, isContinuation, adaptedLevels, livePrice, decimals]);
 
   const handleAddToWatchlist = useCallback(async () => {
-    if (!opportunity || !bracket || adding || added) return;
+    if (!opportunity || !bracket || adding) return;
     setAdding(true);
     try {
-      const payload = {
-        symbol: opportunity.symbol,
-        name: opportunity.symbol.replace("USDT", ""),
+      const supabase = getSupabaseClient();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData.session?.user?.id;
+      if (!uid) {
+        window.dispatchEvent(new CustomEvent("atlas:supabase-auth-required"));
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const triggerNum = Number(
+        isShort
+          ? opportunity.breakout_trigger || bracket.currentPriceNum
+          : opportunity.breakout_trigger ||
+              bracket.rawTarget1 ||
+              bracket.currentPriceNum,
+      );
+      const supportNum = Number(
+        opportunity.poc_price ||
+          opportunity.suggested_entry ||
+          bracket.currentPriceNum,
+      );
+      const rowPayload = {
+        user_id: uid,
+        symbol: opportunity.symbol.toUpperCase(),
+        name: opportunity.base_asset || opportunity.symbol.replace(/USDT$/, "").replace(/USDC$/, ""),
         sector: "Layer 1 / DeFi",
         stage: isShort
           ? opportunity.setup_label.includes("UTAD")
@@ -234,66 +296,38 @@ function VerificationPanel({
             : "Phase C: Spring / Shakeout Test",
         timeframe: "1–3 Days",
         current_price: bracket.currentPriceNum,
-        trigger_price: Number(
-          isShort
-            ? opportunity.breakout_trigger || bracket.currentPriceNum
-            : opportunity.breakout_trigger ||
-                bracket.rawTarget1 ||
-                bracket.currentPriceNum,
-        ),
-        support_price: Number(
-          opportunity.poc_price ||
-            opportunity.suggested_entry ||
-            bracket.currentPriceNum,
-        ),
-        invalidation_price: Number(opportunity.suggested_stop),
+        trigger_price: triggerNum,
+        support_price: supportNum,
+        invalidation_price: Number(opportunity.suggested_stop || bracket.stopPrice),
         target_1: Number(bracket.rawTarget1),
         target_2: Number(bracket.rawTarget2),
         distance_to_trigger_pct: Number(
-          opportunity.breakout_trigger && bracket.currentPriceNum > 0
-            ? Math.abs(
-                ((Number(opportunity.breakout_trigger) -
-                  bracket.currentPriceNum) /
-                  bracket.currentPriceNum) *
-                  100,
-              ).toFixed(2)
+          triggerNum > 0 && bracket.currentPriceNum > 0
+            ? Math.abs(((triggerNum - bracket.currentPriceNum) / bracket.currentPriceNum) * 100).toFixed(2)
             : 2.5,
         ),
         score: Number(opportunity.score),
-        thesis: (opportunity.rationale || []).join(" | "),
+        thesis: (opportunity.rationale || []).join(" | ") || "Institutional pre-breakout accumulation setup.",
         checklist_passed: passCount,
         checklist_total: totalCount,
         priority: isGradeAPlus ? "HIGH" : "MEDIUM",
-        notes: `Added from Radar. 7d OI: ${opportunity.oi_change_7d_pct || "N/A"}.`,
+        notes: `Saved from Radar Screener. 7d OI: ${opportunity.oi_change_7d_pct || "N/A"}.`,
+        updated_at: nowIso,
       };
 
-      const submitWatchlist = async () => {
-        const res = await fetch("/api/watchlist", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: operatorRequestHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify(payload),
-        });
-        if (res.status === 401) {
-          window.dispatchEvent(
-            new CustomEvent("atlas:operator-auth-required", {
-              detail: {
-                actionLabel: `adding ${opportunity.symbol} to the watchlist`,
-                retry: () => {
-                  void submitWatchlist();
-                },
-              },
-            }),
-          );
-          return;
-        }
-        if (res.ok) {
-          setAdded(true);
-          if (onWatchlistAdded) onWatchlistAdded();
-          setTimeout(() => setAdded(false), 3000);
-        }
-      };
-      await submitWatchlist();
+      const { error } = await supabase
+        .from("user_watchlists")
+        .upsert(rowPayload, { onConflict: "user_id,symbol" });
+
+      if (!error) {
+        setAdded(true);
+        setAlreadySaved(true);
+        window.dispatchEvent(new CustomEvent("atlas:watchlist-updated"));
+        if (onWatchlistAdded) onWatchlistAdded();
+        setTimeout(() => setAdded(false), 3000);
+      } else {
+        console.error("Failed to save to personal Supabase watchlist:", error.message);
+      }
     } catch (e) {
       console.error("Failed to add to watchlist:", e);
     } finally {
@@ -303,7 +337,6 @@ function VerificationPanel({
     opportunity,
     bracket,
     adding,
-    added,
     isShort,
     passCount,
     totalCount,
@@ -1061,7 +1094,7 @@ function VerificationPanel({
         <button
           type="button"
           onClick={handleAddToWatchlist}
-          disabled={adding || added}
+          disabled={adding}
           style={{
             width: "100%",
             display: "flex",
@@ -1070,22 +1103,26 @@ function VerificationPanel({
             gap: "8px",
             padding: "12px",
             borderRadius: "10px",
-            background: added ? "var(--accent-emerald)" : "#f49d0d",
+            background: added || alreadySaved ? "var(--accent-emerald)" : "#f49d0d",
             color: "#07090e",
             fontWeight: 800,
             fontSize: "13px",
             border: "none",
-            cursor: adding || added ? "default" : "pointer",
+            cursor: adding ? "wait" : "pointer",
             transition: "all 0.2s ease",
           }}
         >
           {added ? (
             <>
-              <CheckCircle2 size={16} /> Added to Watchlist!
+              <CheckCircle2 size={16} /> Saved to My Watchlist!
+            </>
+          ) : alreadySaved ? (
+            <>
+              <CheckCircle2 size={16} /> In My Watchlist (Click to Update Levels)
             </>
           ) : (
             <>
-              <BookmarkPlus size={16} /> Add to Watchlist
+              <BookmarkPlus size={16} /> Save to My Watchlist
             </>
           )}
         </button>

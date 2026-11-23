@@ -474,7 +474,7 @@ const CandidateCard = memo(function CandidateCard({
         </div>
       </div>
 
-      {/* Key Metrics row: 7d OI + Uncalibrated */}
+      {/* Key Metrics row: 7d OI + DYOR */}
       <div
         style={{
           display: "flex",
@@ -508,9 +508,9 @@ const CandidateCard = memo(function CandidateCard({
               color: "#f49d0d",
               border: "1px solid rgba(244, 157, 13, 0.25)",
             }}
-            title="Research score has not been calibrated against forward outcomes"
+            title="Do Your Own Research — win-rate is not calibrated against forward outcomes"
           >
-            Uncalibrated
+            DYOR
           </span>
         )}
       </div>

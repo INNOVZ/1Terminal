@@ -91,28 +91,33 @@ async def get_portal_runtime(settings: Settings | None = None) -> Runtime:
 
 
 class AddWatchlistRequest(BaseModel):
-    symbol: str = Field(min_length=2, max_length=20)
-    name: str = ""
-    sector: str = "DeFi / Altcoins"
-    stage: str = "Phase C: Spring / Shakeout Test"
-    timeframe: str = "1–3 Days"
-    current_price: float = 0.0
-    trigger_price: float = 0.0
-    support_price: float = 0.0
-    invalidation_price: float = 0.0
-    target_1: float = 0.0
-    target_2: float = 0.0
-    distance_to_trigger_pct: float = 0.0
-    score: float = 60.0
-    thesis: str = ""
-    checklist_passed: int = 5
-    checklist_total: int = 5
-    priority: str = "HIGH"
-    notes: str = ""
+    symbol: str = Field(min_length=2, max_length=20, pattern=r"^[A-Za-z0-9_]+$")
+    name: str = Field(default="", max_length=120)
+    sector: str = Field(default="DeFi / Altcoins", max_length=120)
+    stage: str = Field(default="Phase C: Spring / Shakeout Test", max_length=120)
+    timeframe: str = Field(default="1–3 Days", max_length=60)
+    current_price: float = Field(default=0.0, ge=0.0, le=1e12, allow_inf_nan=False)
+    trigger_price: float = Field(default=0.0, ge=0.0, le=1e12, allow_inf_nan=False)
+    support_price: float = Field(default=0.0, ge=0.0, le=1e12, allow_inf_nan=False)
+    invalidation_price: float = Field(default=0.0, ge=0.0, le=1e12, allow_inf_nan=False)
+    target_1: float = Field(default=0.0, ge=0.0, le=1e12, allow_inf_nan=False)
+    target_2: float = Field(default=0.0, ge=0.0, le=1e12, allow_inf_nan=False)
+    distance_to_trigger_pct: float = Field(default=0.0, ge=0.0, le=1e6, allow_inf_nan=False)
+    score: float = Field(default=60.0, ge=0.0, le=100.0, allow_inf_nan=False)
+    thesis: str = Field(default="", max_length=2000)
+    checklist_passed: int = Field(default=5, ge=0, le=10)
+    checklist_total: int = Field(default=5, ge=1, le=10)
+    priority: str = Field(default="HIGH", max_length=32)
+    notes: str = Field(default="", max_length=2000)
 
 
 class UpdateNotesRequest(BaseModel):
     notes: str = Field(min_length=0, max_length=1000)
+
+
+class BatchAuditWatchlistRequest(BaseModel):
+    items: list[AddWatchlistRequest] = Field(default_factory=list, max_length=25)
+    refresh: bool = False
 
 
 _is_refreshing: bool = False
@@ -1415,6 +1420,86 @@ async def get_watchlist_audit(refresh: bool = False) -> dict[str, Any]:
             )
             results[item.symbol] = aud.as_dict()
         return {"audits": results, "count": len(results), "warning": f"{type(exc).__name__}: {exc}"}
+
+
+@portal_router.post("/watchlist/audit")
+async def post_watchlist_audit(payload: BatchAuditWatchlistRequest) -> dict[str, Any]:
+    """Stateless per-user live gate audit endpoint for user-specific Supabase watchlist items."""
+    global _cached_instruments
+    domain_items: list[WatchlistItem] = []
+    for req in payload.items:
+        win_rate, _ = calculate_opportunity_win_rate_and_ev(
+            setup_label=req.stage,
+            score=Decimal(str(req.score)),
+            checklist_passed=req.checklist_passed,
+            checklist_total=req.checklist_total,
+            risk_reward_ratio=Decimal("3.0"),
+        )
+        domain_items.append(
+            WatchlistItem(
+                symbol=req.symbol.upper(),
+                name=req.name or req.symbol.upper(),
+                sector=req.sector,
+                stage=WyckoffStage(req.stage)
+                if req.stage in [s.value for s in WyckoffStage]
+                else req.stage,
+                timeframe=req.timeframe,
+                current_price=Decimal(str(req.current_price)),
+                trigger_price=Decimal(str(req.trigger_price)),
+                support_price=Decimal(str(req.support_price)),
+                invalidation_price=Decimal(str(req.invalidation_price)),
+                target_1=Decimal(str(req.target_1)),
+                target_2=Decimal(str(req.target_2)),
+                distance_to_trigger_pct=Decimal(str(req.distance_to_trigger_pct)),
+                score=Decimal(str(req.score)),
+                thesis=req.thesis,
+                checklist_passed=req.checklist_passed,
+                checklist_total=req.checklist_total,
+                priority=WatchlistPriority(req.priority)
+                if req.priority in [p.value for p in WatchlistPriority]
+                else WatchlistPriority.HIGH,
+                notes=req.notes,
+                estimated_win_rate_pct=win_rate,
+            )
+        )
+
+    if not domain_items:
+        return {"items": [], "audits": {}, "total": 0}
+
+    try:
+        runtime = await get_portal_runtime()
+        futures = runtime.futures_market
+        if _cached_instruments is None:
+            _cached_instruments = await asyncio.wait_for(futures.instruments(), timeout=3.0)
+
+        enriched = await asyncio.wait_for(
+            _watchlist_service.enrich_items_with_audit(
+                domain_items, futures, _cached_instruments, force_refresh=False
+            ),
+            timeout=12.0,
+        )
+        return {
+            "items": [item.as_dict() for item in enriched],
+            "audits": {
+                item.symbol: item.audit.as_dict()
+                for item in enriched
+                if item.audit is not None
+            },
+            "total": len(enriched),
+        }
+    except Exception as exc:
+        fallback_items: list[WatchlistItem] = []
+        audits_map: dict[str, Any] = {}
+        for item in domain_items:
+            aud = _watchlist_service.audit_item(item, item.current_price, [], [], None)
+            audits_map[item.symbol] = aud.as_dict()
+            fallback_items.append(replace(item, audit=aud))
+        return {
+            "items": [item.as_dict() for item in fallback_items],
+            "audits": audits_map,
+            "total": len(fallback_items),
+            "warning": f"{type(exc).__name__}: {exc}",
+        }
 
 
 @portal_router.post("/watchlist")
