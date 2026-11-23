@@ -1,11 +1,11 @@
 "use client";
 
-import { bookQuote } from "./lib/radarInsights";
+import { bookEventQuote, bookQuote } from "./lib/radarInsights";
 
 import { useEffect, useState, useMemo, useCallback, useRef, Suspense } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import type { Opportunity } from "./components/CandidateSidebar";
+import type { Opportunity, SidebarWatchlistEpisode } from "./components/CandidateSidebar";
 import type { Candle, CandleInterval } from "./components/TradingChart";
 import { Zap, RefreshCw, AlertCircle } from "lucide-react";
 import baselineCandles from "@/public/baseline_candles.json";
@@ -14,17 +14,21 @@ import OperatorAuthModal from "./components/OperatorAuthModal";
 import { operatorRequestHeaders } from "./lib/operatorClient";
 import { isWithheldStatus, screenerPublication } from "./lib/screenerPublication";
 import { getSupabaseClient, type UserWatchlistRow } from "./lib/supabaseClient";
+import { AccountScope, type AccountTicket } from "./lib/accountScope";
 
 async function resolveUserWatchlistView(
   symbol: string,
+  scope: AccountScope,
   fallbackPrice?: string | null,
   tickSize?: string,
 ): Promise<ChartApiResponse["watchlist_view"] | null> {
   try {
+    const ticket = scope.capture();
+    if (!ticket.userId) return null;
     const supabase = getSupabaseClient();
     const { data: sessionData } = await supabase.auth.getSession();
     const userId = sessionData.session?.user?.id;
-    if (!userId) return null;
+    if (!userId || ticket.userId !== userId || !scope.isCurrent(ticket)) return null;
 
     const { data: row, error } = await supabase
       .from("user_watchlists")
@@ -33,7 +37,7 @@ async function resolveUserWatchlistView(
       .eq("symbol", symbol.toUpperCase())
       .maybeSingle();
 
-    if (error || !row) return null;
+    if (error || !row || !scope.isCurrent(ticket)) return null;
     const typed = row as UserWatchlistRow;
     const supportP = Number(typed.support_price);
     const stopP = Number(typed.invalidation_price);
@@ -43,6 +47,7 @@ async function resolveUserWatchlistView(
     const rr = risk > 0 && reward > 0 ? (reward / risk).toFixed(2) : null;
 
     return {
+      account_ticket: ticket,
       symbol: typed.symbol,
       stage: typed.stage,
       timeframe: typed.timeframe,
@@ -248,6 +253,7 @@ interface ChartApiResponse {
   candles?: Candle[];
   opportunity?: Opportunity | null;
   watchlist_view?: {
+    account_ticket?: AccountTicket;
     symbol: string;
     stage?: string;
     timeframe?: string;
@@ -283,13 +289,70 @@ interface InspectedSymbolView {
 }
 
 function RadarPageContent() {
+  const accountScope = useRef(new AccountScope());
   const searchParams = useSearchParams();
   const symbolParam = searchParams ? searchParams.get("symbol") : null;
 
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [autoWatchlist, setAutoWatchlist] = useState<SidebarWatchlistEpisode[]>([]);
   const [activeOpportunity, setActiveOpportunity] =
     useState<Opportunity | null>(null);
-  const [inspectedView, setInspectedView] = useState<InspectedSymbolView | null>(null);
+  const [storedInspectedView, setInspectedView] = useState<InspectedSymbolView | null>(null);
+  const [accountTicket, setAccountTicket] = useState<AccountTicket>({ userId: null, epoch: 0 });
+  const privateTicket = storedInspectedView?.watchlist_view?.account_ticket;
+  const inspectedView = privateTicket && (privateTicket.userId !== accountTicket.userId
+    || privateTicket.epoch !== accountTicket.epoch) ? null : storedInspectedView;
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    let alive = true;
+    const applyIdentity = (id: string | null) => {
+      if (!alive || !accountScope.current.setIdentity(id)) return;
+      setAccountTicket(accountScope.current.capture());
+      setInspectedView(view => view?.watchlist_view?.account_ticket ? null : view);
+    };
+    let authEventSeen = false;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!authEventSeen) applyIdentity(data.session?.user.id ?? null);
+    });
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      authEventSeen = true;
+      applyIdentity(session?.user.id ?? null);
+    });
+    return () => { alive = false; data.subscription.unsubscribe(); };
+  }, []);
+
+  // Re-resolve personal watchlist overlay cleanly whenever the authenticated identity changes
+  useEffect(() => {
+    if (!symbolParam || !accountTicket.userId) return;
+    const cleanTarget = symbolParam.toUpperCase();
+    const ticket = accountTicket;
+    let alive = true;
+
+    const refreshPersonalOverlay = async () => {
+      if (!accountScope.current.isCurrent(ticket)) return;
+      const personalWv = await resolveUserWatchlistView(cleanTarget, accountScope.current);
+      if (!alive || !personalWv || !accountScope.current.isCurrent(ticket)) return;
+      setInspectedView((prev) => {
+        if (!prev || prev.symbol.toUpperCase() !== cleanTarget) return prev;
+        return {
+          ...prev,
+          record_kind: "watchlist_view",
+          current_price: prev.current_price ?? personalWv.current_price ?? null,
+          tick_size: prev.tick_size ?? personalWv.tick_size,
+          watchlist_view: {
+            ...personalWv,
+            current_price: prev.current_price ?? personalWv.current_price ?? null,
+            tick_size: prev.tick_size ?? personalWv.tick_size,
+          },
+        };
+      });
+    };
+
+    void refreshPersonalOverlay();
+    return () => {
+      alive = false;
+    };
+  }, [symbolParam, accountTicket]);
   const [activeCandle, setActiveCandle] = useState<Candle | null>(null);
   const [radarQuotes, setRadarQuotes] = useState<Record<string, { price: number; observed_at: string }>>({});
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
@@ -405,7 +468,87 @@ function RadarPageContent() {
         })
         .catch(() => {});
     }
-  }, [candleStore]);
+  }, []);
+
+  const handleSelectWatchlistEpisode = useCallback((ep: SidebarWatchlistEpisode) => {
+    const targets = [ep.target_1, ep.target_2, ep.target_3].filter(
+      (v): v is number => v !== null && Number.isFinite(v) && v > 0,
+    );
+    const risk = Math.abs(ep.entry_price - ep.stop_price);
+    const rrTarget = targets.length > 1 ? targets[1] : targets[0] ?? ep.entry_price;
+    const rr = risk > 0 ? Math.abs(rrTarget - ep.entry_price) / risk : 0;
+    const checklist =
+      ep.checklist && ep.checklist.length > 0
+        ? ep.checklist
+        : [
+            {
+              title: "Watchlist Gate Status",
+              passed: false,
+              status: "failed" as const,
+              detail: ep.soft_gate_summary || ep.eviction_reason || "Soft-evicted from 5/5 Radar",
+            },
+          ];
+
+    const watchlistOpp: Opportunity = {
+      symbol: ep.symbol,
+      base_asset: ep.symbol.replace(/USDT$/, "").replace(/USDC$/, ""),
+      direction: ep.direction,
+      setup_label: ep.setup_label,
+      regime: "watchlist_48h",
+      score: ep.score,
+      current_price: ep.last_price || ep.signal_price,
+      suggested_entry: ep.entry_price,
+      pullback_entry: ep.entry_price,
+      breakout_trigger: ep.trigger_price ?? undefined,
+      suggested_stop: ep.stop_price,
+      suggested_targets: targets,
+      risk_reward_ratio: rr.toFixed(2),
+      risk_reward_target_index: targets.length > 1 ? 2 : 1,
+      poc_price: ep.poc_price ?? undefined,
+      vah_price: ep.vah_price ?? undefined,
+      val_price: ep.val_price ?? undefined,
+      execution_mode: ep.execution_mode,
+      tick_size: ep.tick_size,
+      checklist,
+      gates_passed: ep.gates_passed,
+      gates_total: ep.gates_total,
+      failed_gates: checklist.filter((c) => !c.passed).map((c) => c.title),
+      radar_status: "WATCHLIST_48H",
+      radar_status_label: `${ep.gates_passed}/${ep.gates_total} WATCHLIST · 48H`,
+      first_seen_at: ep.published_at,
+      evaluated_at: ep.published_at,
+      radar_signal: {
+        version: 1,
+        episode_id: ep.episode_id,
+        published_at: ep.published_at,
+        price: String(ep.signal_price),
+        quote_observed_at: ep.published_at,
+      },
+      rationale: [
+        `Promoted to 48h Potential Watchlist after leaving live 5/5 Radar (${ep.soft_gate_summary || ep.eviction_reason || "soft flow dip"}).`,
+        "All 4 structural gates remained intact; removed automatically upon Target 1, Stop Breach, 48h expiry, or 5/5 Radar re-entry.",
+      ],
+      candles: [],
+    };
+
+    setInspectedView(null);
+    setActiveOpportunity(watchlistOpp);
+
+    void fetch(`/api/chart/${encodeURIComponent(ep.symbol)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((chartData) => {
+        if (chartData && Array.isArray(chartData.candles) && chartData.candles.length > 0) {
+          setActiveOpportunity((prev) => {
+            if (prev && prev.symbol === ep.symbol) {
+              return { ...prev, candles: chartData.candles };
+            }
+            return prev;
+          });
+          setActiveCandle(chartData.candles[chartData.candles.length - 1]);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleLiveTick = useCallback(
     (tick: { price: number }) => {
@@ -502,11 +645,14 @@ function RadarPageContent() {
                 enriched.unshift(matchedTarget);
               } else {
                 // Prefer the signed-in user's personal Supabase watchlist item when inspecting a chart
+                const scopeTicket = accountScope.current.capture();
                 const personalWv = await resolveUserWatchlistView(
                   cleanTarget,
+                  accountScope.current,
                   chartData.inspection?.current_price ?? chartData.watchlist_view?.current_price ?? null,
                   chartData.inspection?.tick_size ?? chartData.watchlist_view?.tick_size,
                 );
+                if (!accountScope.current.isCurrent(scopeTicket)) return;
                 const effectiveWv = personalWv ?? chartData.watchlist_view ?? null;
                 setInspectedView({
                   record_kind: effectiveWv ? "watchlist_view" : "chart_inspection",
@@ -774,11 +920,14 @@ function RadarPageContent() {
                 setOpportunities([targetOpp]);
                 setActiveOpportunity(targetOpp);
               } else {
+                const scopeTicket = accountScope.current.capture();
                 const personalWv = await resolveUserWatchlistView(
                   cleanTarget,
+                  accountScope.current,
                   chartData.inspection?.current_price ?? chartData.watchlist_view?.current_price ?? null,
                   chartData.inspection?.tick_size ?? chartData.watchlist_view?.tick_size,
                 );
+                if (!accountScope.current.isCurrent(scopeTicket)) return;
                 const effectiveWv = personalWv ?? chartData.watchlist_view ?? null;
                 setInspectedView({
                   record_kind: effectiveWv ? "watchlist_view" : "chart_inspection",
@@ -823,12 +972,24 @@ function RadarPageContent() {
   }, [fetchScreener]);
 
   useEffect(() => {
+    const fetchAutoWatchlist = async () => {
+      try {
+        const res = await fetch("/api/watchlist/auto?days=7", { cache: "no-store" }).catch(() => null);
+        if (!res || !res.ok) return;
+        const payload = (await res.json()) as { watchlist?: SidebarWatchlistEpisode[] };
+        if (Array.isArray(payload.watchlist)) {
+          setAutoWatchlist(payload.watchlist);
+        }
+      } catch {}
+    };
     const timer = setTimeout(() => {
       void fetchScreener(false);
+      void fetchAutoWatchlist();
     }, 0);
     const interval = setInterval(() => {
       if (!awaitingScanCompletionRef.current && !fetchInFlightRef.current) {
         void fetchScreener(false);
+        void fetchAutoWatchlist();
       }
     }, 60000);
     return () => {
@@ -890,9 +1051,11 @@ function RadarPageContent() {
             // Keep unqualified chart inspections and watchlist views out of the qualified radar list
             const personalWv = await resolveUserWatchlistView(
               cleanTarget,
+              accountScope.current,
               chartData.inspection?.current_price ?? chartData.watchlist_view?.current_price ?? null,
               chartData.inspection?.tick_size ?? chartData.watchlist_view?.tick_size,
             );
+            if (personalWv?.account_ticket && !accountScope.current.isCurrent(personalWv.account_ticket)) return;
             const effectiveWv = personalWv ?? chartData.watchlist_view ?? null;
             setInspectedView({
               record_kind: effectiveWv ? "watchlist_view" : "chart_inspection",
@@ -940,18 +1103,23 @@ function RadarPageContent() {
   }, [fetchScreener]);
 
   // --------------------------------------------------------------------------
-  // Real-time Multi-Ticker Streaming & Snapshot for ALL candidate tokens
+  // Real-time Multi-Ticker Streaming & Snapshot for ALL candidate & watchlist tokens
   // --------------------------------------------------------------------------
+  const trackedSymbolsKey = useMemo(() => {
+    const syms = new Set<string>();
+    for (const o of opportunities) syms.add(o.symbol.toUpperCase());
+    for (const w of autoWatchlist) syms.add(w.symbol.toUpperCase());
+    return Array.from(syms).sort().join(",");
+  }, [opportunities, autoWatchlist]);
+
   useEffect(() => {
-    if (!opportunities || opportunities.length === 0) return;
+    if (!trackedSymbolsKey) return;
 
     let isSubscribed = true;
     let ws: WebSocket | null = null;
     let pollTimer: NodeJS.Timeout | null = null;
 
-    const symbols = Array.from(
-      new Set(opportunities.map((o) => o.symbol.toUpperCase())),
-    );
+    const symbols = trackedSymbolsKey.split(",");
     if (symbols.length === 0) return;
 
     // 1. Instant REST snapshot for all candidate symbols
@@ -1009,7 +1177,7 @@ function RadarPageContent() {
           const payload = JSON.parse(event.data);
           const data = payload.data || payload;
           if (data?.e === "bookTicker" && typeof data.s === "string" && symbols.includes(data.s)) {
-            const quote = bookQuote(data.b, data.a, data.E ?? data.T ?? Date.now(), Date.now());
+            const quote = bookEventQuote(data, Date.now());
             if (quote) {
               const sym = data.s;
               setRadarQuotes(prev => prev[sym] && prev[sym].observed_at > quote.observed_at
@@ -1079,7 +1247,7 @@ function RadarPageContent() {
       }
       if (pollTimer) clearInterval(pollTimer);
     };
-  }, [opportunities]);
+  }, [trackedSymbolsKey]);
 
   const handleLevelsUpdated = useCallback(
     (levels: {
@@ -1697,7 +1865,7 @@ function RadarPageContent() {
                 }}
               >
                 <Zap size={11} />
-                <span>ATLAS v3.1</span>
+                <span>ALFA v3.2</span>
               </div>
             </div>
           )}
@@ -1772,8 +1940,10 @@ function RadarPageContent() {
           <div className="portal-sidebar-inner" style={{ width: "320px", height: "100%" }}>
             <CandidateSidebar
               opportunities={opportunities}
+              watchlistEpisodes={autoWatchlist}
               activeSymbol={activeOpportunity ? activeOpportunity.symbol : ""}
               onSelect={handleSelectOpportunity}
+              onSelectWatchlist={handleSelectWatchlistEpisode}
               livePrices={livePrices}
               priceChanges24h={priceChanges24h}
             />

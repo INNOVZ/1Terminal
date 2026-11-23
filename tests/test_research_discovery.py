@@ -908,7 +908,7 @@ async def test_finding5_stage2_probe_ordinal_class_precedence_and_canonical_tie_
         market = TieBreakMarket(insts, {}, {})
         journal = ScanDecisionJournal()
         screener = StubScreener(
-            Settings.model_construct(), Macro(), journal=journal, feature_contract="discovery_v2"
+            Settings.model_construct(stage2_capacity_rollover_enabled=False), Macro(), journal=journal, feature_contract="discovery_v2"
         )
         await screener.screen(
             market,

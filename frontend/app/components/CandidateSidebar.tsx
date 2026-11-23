@@ -143,7 +143,7 @@ export function computeCoilToGainerProbability(opp: Opportunity): CoilGainerInsi
   const isBreakout = opp.breakout_readiness_status === "BREAKOUT_CONFIRMED";
   const isSqueezeSetup = /compression|coil|accumulation|range_bottom|vcp|emerging|squeeze|recovery|breakout/i.test(opp.setup_label || "");
 
-  // 1. Detect Specific Edge Archetype (matching empirical 24h-72h top gainer research & Atlas v3.1)
+  // 1. Detect Specific Edge Archetype (matching empirical 24h-72h top gainer research & ALFA v3.2)
   let archetype = "CONSOLIDATION SQUEEZE";
   let shortLabel = "COIL";
   let telemetrySummary = "";
@@ -164,7 +164,7 @@ export function computeCoilToGainerProbability(opp: Opportunity): CoilGainerInsi
     archetype = "EMERGING BASE RECLAIM";
     shortLabel = "EMERGING";
     telemetrySummary = `Score ${scoreNum.toFixed(1)}, Taker 4H ${taker4h.toFixed(2)}x, OI ${oi7d > 0 ? "+" : ""}${oi7d.toFixed(1)}%`;
-    actionThesis = "Atlas v3.1 emerging base reclaim above 1H EMA20 & 30d VAL with 4H RSI >= 52 and fresh derivatives inflow.";
+    actionThesis = "ALFA v3.2 emerging base reclaim above 1H EMA20 & 30d VAL with 4H RSI >= 52 and fresh derivatives inflow.";
     badgeBg = "rgba(16, 185, 129, 0.16)";
     badgeColor = "var(--accent-emerald)";
     badgeBorder = "rgba(16, 185, 129, 0.35)";
@@ -172,7 +172,7 @@ export function computeCoilToGainerProbability(opp: Opportunity): CoilGainerInsi
     archetype = "RECOVERY PIVOT RECLAIM";
     shortLabel = "RECOVERY";
     telemetrySummary = `Score ${scoreNum.toFixed(1)}, Taker 4H ${taker4h.toFixed(2)}x`;
-    actionThesis = "Atlas v3.1 higher-low structural pivot reclaim with flow-confirmed turnover acceleration.";
+    actionThesis = "ALFA v3.2 higher-low structural pivot reclaim with flow-confirmed turnover acceleration.";
     badgeBg = "rgba(56, 189, 248, 0.16)";
     badgeColor = "#38bdf8";
     badgeBorder = "rgba(56, 189, 248, 0.35)";
@@ -620,23 +620,75 @@ const CandidateCard = memo(function CandidateCard({
   );
 });
 
+export interface SidebarWatchlistEpisode {
+  episode_id: string;
+  symbol: string;
+  direction: string;
+  setup_label: string;
+  execution_mode: string;
+  score: number;
+  tick_size: string;
+  published_at: string;
+  expires_at: string;
+  remaining_seconds: number;
+  signal_price: number;
+  entry_price: number;
+  trigger_price: number | null;
+  stop_price: number;
+  target_1: number;
+  target_2: number | null;
+  target_3: number | null;
+  poc_price: number | null;
+  vah_price: number | null;
+  val_price: number | null;
+  status: string;
+  radar_presence: string;
+  radar_status_label: string;
+  eviction_reason: string | null;
+  soft_gate_summary: string | null;
+  checklist: { title: string; passed: boolean; status?: "passed" | "failed" | "unknown"; detail: string }[];
+  gates_passed: number;
+  gates_total: number;
+  last_price: number;
+  current_return_pct: number;
+  peak_mfe_pct: number;
+  worst_mae_pct: number;
+}
+
+function fmtRemainingShort(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "0m";
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+}
+
 export interface CandidateSidebarProps {
   opportunities: Opportunity[];
+  watchlistEpisodes?: SidebarWatchlistEpisode[];
   activeSymbol: string;
   onSelect: (opp: Opportunity) => void;
+  onSelectWatchlist?: (ep: SidebarWatchlistEpisode) => void;
   livePrices?: Record<string, number>;
   priceChanges24h?: Record<string, number>;
 }
 
 function CandidateSidebar({
   opportunities,
+  watchlistEpisodes = [],
   activeSymbol,
   onSelect,
+  onSelectWatchlist,
   livePrices,
   priceChanges24h,
 }: CandidateSidebarProps) {
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"ALL" | "LONGS" | "SHORTS" | "COIL" | "OI">("ALL");
+  const [filter, setFilter] = useState<"ALL" | "LONGS" | "SHORTS" | "WATCHLIST">("ALL");
+
+  // Strict client-side disjointness guard: never duplicate live 5/5 Radar symbols inside Watchlist
+  const disjointWatchlist = useMemo(() => {
+    const radarSymbols = new Set(opportunities.map((o) => o.symbol.toUpperCase()));
+    return watchlistEpisodes.filter((ep) => !radarSymbols.has(ep.symbol.toUpperCase()));
+  }, [opportunities, watchlistEpisodes]);
 
   // Memoize counts across tabs to avoid re-filtering on every keystroke
   const counts = useMemo(() => {
@@ -653,11 +705,13 @@ function CandidateSidebar({
       all: opportunities.length,
       longs,
       shorts,
+      watchlist: disjointWatchlist.length,
     };
-  }, [opportunities]);
+  }, [opportunities, disjointWatchlist.length]);
 
-  // Memoize filtered candidates list
+  // Memoize filtered candidates list (strict 5/5 Radar)
   const filteredOpps = useMemo(() => {
+    if (filter === "WATCHLIST") return [];
     const query = search.trim().toLowerCase();
     return opportunities.filter((opp) => {
       if (query && !opp.symbol.toLowerCase().includes(query)) {
@@ -666,25 +720,18 @@ function CandidateSidebar({
       const isShort = opp.direction?.toLowerCase() === "short";
       if (filter === "LONGS") return !isShort;
       if (filter === "SHORTS") return isShort;
-      if (filter === "COIL") {
-        return (
-          opp.setup_label.includes("COIL") ||
-          opp.setup_label.includes("VCP") ||
-          opp.setup_label.includes("RANGE_BOTTOM") ||
-          opp.setup_label.includes("EMERGING") ||
-          opp.setup_label.includes("RECOVERY")
-        );
-      }
-      if (filter === "OI") {
-        return (
-          opp.setup_label.includes("OI") ||
-          opp.setup_label.includes("SQUEEZE") ||
-          opp.setup_label.includes("ACCUMULATION")
-        );
-      }
       return true;
     });
   }, [opportunities, search, filter]);
+
+  // Memoize filtered 48h Watchlist list (soft-evicted high-potential setups)
+  const filteredWatchlist = useMemo(() => {
+    if (filter !== "WATCHLIST") return [];
+    const query = search.trim().toLowerCase();
+    return disjointWatchlist.filter((ep) =>
+      query ? ep.symbol.toLowerCase().includes(query) : true,
+    );
+  }, [disjointWatchlist, search, filter]);
 
   return (
     <aside
@@ -732,7 +779,7 @@ function CandidateSidebar({
 
         {/* Filter Pills */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", marginTop: "10px" }}>
-          {(["ALL", "LONGS", "SHORTS", "COIL", "OI"] as const).map((tab) => {
+          {(["ALL", "LONGS", "SHORTS", "WATCHLIST"] as const).map((tab) => {
             const isTabActive = filter === tab;
             const count =
               tab === "ALL"
@@ -741,7 +788,7 @@ function CandidateSidebar({
                 ? counts.longs
                 : tab === "SHORTS"
                 ? counts.shorts
-                : undefined;
+                : counts.watchlist;
 
             return (
               <button
@@ -749,13 +796,21 @@ function CandidateSidebar({
                 type="button"
                 onClick={() => setFilter(tab)}
                 style={{
-                  background: isTabActive ? "rgba(244, 157, 13, 0.15)" : "transparent",
+                  background: isTabActive
+                    ? tab === "WATCHLIST"
+                      ? "rgba(250, 204, 21, 0.16)"
+                      : "rgba(244, 157, 13, 0.15)"
+                    : "transparent",
                   color: isTabActive
                     ? tab === "SHORTS"
                       ? "var(--accent-crimson)"
                       : tab === "LONGS"
                       ? "var(--accent-emerald)"
+                      : tab === "WATCHLIST"
+                      ? "#facc15"
                       : "#f49d0d"
+                    : tab === "WATCHLIST" && counts.watchlist > 0
+                    ? "#facc15"
                     : "var(--text-muted)",
                   border: `1px solid ${
                     isTabActive
@@ -763,7 +818,11 @@ function CandidateSidebar({
                         ? "rgba(239, 68, 68, 0.4)"
                         : tab === "LONGS"
                         ? "rgba(16, 185, 129, 0.4)"
+                        : tab === "WATCHLIST"
+                        ? "rgba(250, 204, 21, 0.5)"
                         : "rgba(244, 157, 13, 0.35)"
+                      : tab === "WATCHLIST" && counts.watchlist > 0
+                      ? "rgba(250, 204, 21, 0.25)"
                       : "var(--border-subtle)"
                   }`,
                   borderRadius: "6px",
@@ -777,8 +836,7 @@ function CandidateSidebar({
                 {tab === "ALL" && `All (${counts.all})`}
                 {tab === "LONGS" && `Longs (${count})`}
                 {tab === "SHORTS" && `Shorts (${count})`}
-                {tab === "COIL" && "Coils"}
-                {tab === "OI" && "OI Accum"}
+                {tab === "WATCHLIST" && `Watchlist (${count})`}
               </button>
             );
           })}
@@ -787,7 +845,132 @@ function CandidateSidebar({
 
       {/* Candidate List */}
       <div className="candidate-list-container" style={{ flex: 1, overflowY: "auto", padding: "10px" }}>
-        {filteredOpps.length === 0 ? (
+        {filter === "WATCHLIST" ? (
+          filteredWatchlist.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "36px 14px", color: "var(--text-muted)", fontSize: "11.5px", lineHeight: 1.5 }}>
+              No soft-evicted setups in the 48h Watchlist right now.
+              <div style={{ marginTop: "6px", fontSize: "10.5px", opacity: 0.85 }}>
+                Setups evicted from 5/5 Radar on a mild flow dip while keeping 4/4 structure intact appear here automatically (never duplicating live Radar cards).
+              </div>
+            </div>
+          ) : (
+            filteredWatchlist.map((ep) => {
+              const isShort = ep.direction?.toLowerCase() === "short";
+              const isSelected = ep.symbol.toUpperCase() === activeSymbol.toUpperCase();
+              const livePx = livePrices?.[ep.symbol] ?? ep.last_price;
+              const liveRet =
+                ep.signal_price > 0
+                  ? (isShort ? -1 : 1) * ((livePx - ep.signal_price) / ep.signal_price) * 100
+                  : ep.current_return_pct;
+              const effectiveMfe = Math.max(ep.peak_mfe_pct, liveRet);
+
+              return (
+                <div
+                  key={ep.episode_id}
+                  onClick={() => onSelectWatchlist?.(ep)}
+                  style={{
+                    padding: "11px 12px",
+                    borderRadius: "10px",
+                    marginBottom: "8px",
+                    cursor: "pointer",
+                    background: isSelected
+                      ? "rgba(250, 204, 21, 0.11)"
+                      : "rgba(255, 255, 255, 0.025)",
+                    border: `1px solid ${
+                      isSelected
+                        ? "rgba(250, 204, 21, 0.55)"
+                        : "rgba(250, 204, 21, 0.2)"
+                    }`,
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "6px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                      <span style={{ fontWeight: 800, fontSize: "13px", color: "#ffffff" }}>
+                        {ep.symbol}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "9px",
+                          fontWeight: 800,
+                          padding: "1px 5px",
+                          borderRadius: "4px",
+                          color: isShort ? "#f87171" : "#10b981",
+                          background: isShort
+                            ? "rgba(248, 113, 113, 0.14)"
+                            : "rgba(16, 185, 129, 0.14)",
+                        }}
+                      >
+                        {ep.direction.toUpperCase()}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "9px",
+                          fontWeight: 800,
+                          padding: "1px 5px",
+                          borderRadius: "4px",
+                          color: "#facc15",
+                          background: "rgba(250, 204, 21, 0.14)",
+                          border: "1px solid rgba(250, 204, 21, 0.35)",
+                        }}
+                      >
+                        {ep.gates_passed}/{ep.gates_total} WATCH
+                      </span>
+                    </div>
+                    <span
+                      style={{
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "12px",
+                        fontWeight: 800,
+                        color: liveRet >= 0 ? "#10b981" : "#f87171",
+                      }}
+                    >
+                      {liveRet >= 0 ? "+" : ""}
+                      {liveRet.toFixed(2)}%
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginTop: "5px",
+                      fontSize: "11px",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    <span style={{ color: "#e2e8f0", fontWeight: 700 }}>
+                      ${formatCandidatePrice(livePx, ep.tick_size)}
+                    </span>
+                    <span style={{ color: "#10b981", fontSize: "10px", fontWeight: 700 }}>
+                      MFE {effectiveMfe >= 0 ? "+" : ""}
+                      {effectiveMfe.toFixed(1)}%
+                    </span>
+                    <span style={{ color: "#facc15", fontSize: "10px", fontWeight: 700 }}>
+                      {fmtRemainingShort(ep.remaining_seconds)} left
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "5px",
+                      fontSize: "10px",
+                      fontFamily: "var(--font-mono)",
+                      color: "#94a3b8",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                    title={ep.soft_gate_summary || ep.eviction_reason || ""}
+                  >
+                    {ep.soft_gate_summary || `Soft exit: ${ep.eviction_reason || "flow dip"}`}
+                  </div>
+                </div>
+              );
+            })
+          )
+        ) : filteredOpps.length === 0 ? (
           <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-muted)", fontSize: "12px" }}>
             No tokens matching filter.
           </div>

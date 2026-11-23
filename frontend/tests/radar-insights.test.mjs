@@ -1,11 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { radarInsights, timestamp, bookQuote } from '../app/lib/radarInsights.ts';
+import { radarInsights, timestamp, bookQuote, bookEventQuote } from '../app/lib/radarInsights.ts';
 const now = Date.parse('2026-11-22T10:00:00Z');
 const signal = { version: 1, episode_id: 'a', published_at: '2026-11-22T09:00:00Z', price: '100', quote_observed_at: '2026-11-22T09:00:00Z' };
 const quote = { price: '110', observed_at: new Date(now).toISOString() };
 const base = { direction: 'long', radar_signal: signal, radar_quote: quote };
 const close = (a,b) => assert.ok(Math.abs(a-b)<1e-9);
+test('WebSocket book events never replace missing exchange timestamps with browser time', () => {
+  assert.equal(bookEventQuote({b:'99',a:'101'}, now), null);
+  assert.equal(bookEventQuote({b:'99',a:'101',E:now-61000}, now), null);
+  assert.equal(bookEventQuote({b:'99',a:'101',E:now+6000}, now), null);
+  assert.equal(bookEventQuote({b:'101',a:'99',E:now}, now), null);
+  assert.equal(bookEventQuote({b:'99',a:'101',T:now}, now).observed_at, new Date(now).toISOString());
+});
 test('long and short distinguish raw change from directional result', () => {
   close(radarInsights(base, undefined, now).signalChange, 10);
   close(radarInsights({...base,direction:'short'}, undefined, now).directionalChange, -10);

@@ -51,6 +51,32 @@ The package/import name remains `algotrader` to avoid unnecessary deployment/imp
 Offline simulations and their pure strategy/risk calculations remain available as research code,
 without exchange execution adapters. Their results have not validated this screener.
 
+## Bounded Stage-2 enrichment allocation
+
+Discovery scans retain the 45-place structural shortlist and reuse its unused places for
+eligible derivatives probes: 13 shortlist candidates can admit up to 62 probes, within
+the existing 75-place Stage-2 budget. Full shortlists retain 30 probe places. Probe
+eligibility, ordinal priority, publication gates and continuation's three-place reservation
+remain unchanged. Legacy scans retain their fixed 15-probe lane. Rollover does not run
+without a derivatives provider or in BREAKOUT mode.
+
+`ATLAS_STAGE2_CAPACITY_ROLLOVER_ENABLED=true` is the default; set it to `false` to restore
+fixed discovery lanes (45 shortlist / 30 probes). Compose forwards the setting to the
+API, and archives record it for deterministic replay. Existing source/version guards
+still apply to historical archives.
+
+`scan_counts` exposes `stage2_budget`, `stage2_probe_limit`, `stage2_rollover_slots`,
+`stage2_rollover_admitted`, `stage2_unused_budget`, `stage2_derivatives_attempted` and
+`stage2_derivatives_unavailable`; symbol journals record the allocation policy and lane.
+Attempted counts measure snapshot calls, not HTTP requests: one snapshot uses multiple
+public endpoints and may retry. Concurrency remains eight and each snapshot timeout
+remains 15 seconds. Unavailable/degraded enrichment withholds the candidate instead of
+publishing its preliminary score. Missing cached inputs are rejected before fetching.
+
+Local allocation, failure, permutation and capture/replay tests verify these bounds.
+They do not establish deployed VM throughput, eliminate false positives or demonstrate
+better future top-gainer recall. No recovery research arm is promoted by this change.
+
 ## Reproducible scans and forward observations
 
 New runtime scans archive normalized decision inputs, universe/stage decisions, configuration and

@@ -1,0 +1,809 @@
+"""Persistent disjoint 5/5 Radar -> 48h Potential Watchlist -> Resolved Ledger service.
+
+Stores Radar episodes in SQLite (`ATLAS_STATE_DB_PATH`) across restarts with:
+- Zero duplication between live 5/5 Radar (`ON_RADAR`) and 48h Potential Watchlist (`WATCHLIST`).
+- Certified measurement metadata (`measurement_json`) preserving coverage & barrier certification.
+- Singleflight concurrency coalescing and 30s force-refresh cooldown (with `internal_scheduler=True`
+  override for post-scan evaluation).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import os
+import sqlite3
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
+from threading import Lock
+from typing import Any
+
+from algotrader.domain.auto_watchlist import (
+    AUTO_WATCH_WINDOW_HOURS,
+    MEASUREMENT_SCHEMA_VERSION,
+    AutoWatchEpisode,
+    AutoWatchStatus,
+    RadarPresence,
+    build_auto_watch_episode,
+    classify_radar_eviction,
+    compute_performance_summary,
+    directional_return_pct,
+    evaluate_auto_watch_episode,
+)
+from algotrader.domain.models import Candle, Instrument
+from algotrader.domain.ports import MarketDataPort
+
+
+class AutoWatchlistService:
+    """Manages disjoint ON_RADAR -> WATCHLIST (48h) -> RESOLVED episodes in SQLite."""
+
+    def __init__(
+        self,
+        db_path: Path | str | None = None,
+        *,
+        window_hours: int = AUTO_WATCH_WINDOW_HOURS,
+    ) -> None:
+        raw_path = db_path or os.environ.get("ATLAS_STATE_DB_PATH", "atlas_state.sqlite3")
+        self._db_path = Path(raw_path)
+        if str(self._db_path.parent) not in (".", ""):
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._window_hours = max(1, int(window_hours))
+        self._lock = Lock()
+        self._refresh_lock = asyncio.Lock()
+        self._last_refresh_at: datetime | None = None
+        self._ensure_table()
+
+    @contextlib.contextmanager
+    def _get_connection(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def _ensure_table(self) -> None:
+        sql = """
+            CREATE TABLE IF NOT EXISTS radar_auto_watchlist (
+                episode_id TEXT PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                setup_label TEXT NOT NULL,
+                execution_mode TEXT NOT NULL,
+                score TEXT NOT NULL,
+                tick_size TEXT NOT NULL,
+                published_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                signal_price TEXT NOT NULL,
+                entry_price TEXT NOT NULL,
+                trigger_price TEXT,
+                stop_price TEXT NOT NULL,
+                target_1 TEXT NOT NULL,
+                target_2 TEXT,
+                target_3 TEXT,
+                poc_price TEXT,
+                vah_price TEXT,
+                val_price TEXT,
+                status TEXT NOT NULL,
+                radar_presence TEXT NOT NULL,
+                radar_status_label TEXT NOT NULL,
+                eviction_reason TEXT,
+                soft_gate_summary TEXT,
+                checklist_json TEXT NOT NULL DEFAULT '[]',
+                measurement_json TEXT,
+                last_price TEXT NOT NULL,
+                last_checked_at TEXT,
+                current_return_pct TEXT,
+                peak_mfe_pct TEXT,
+                peak_mfe_at TEXT,
+                worst_mae_pct TEXT,
+                worst_mae_at TEXT,
+                retest_touched INTEGER NOT NULL DEFAULT 0,
+                breakout_touched INTEGER NOT NULL DEFAULT 0,
+                was_promoted_to_watchlist INTEGER NOT NULL DEFAULT 0,
+                resolved_at TEXT,
+                resolved_price TEXT,
+                resolved_return_pct TEXT,
+                resolution_reason TEXT,
+                source_scan_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_radar_auto_watchlist_status_pub
+                ON radar_auto_watchlist (status, published_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_radar_auto_watchlist_symbol
+                ON radar_auto_watchlist (symbol, published_at DESC);
+        """
+        with self._lock, self._get_connection() as conn:
+            conn.executescript(sql)
+            cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(radar_auto_watchlist)").fetchall()
+            }
+            if "soft_gate_summary" not in cols:
+                conn.execute("ALTER TABLE radar_auto_watchlist ADD COLUMN soft_gate_summary TEXT")
+            if "checklist_json" not in cols:
+                conn.execute(
+                    "ALTER TABLE radar_auto_watchlist ADD COLUMN checklist_json TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "measurement_json" not in cols:
+                conn.execute("ALTER TABLE radar_auto_watchlist ADD COLUMN measurement_json TEXT")
+            if "was_promoted_to_watchlist" not in cols:
+                conn.execute(
+                    "ALTER TABLE radar_auto_watchlist ADD COLUMN was_promoted_to_watchlist INTEGER NOT NULL DEFAULT 0"
+                )
+            conn.execute(
+                """
+                UPDATE radar_auto_watchlist
+                SET status = CASE
+                    WHEN radar_presence = 'ON_RADAR' THEN 'ON_RADAR'
+                    ELSE 'WATCHLIST'
+                END
+                WHERE status = 'ACTIVE'
+                """
+            )
+
+    @staticmethod
+    def _row_to_episode(row: sqlite3.Row) -> AutoWatchEpisode:
+        def _opt_dec(val: Any) -> Decimal | None:
+            return Decimal(str(val)) if val is not None and str(val) != "" else None
+
+        def _opt_dt(val: Any) -> datetime | None:
+            return datetime.fromisoformat(str(val)).astimezone(UTC) if val else None
+
+        raw_status = str(row["status"])
+        if raw_status == "ACTIVE":
+            status = (
+                AutoWatchStatus.ON_RADAR
+                if str(row["radar_presence"]) == RadarPresence.ON_RADAR.value
+                else AutoWatchStatus.WATCHLIST
+            )
+        else:
+            status = AutoWatchStatus(raw_status)
+
+        keys = set(row.keys())
+        checklist_raw = row["checklist_json"] if "checklist_json" in keys else "[]"
+        try:
+            parsed_cl = json.loads(checklist_raw or "[]")
+            checklist = tuple(parsed_cl) if isinstance(parsed_cl, list) else ()
+        except Exception:
+            checklist = ()
+
+        meas_raw = row["measurement_json"] if "measurement_json" in keys else None
+        if meas_raw:
+            try:
+                meas = json.loads(meas_raw)
+            except Exception:
+                meas = None
+        else:
+            meas = None
+
+        if isinstance(meas, dict) and meas.get("version") == MEASUREMENT_SCHEMA_VERSION:
+            has_obs = bool(meas.get("has_observations", False))
+            cov_complete = bool(meas.get("coverage_complete", False))
+            cov_gaps = int(meas.get("coverage_gaps", 0))
+            barrier_cert = bool(meas.get("barrier_order_certified", False))
+            endpoint_obs_at = _opt_dt(meas.get("endpoint_observed_at"))
+            last_obs_px = _opt_dec(meas.get("last_observed_price"))
+            meas_status = str(meas.get("measurement_status") or "pending")
+        else:
+            # Legacy row without verified measurement metadata
+            has_obs = False
+            cov_complete = False
+            cov_gaps = 0
+            barrier_cert = False
+            endpoint_obs_at = None
+            last_obs_px = None
+            meas_status = (
+                "legacy_unverified"
+                if status not in (AutoWatchStatus.ON_RADAR, AutoWatchStatus.WATCHLIST)
+                else "pending"
+            )
+
+        return AutoWatchEpisode(
+            episode_id=str(row["episode_id"]),
+            symbol=str(row["symbol"]),
+            direction=str(row["direction"]),
+            setup_label=str(row["setup_label"]),
+            execution_mode=str(row["execution_mode"]),
+            score=Decimal(str(row["score"])),
+            tick_size=Decimal(str(row["tick_size"])),
+            published_at=datetime.fromisoformat(str(row["published_at"])).astimezone(UTC),
+            expires_at=datetime.fromisoformat(str(row["expires_at"])).astimezone(UTC),
+            signal_price=Decimal(str(row["signal_price"])),
+            entry_price=Decimal(str(row["entry_price"])),
+            trigger_price=_opt_dec(row["trigger_price"]),
+            stop_price=Decimal(str(row["stop_price"])),
+            target_1=Decimal(str(row["target_1"])),
+            target_2=_opt_dec(row["target_2"]),
+            target_3=_opt_dec(row["target_3"]),
+            poc_price=_opt_dec(row["poc_price"]),
+            vah_price=_opt_dec(row["vah_price"]),
+            val_price=_opt_dec(row["val_price"]),
+            status=status,
+            radar_presence=RadarPresence(str(row["radar_presence"])),
+            radar_status_label=str(row["radar_status_label"]),
+            eviction_reason=row["eviction_reason"],
+            soft_gate_summary=row["soft_gate_summary"] if "soft_gate_summary" in keys else None,
+            checklist=checklist,
+            last_price=Decimal(str(row["last_price"])),
+            last_observed_price=last_obs_px,
+            last_checked_at=_opt_dt(row["last_checked_at"]),
+            current_return_pct=_opt_dec(row["current_return_pct"]),
+            peak_mfe_pct=_opt_dec(row["peak_mfe_pct"]),
+            peak_mfe_at=_opt_dt(row["peak_mfe_at"]),
+            worst_mae_pct=_opt_dec(row["worst_mae_pct"]),
+            worst_mae_at=_opt_dt(row["worst_mae_at"]),
+            retest_touched=bool(row["retest_touched"]),
+            breakout_touched=bool(row["breakout_touched"]),
+            was_promoted_to_watchlist=bool(
+                row["was_promoted_to_watchlist"] if "was_promoted_to_watchlist" in keys else 0
+            ),
+            has_observations=has_obs,
+            coverage_complete=cov_complete,
+            coverage_gaps=cov_gaps,
+            barrier_order_certified=barrier_cert,
+            endpoint_observed_at=endpoint_obs_at,
+            measurement_status=meas_status,
+            resolved_at=_opt_dt(row["resolved_at"]),
+            resolved_price=_opt_dec(row["resolved_price"]),
+            resolved_return_pct=_opt_dec(row["resolved_return_pct"]),
+            resolution_reason=row["resolution_reason"],
+            source_scan_id=row["source_scan_id"],
+        )
+
+    def _upsert_episode_locked(self, conn: sqlite3.Connection, ep: AutoWatchEpisode) -> None:
+        conn.execute(
+            """
+            INSERT INTO radar_auto_watchlist (
+                episode_id, symbol, direction, setup_label, execution_mode, score, tick_size,
+                published_at, expires_at, signal_price, entry_price, trigger_price, stop_price,
+                target_1, target_2, target_3, poc_price, vah_price, val_price,
+                status, radar_presence, radar_status_label, eviction_reason,
+                soft_gate_summary, checklist_json, measurement_json,
+                last_price, last_checked_at, current_return_pct,
+                peak_mfe_pct, peak_mfe_at, worst_mae_pct, worst_mae_at,
+                retest_touched, breakout_touched, was_promoted_to_watchlist,
+                resolved_at, resolved_price, resolved_return_pct, resolution_reason,
+                source_scan_id
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?,
+                ?
+            )
+            ON CONFLICT(episode_id) DO UPDATE SET
+                status = excluded.status,
+                radar_presence = excluded.radar_presence,
+                radar_status_label = excluded.radar_status_label,
+                eviction_reason = excluded.eviction_reason,
+                soft_gate_summary = excluded.soft_gate_summary,
+                checklist_json = excluded.checklist_json,
+                measurement_json = excluded.measurement_json,
+                last_price = excluded.last_price,
+                last_checked_at = excluded.last_checked_at,
+                current_return_pct = excluded.current_return_pct,
+                peak_mfe_pct = excluded.peak_mfe_pct,
+                peak_mfe_at = excluded.peak_mfe_at,
+                worst_mae_pct = excluded.worst_mae_pct,
+                worst_mae_at = excluded.worst_mae_at,
+                retest_touched = excluded.retest_touched,
+                breakout_touched = excluded.breakout_touched,
+                was_promoted_to_watchlist = excluded.was_promoted_to_watchlist,
+                resolved_at = excluded.resolved_at,
+                resolved_price = excluded.resolved_price,
+                resolved_return_pct = excluded.resolved_return_pct,
+                resolution_reason = excluded.resolution_reason
+            """,
+            (
+                ep.episode_id,
+                ep.symbol,
+                ep.direction,
+                ep.setup_label,
+                ep.execution_mode,
+                str(ep.score),
+                str(ep.tick_size),
+                ep.published_at.isoformat(),
+                ep.expires_at.isoformat(),
+                str(ep.signal_price),
+                str(ep.entry_price),
+                str(ep.trigger_price) if ep.trigger_price is not None else None,
+                str(ep.stop_price),
+                str(ep.target_1),
+                str(ep.target_2) if ep.target_2 is not None else None,
+                str(ep.target_3) if ep.target_3 is not None else None,
+                str(ep.poc_price) if ep.poc_price is not None else None,
+                str(ep.vah_price) if ep.vah_price is not None else None,
+                str(ep.val_price) if ep.val_price is not None else None,
+                ep.status.value,
+                ep.radar_presence.value,
+                ep.radar_status_label,
+                ep.eviction_reason,
+                ep.soft_gate_summary,
+                json.dumps(list(ep.checklist)),
+                json.dumps(ep.measurement_dict()),
+                str(ep.last_price),
+                ep.last_checked_at.isoformat() if ep.last_checked_at else None,
+                str(ep.current_return_pct) if ep.current_return_pct is not None else None,
+                str(ep.peak_mfe_pct) if ep.peak_mfe_pct is not None else None,
+                ep.peak_mfe_at.isoformat() if ep.peak_mfe_at else None,
+                str(ep.worst_mae_pct) if ep.worst_mae_pct is not None else None,
+                ep.worst_mae_at.isoformat() if ep.worst_mae_at else None,
+                int(ep.retest_touched),
+                int(ep.breakout_touched),
+                int(ep.was_promoted_to_watchlist),
+                ep.resolved_at.isoformat() if ep.resolved_at else None,
+                str(ep.resolved_price) if ep.resolved_price is not None else None,
+                str(ep.resolved_return_pct) if ep.resolved_return_pct is not None else None,
+                ep.resolution_reason,
+                ep.source_scan_id,
+            ),
+        )
+
+    def enroll_candidate(
+        self,
+        candidate: Mapping[str, Any],
+        *,
+        published_at: datetime | None = None,
+        scan_id: str | None = None,
+    ) -> AutoWatchEpisode | None:
+        """Idempotently register a verified 5/5 Radar episode in ON_RADAR state (not in Watchlist)."""
+        ep = build_auto_watch_episode(
+            candidate,
+            published_at=published_at,
+            scan_id=scan_id,
+            window_hours=self._window_hours,
+        )
+        if ep is None:
+            return None
+        with self._lock, self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM radar_auto_watchlist WHERE episode_id = ?",
+                (ep.episode_id,),
+            ).fetchone()
+            if row is not None:
+                return self._row_to_episode(row)
+            dup = conn.execute(
+                """
+                SELECT * FROM radar_auto_watchlist
+                WHERE symbol = ? AND direction = ? AND setup_label = ?
+                  AND status IN ('ON_RADAR', 'WATCHLIST')
+                ORDER BY published_at DESC LIMIT 1
+                """,
+                (ep.symbol, ep.direction, ep.setup_label),
+            ).fetchone()
+            if dup is not None:
+                existing = self._row_to_episode(dup)
+                if abs((ep.published_at - existing.published_at).total_seconds()) < 6 * 3600:
+                    return existing
+            self._upsert_episode_locked(conn, ep)
+            return ep
+
+    def _apply_eviction_to_episode(
+        self,
+        ep: AutoWatchEpisode,
+        *,
+        eviction_event: Mapping[str, Any] | None,
+        ref_now: datetime,
+    ) -> AutoWatchEpisode:
+        next_status, reason, soft_summary, updated_cl = classify_radar_eviction(
+            ep, event=eviction_event, now=ref_now
+        )
+        if next_status is AutoWatchStatus.WATCHLIST:
+            return replace(
+                ep,
+                status=AutoWatchStatus.WATCHLIST,
+                radar_presence=RadarPresence.EVICTED_FROM_RADAR,
+                radar_status_label="4/5 WATCHLIST",
+                eviction_reason=reason,
+                soft_gate_summary=soft_summary,
+                checklist=updated_cl,
+                was_promoted_to_watchlist=True,
+                last_checked_at=ref_now,
+            )
+
+        raw_cand = eviction_event.get("candidate") if isinstance(eviction_event, Mapping) else None
+        cand: Mapping[str, Any] = raw_cand if isinstance(raw_cand, Mapping) else {}
+        raw_px = cand.get("current_price")
+        resolved_px: Decimal | None = ep.last_observed_price
+        if next_status is AutoWatchStatus.STOP_BREACHED:
+            resolved_px = ep.stop_price
+        elif next_status is AutoWatchStatus.TARGET_REACHED:
+            resolved_px = ep.target_1
+        elif raw_px is not None:
+            with contextlib.suppress(Exception):
+                d = Decimal(str(raw_px))
+                if d.is_finite() and d > 0:
+                    resolved_px = d
+
+        ret = (
+            directional_return_pct(
+                direction=ep.direction,
+                reference_price=ep.signal_price,
+                price=resolved_px,
+            )
+            if resolved_px is not None and resolved_px > 0
+            else None
+        )
+        has_obs = ep.has_observations or (resolved_px is not None and resolved_px > 0)
+        peak_mfe = (
+            (ret if ep.peak_mfe_pct is None else max(ep.peak_mfe_pct, ret))
+            if ret is not None
+            else ep.peak_mfe_pct
+        )
+        worst_mae = (
+            (ret if ep.worst_mae_pct is None else min(ep.worst_mae_pct, ret))
+            if ret is not None
+            else ep.worst_mae_pct
+        )
+        is_barrier = next_status in (AutoWatchStatus.STOP_BREACHED, AutoWatchStatus.TARGET_REACHED)
+        return replace(
+            ep,
+            status=next_status,
+            radar_presence=RadarPresence.EVICTED_FROM_RADAR,
+            radar_status_label=next_status.value.replace("_", " "),
+            eviction_reason=reason,
+            soft_gate_summary=None,
+            checklist=updated_cl,
+            last_price=resolved_px if resolved_px is not None else ep.last_price,
+            last_observed_price=resolved_px,
+            last_checked_at=ref_now,
+            current_return_pct=ret,
+            peak_mfe_pct=peak_mfe,
+            worst_mae_pct=worst_mae,
+            has_observations=has_obs,
+            barrier_order_certified=ep.barrier_order_certified if is_barrier else False,
+            endpoint_observed_at=ref_now if resolved_px is not None else ep.endpoint_observed_at,
+            measurement_status="measured" if (not is_barrier and ret is not None) else ("measured" if ep.barrier_order_certified else "eviction_recorded"),
+            resolved_at=ref_now,
+            resolved_price=resolved_px,
+            resolved_return_pct=ret,
+            resolution_reason=reason,
+        )
+
+    def sync_from_scan(
+        self,
+        *,
+        published_opportunities: Sequence[Mapping[str, Any]],
+        radar_events: Sequence[Mapping[str, Any]],
+        now: datetime | None = None,
+        scan_id: str | None = None,
+    ) -> int:
+        """Maintain strict disjointness between live 5/5 Radar and 48h Potential Watchlist."""
+        ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+        enrolled_count = 0
+
+        active_radar_by_symbol: dict[str, Mapping[str, Any]] = {}
+        for opp in published_opportunities:
+            sym = str(opp.get("symbol", "")).upper().strip()
+            if sym:
+                active_radar_by_symbol[sym] = opp
+            if self.enroll_candidate(opp, published_at=ref_now, scan_id=scan_id) is not None:
+                enrolled_count += 1
+
+        evictions_by_symbol: dict[str, Mapping[str, Any]] = {}
+        for ev in radar_events:
+            if isinstance(ev, Mapping) and ev.get("retained") is False:
+                sym = str(ev.get("symbol", "")).upper().strip()
+                if sym:
+                    evictions_by_symbol[sym] = ev
+
+        with self._lock, self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM radar_auto_watchlist WHERE status IN ('ON_RADAR', 'WATCHLIST')"
+            ).fetchall()
+            for row in rows:
+                ep = self._row_to_episode(row)
+                live_opp = active_radar_by_symbol.get(ep.symbol)
+                if live_opp is not None:
+                    raw_cl = live_opp.get("checklist")
+                    cl = (
+                        tuple(
+                            {
+                                "title": str(i.get("title", "")),
+                                "passed": bool(i.get("passed") is True),
+                                "status": str(
+                                    i.get("status")
+                                    or ("passed" if i.get("passed") is True else "failed")
+                                ),
+                                "detail": str(i.get("detail", "")),
+                            }
+                            for i in raw_cl
+                            if isinstance(i, Mapping)
+                        )
+                        if isinstance(raw_cl, Sequence) and not isinstance(raw_cl, (str, bytes))
+                        else ep.checklist
+                    )
+                    updated = replace(
+                        ep,
+                        status=AutoWatchStatus.ON_RADAR,
+                        radar_presence=RadarPresence.ON_RADAR,
+                        radar_status_label=str(
+                            live_opp.get("radar_status_label") or ep.radar_status_label
+                        ),
+                        eviction_reason=None,
+                        soft_gate_summary=None,
+                        checklist=cl or ep.checklist,
+                        last_checked_at=ref_now,
+                    )
+                    if updated != ep:
+                        self._upsert_episode_locked(conn, updated)
+                elif ep.status is AutoWatchStatus.ON_RADAR:
+                    ev_obj = evictions_by_symbol.get(ep.symbol)
+                    updated = self._apply_eviction_to_episode(
+                        ep, eviction_event=ev_obj, ref_now=ref_now
+                    )
+                    self._upsert_episode_locked(conn, updated)
+        return enrolled_count
+
+    def backfill_from_radar_events_dir(
+        self,
+        events_dir: Path | str = Path("data/radar_events"),
+        *,
+        lookback_days: int = 14,
+        live_radar_symbols: Sequence[str] = (),
+        now: datetime | None = None,
+    ) -> int:
+        """Chronologically replay recent radar_events JSON files into ON_RADAR / WATCHLIST / RESOLVED."""
+        directory = Path(events_dir)
+        if not directory.is_dir():
+            return 0
+        ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+        cutoff = ref_now - timedelta(days=max(1, lookback_days))
+        indexed: list[tuple[datetime, Path]] = []
+        for path in directory.glob("*.json"):
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                mtime = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+                if mtime < cutoff - timedelta(days=1):
+                    continue
+                doc = json.loads(path.read_text(encoding="utf-8"))
+                if doc.get("schema") != "atlas-radar-events-v2":
+                    continue
+                at_raw = doc.get("at")
+                at_dt = (
+                    datetime.fromisoformat(at_raw).astimezone(UTC)
+                    if isinstance(at_raw, str)
+                    else mtime
+                )
+                if at_dt >= cutoff:
+                    indexed.append((at_dt, path))
+            except Exception:
+                continue
+
+        enrolled = 0
+        live_set = {s.upper().strip() for s in live_radar_symbols if s}
+        for file_at, path in sorted(indexed, key=lambda item: item[0]):
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+                scan_id = str(doc.get("scan_id") or "") or None
+                events = doc.get("events") or []
+                for ev in events:
+                    if not isinstance(ev, Mapping):
+                        continue
+                    if ev.get("state") != "FRESH_COIL" or ev.get("retained") is not True:
+                        continue
+                    cand = ev.get("candidate")
+                    if not isinstance(cand, Mapping):
+                        continue
+                    ev_at_raw = ev.get("at") or doc.get("at")
+                    ev_at = (
+                        datetime.fromisoformat(ev_at_raw).astimezone(UTC)
+                        if isinstance(ev_at_raw, str)
+                        else file_at
+                    )
+                    if self.enroll_candidate(cand, published_at=ev_at, scan_id=scan_id) is not None:
+                        enrolled += 1
+
+                evictions: dict[str, Mapping[str, Any]] = {}
+                for ev in events:
+                    if isinstance(ev, Mapping) and ev.get("retained") is False:
+                        sym = str(ev.get("symbol", "")).upper().strip()
+                        if sym:
+                            evictions[sym] = ev
+                if evictions:
+                    with self._lock, self._get_connection() as conn:
+                        rows = conn.execute(
+                            "SELECT * FROM radar_auto_watchlist WHERE status = 'ON_RADAR'"
+                        ).fetchall()
+                        for row in rows:
+                            ep = self._row_to_episode(row)
+                            ev_obj = evictions.get(ep.symbol)
+                            if ev_obj is None or ep.published_at > file_at + timedelta(seconds=60):
+                                continue
+                            updated = self._apply_eviction_to_episode(
+                                ep, eviction_event=ev_obj, ref_now=file_at
+                            )
+                            self._upsert_episode_locked(conn, updated)
+            except Exception:
+                continue
+
+        if live_set:
+            with self._lock, self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM radar_auto_watchlist WHERE status = 'WATCHLIST'"
+                ).fetchall()
+                for row in rows:
+                    ep = self._row_to_episode(row)
+                    if ep.symbol in live_set:
+                        self._upsert_episode_locked(
+                            conn,
+                            replace(
+                                ep,
+                                status=AutoWatchStatus.ON_RADAR,
+                                radar_presence=RadarPresence.ON_RADAR,
+                                eviction_reason=None,
+                                soft_gate_summary=None,
+                            ),
+                        )
+        return enrolled
+
+    def refresh_due(
+        self,
+        *,
+        now: datetime | None = None,
+        cooldown_seconds: float = 30.0,
+    ) -> bool:
+        """Return True when the 30s singleflight refresh cooldown has elapsed."""
+        if self._last_refresh_at is None:
+            return True
+        ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+        return (ref_now - self._last_refresh_at).total_seconds() >= cooldown_seconds
+
+    def list_episodes(
+        self,
+        *,
+        days: int = 14,
+        now: datetime | None = None,
+    ) -> list[AutoWatchEpisode]:
+        ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+        cutoff = (ref_now - timedelta(days=max(1, days))).isoformat()
+        with self._lock, self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM radar_auto_watchlist
+                WHERE status IN ('ON_RADAR', 'WATCHLIST') OR published_at >= ?
+                ORDER BY published_at DESC
+                """,
+                (cutoff,),
+            ).fetchall()
+        return [self._row_to_episode(r) for r in rows]
+
+    async def refresh_and_evaluate(
+        self,
+        market_data: MarketDataPort,
+        instruments: Sequence[Instrument],
+        *,
+        force_refresh: bool = False,
+        internal_scheduler: bool = False,
+        now: datetime | None = None,
+    ) -> list[AutoWatchEpisode]:
+        """Evaluate all ON_RADAR and WATCHLIST episodes against live Binance quotes & 1h klines.
+
+        Respects the 30s singleflight cooldown for external/operator force refreshes;
+        only `internal_scheduler=True` (post-scan hook) may bypass cooldown.
+        """
+        ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+        if not internal_scheduler and not self.refresh_due(now=ref_now):
+            return self.list_episodes(now=ref_now)
+
+        async with self._refresh_lock:
+            ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+            if not internal_scheduler and not self.refresh_due(now=ref_now):
+                return self.list_episodes(now=ref_now)
+
+            all_eps = self.list_episodes(now=ref_now)
+            live_eps = [e for e in all_eps if e.is_live_tracked]
+            if not live_eps:
+                self._last_refresh_at = ref_now
+                return all_eps
+
+            inst_map = {inst.id.symbol: inst for inst in instruments}
+            active_symbols = sorted({e.symbol for e in live_eps})
+
+            # 1. Fetch fresh live bid/ask midpoints with explicit observed timestamps
+            live_quotes: dict[str, tuple[Decimal, datetime]] = {}
+            target_insts = [inst_map[s] for s in active_symbols if s in inst_map]
+            if target_insts:
+                with contextlib.suppress(Exception):
+                    quotes = await asyncio.wait_for(market_data.quotes(target_insts), timeout=6.0)
+                    for q in quotes:
+                        if q.is_valid_book and q.is_fresh_at(ref_now, max_age_seconds=300.0):
+                            obs_dt = q.exchange_observed_at or q.observed_at
+                            live_quotes[q.instrument_id.symbol] = (q.mid, obs_dt)
+
+            # 2. Fetch 1h candles covering each symbol's earliest active published_at
+            earliest_by_symbol: dict[str, datetime] = {}
+            for ep in live_eps:
+                prev = earliest_by_symbol.get(ep.symbol)
+                if prev is None or ep.published_at < prev:
+                    earliest_by_symbol[ep.symbol] = ep.published_at
+
+            sem = asyncio.Semaphore(8)
+            candles_by_symbol: dict[str, Sequence[Candle]] = {}
+
+            async def _fetch_candles(sym: str) -> None:
+                inst = inst_map.get(sym)
+                if inst is None:
+                    return
+                earliest_pub = earliest_by_symbol.get(sym, ref_now - timedelta(hours=72))
+                age_hours = max(0, int((ref_now - earliest_pub).total_seconds() // 3600))
+                needed_bars = min(500, max(72, age_hours + 6))
+                async with sem:
+                    with contextlib.suppress(Exception):
+                        bars = await asyncio.wait_for(
+                            market_data.candles(inst, "1h", needed_bars),
+                            timeout=6.0,
+                        )
+                        candles_by_symbol[sym] = bars
+
+            await asyncio.gather(*(_fetch_candles(s) for s in active_symbols))
+
+            # 3. Evaluate & persist updated/resolved episodes atomically
+            with self._lock, self._get_connection() as conn:
+                for ep in live_eps:
+                    q_pair = live_quotes.get(ep.symbol)
+                    updated = evaluate_auto_watch_episode(
+                        ep,
+                        candles=candles_by_symbol.get(ep.symbol, ()),
+                        live_price=q_pair[0] if q_pair else None,
+                        live_observed_at=q_pair[1] if q_pair else None,
+                        now=ref_now,
+                    )
+                    self._upsert_episode_locked(conn, updated)
+
+            self._last_refresh_at = ref_now
+            return self.list_episodes(now=ref_now)
+
+    def build_response(
+        self,
+        *,
+        days: int = 14,
+        live_radar_symbols: Sequence[str] = (),
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Serialize disjoint 48h Potential Watchlist, On-Radar cohort, Resolved Outcomes, and Summary."""
+        ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+        episodes = self.list_episodes(days=days, now=ref_now)
+        live_set = {s.upper().strip() for s in live_radar_symbols if s}
+
+        # Strict disjointness guard: NEVER expose a currently live 5/5 Radar symbol inside `watchlist`
+        watchlist = [
+            e
+            for e in episodes
+            if e.status is AutoWatchStatus.WATCHLIST and e.symbol not in live_set
+        ]
+        on_radar = [
+            e
+            for e in episodes
+            if e.status is AutoWatchStatus.ON_RADAR or (e.is_live_tracked and e.symbol in live_set)
+        ]
+        resolved = [e for e in episodes if e.is_resolved]
+        resolved.sort(key=lambda e: e.resolved_at or e.published_at, reverse=True)
+        summary = compute_performance_summary(episodes)
+        watchlist_dicts = [e.as_dict(now=ref_now) for e in watchlist]
+        return {
+            "window_hours": self._window_hours,
+            "lookback_days": days,
+            "generated_at": ref_now.isoformat(),
+            "watchlist": watchlist_dicts,
+            "active": watchlist_dicts,
+            "on_radar": [e.as_dict(now=ref_now) for e in on_radar],
+            "resolved": [e.as_dict(now=ref_now) for e in resolved],
+            "summary": summary["overall"],
+            "on_radar_cohort": summary["on_radar_cohort"],
+            "evicted_from_radar_cohort": summary["evicted_from_radar_cohort"],
+            "daily_breakdown": summary["daily_breakdown"],
+            "archetype_breakdown": summary["archetype_breakdown"],
+            "semantics": summary["semantics"],
+        }

@@ -10,6 +10,7 @@ import httpx
 
 from algotrader.application.recovery_episodes import RecoveryEpisodeService
 from algotrader.application.recovery_screener import RecoveryScreener
+from algotrader.application.scan_recording import supported_screening_configuration
 from algotrader.application.scan_replay import ReplayMarket
 from algotrader.config import Settings
 from algotrader.domain.crypto_screener_models import SetupLabel
@@ -55,7 +56,7 @@ async def run_recovery(record, supplemental, *, decision_at, rolling=False):
     market = ReplayMarket(tape)
     journal = ScanDecisionJournal()
     config = record.identity["configuration"]
-    if set(config) != {"excluded_base_assets", "support_resistance_lookback_bars"}:
+    if not supported_screening_configuration(config):
         raise ReplayUnavailable("unsupported_screener_configuration")
     if rolling:
         from algotrader.application.activity_recovery import ActivityRecoveryScreener
@@ -116,7 +117,7 @@ def validate_arm(definition):
             raise ValueError("invalid rolling benchmark")
         if arm["rolling"]["macro"].observed_at > definition["issued_at"]:
             raise ValueError("rolling macro context is from after issuance")
-        if set(arm["rolling"]["configuration"]) != {"excluded_base_assets", "support_resistance_lookback_bars"}:
+        if not supported_screening_configuration(arm["rolling"]["configuration"]):
             raise ValueError("unsupported rolling configuration")
     symbols = {i.id for i in definition["cohort"]}
     seen = set()

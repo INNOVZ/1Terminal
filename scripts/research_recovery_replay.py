@@ -15,7 +15,10 @@ from pathlib import Path
 
 from algotrader.application.crypto_screener import CryptoOpportunityScreener
 from algotrader.application.recovery_screener import RecoveryScreener
-from algotrader.application.scan_recording import screening_identity
+from algotrader.application.scan_recording import (
+    screening_identity,
+    supported_screening_configuration,
+)
 from algotrader.application.scan_replay import ReplayMarket, ReplayMismatch
 from algotrader.config import Settings
 from algotrader.domain.models import Direction
@@ -49,7 +52,7 @@ async def run_arm(bundle, recovery):
     tape = CounterfactualTape((*record.inputs, *bundle["supplemental"]))
     market = ReplayMarket(tape)
     journal = ScanDecisionJournal()
-    if set(record.identity["configuration"]) != {"excluded_base_assets", "support_resistance_lookback_bars"}:
+    if not supported_screening_configuration(record.identity["configuration"]):
         raise ReplayUnavailable("unsupported_screener_configuration")
     settings = Settings.model_construct(**record.identity["configuration"])
     arguments = dict(record.request)

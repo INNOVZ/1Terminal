@@ -117,6 +117,13 @@ async def test_oi_led_candidate_can_enter_stage2_without_stage1_setup(settings: 
         "stage1_survivors": 0,
         "stage2_shortlist": 0,
         "stage2_probes": 1,
+        "stage2_budget": 60,
+        "stage2_probe_limit": 15,
+        "stage2_rollover_slots": 0,
+        "stage2_rollover_admitted": 0,
+        "stage2_unused_budget": 59,
+        "stage2_derivatives_attempted": 1,
+        "stage2_derivatives_unavailable": 0,
         "returned": 1,
     }
 

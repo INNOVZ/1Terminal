@@ -1,8 +1,10 @@
 import asyncio
 import contextlib
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -12,7 +14,7 @@ from algotrader.api import portal
 from algotrader.api.portal_app import create_app
 from algotrader.application.watchlist_service import WatchlistService
 from algotrader.config import Settings
-from algotrader.domain.models import Candle, Venue
+from algotrader.domain.models import Candle, Quote, Venue
 from algotrader.domain.watchlist_models import WatchlistItem, WatchlistPriority, WyckoffStage
 from tests.conftest import make_instrument
 
@@ -39,19 +41,51 @@ def test_failed_watchlist_open_preserves_database_sidecars(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_stateless_batch_watchlist_audit_evaluates_per_user_levels_independently(monkeypatch):
-    """Two users watching the same symbol with different invalidation/target levels receive distinct audits."""
+    """W1: Verified exchange data evaluates per-user levels independently; missing data returns DATA_UNAVAILABLE
+    and never poisons the shared cache with a user's reference price."""
+    now = datetime.now(UTC)
+    inst_comp = make_instrument(symbol="COMPUSDT", venue=Venue.BINANCE_USDM)
+    inst_sol = make_instrument(symbol="SOLUSDT", venue=Venue.BINANCE_USDM)
+    comp_candle = Candle(
+        opened_at=now - timedelta(hours=1),
+        closed_at=now,
+        open=Decimal("24.00"),
+        high=Decimal("24.50"),
+        low=Decimal("23.80"),
+        close=Decimal("24.19"),
+        volume=Decimal("1000"),
+        closed=True,
+    )
+
+    class FakeFutures:
+        _client = SimpleNamespace(request=AsyncMock(return_value=[{"buySellRatio": "1.05", "timestamp": int(now.timestamp() * 1000)}]))
+
+        async def quotes(self, instruments):
+            return [Quote(inst_comp.id, Decimal("24.18"), Decimal("24.20"), Decimal("24.19"), Decimal("100000"), now)]
+
+        async def instruments(self):
+            return [inst_comp, inst_sol]
+
+        async def candles(self, inst, interval: str, limit: int):
+            if inst.id.symbol == "COMPUSDT":
+                hours = 1 if interval == "1h" else 4
+                return [replace(comp_candle, opened_at=now - timedelta(hours=hours * (limit - i)),
+                                closed_at=now - timedelta(hours=hours * (limit - i - 1))) for i in range(limit)]
+            raise RuntimeError("SOL market data unavailable")
+
     runtime = MagicMock()
     runtime.settings = Settings(_env_file=None, screener_cron_enabled=False)
-    runtime.futures_market = AsyncMock()
-    runtime.futures_market.instruments.return_value = []
+    runtime.futures_market = FakeFutures()
     monkeypatch.setattr(portal, "get_portal_runtime", AsyncMock(return_value=runtime))
-    monkeypatch.setattr(portal, "_cached_instruments", [])
+    monkeypatch.setattr(portal, "_cached_instruments", [inst_comp, inst_sol])
+    portal._watchlist_service._telemetry_cache.clear()
+    portal._watchlist_service._price_map_cache.clear()
 
     app = create_app(runtime.settings)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://localhost"
     ) as client:
-        # User A has target_1 below current price (24.19 fallback for COMPUSDT) -> TARGET_REACHED
+        # User A has target_1 below verified live COMP price (24.19) -> TARGET_REACHED
         res_a = await client.post(
             "/api/watchlist/audit",
             json={
@@ -76,7 +110,7 @@ async def test_stateless_batch_watchlist_audit_evaluates_per_user_levels_indepen
                 "refresh": True,
             },
         )
-        # User B has invalidation_price above live price (25.0 >= 24.19) -> STOP_BREACHED
+        # User B has invalidation_price above verified live COMP price (25.0 >= 24.19) -> STOP_BREACHED
         res_b = await client.post(
             "/api/watchlist/audit",
             json={
@@ -101,7 +135,17 @@ async def test_stateless_batch_watchlist_audit_evaluates_per_user_levels_indepen
                 "refresh": True,
             },
         )
-        # Malformed or abusive payloads (e.g. path traversal in symbol, negative prices, oversized batch) are rejected (422)
+        # W1 regression: User A sends SOLUSDT with reference price 200 while market fails ->
+        # must return DATA_UNAVAILABLE (not 200) and must NOT poison User B (reference price 100)
+        sol_a = await client.post(
+            "/api/watchlist/audit",
+            json={"items": [{"symbol": "SOLUSDT", "current_price": 200.0, "trigger_price": 210.0, "support_price": 190.0, "invalidation_price": 180.0, "target_1": 220.0, "target_2": 240.0}]},
+        )
+        sol_b = await client.post(
+            "/api/watchlist/audit",
+            json={"items": [{"symbol": "SOLUSDT", "current_price": 100.0, "trigger_price": 110.0, "support_price": 90.0, "invalidation_price": 80.0, "target_1": 120.0, "target_2": 140.0}]},
+        )
+        # Malformed or abusive payloads are rejected (422)
         bad_symbol = await client.post(
             "/api/watchlist/audit",
             json={"items": [{"symbol": "../etc/passwd", "current_price": 1.0}]},
@@ -117,13 +161,37 @@ async def test_stateless_batch_watchlist_audit_evaluates_per_user_levels_indepen
 
     assert res_a.status_code == 200
     assert res_b.status_code == 200
-    audit_a = res_a.json()["items"][0]["audit"]
-    audit_b = res_b.json()["items"][0]["audit"]
-    assert audit_a["status"] == "TARGET_REACHED"
-    assert audit_b["status"] == "STOP_BREACHED"
+    assert res_a.json()["items"][0]["audit"]["status"] == "TARGET_REACHED"
+    assert res_b.json()["items"][0]["audit"]["status"] == "STOP_BREACHED"
+
+    # W1 verification: no synthetic fallback, no cross-user reference price poisoning
+    assert sol_a.status_code == 200 and sol_b.status_code == 200
+    assert sol_a.json()["items"][0]["audit"]["status"] == "DATA_UNAVAILABLE"
+    assert sol_a.json()["items"][0]["audit"]["live_price"] is None
+    assert sol_a.json()["items"][0]["audit"]["audited_at"] is None
+    assert sol_b.json()["items"][0]["audit"]["status"] == "DATA_UNAVAILABLE"
+    assert sol_b.json()["items"][0]["audit"]["live_price"] is None
+    assert sol_b.json()["items"][0]["current_price"] == 100.0
+    assert "SOLUSDT" not in portal._watchlist_service._telemetry_cache
+
     assert bad_symbol.status_code == 422
     assert bad_price.status_code == 422
     assert oversized_batch.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_w4_unauthenticated_forced_refresh_blocked_on_watchlist_endpoints(monkeypatch):
+    """W4: Anonymous forced refresh=true on /api/watchlist/auto, /api/watchlist, /api/watchlist/audit returns 401."""
+    settings = Settings(_env_file=None, operator_token="o" * 40, screener_cron_enabled=False)
+    monkeypatch.setattr(portal, "load_settings", lambda: settings)
+    app = create_app(settings)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        r_auto = await client.get("/api/watchlist/auto?refresh=true")
+        r_list = await client.get("/api/watchlist?refresh=true")
+        r_audit = await client.get("/api/watchlist/audit?refresh=true")
+    assert (r_auto.status_code, r_list.status_code, r_audit.status_code) == (401, 401, 401)
 
 
 @pytest.mark.asyncio
@@ -146,6 +214,9 @@ async def test_singleflight_coalescing_and_unlisted_symbol_cache_poisoning_preve
     call_count = 0
 
     class SlowMarket:
+        async def quotes(self, instruments):
+            return [Quote(inst.id, Decimal("184.9"), Decimal("185.1"), Decimal("185"), Decimal("100000"), now)]
+
         async def candles(self, instrument, interval: str, limit: int):
             nonlocal call_count
             if interval == "1h":

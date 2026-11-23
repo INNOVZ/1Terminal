@@ -66,3 +66,8 @@ export function bookQuote(bid: unknown, ask: unknown, time: unknown, now: number
     || typeof time !== "number" || !Number.isFinite(time) || now - time < -5000 || now - time > 60000) return null;
   return { price: (b + a) / 2, observed_at: new Date(time).toISOString(), source: "binance_usdm_bid_ask_midpoint" };
 }
+
+/** Missing exchange time is unknown; browser receipt time cannot manufacture freshness. */
+export function bookEventQuote(event: { b?: unknown; a?: unknown; E?: unknown; T?: unknown }, now: number): RadarQuote | null {
+  return bookQuote(event.b, event.a, event.E ?? event.T, now);
+}

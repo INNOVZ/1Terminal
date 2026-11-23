@@ -167,7 +167,7 @@ test("public chart/macro routes use the shared transport boundary without a rewr
   process.env.NODE_ENV = "production";
   process.env.ATLAS_REQUIRE_HTTPS_BACKEND = "true";
   try {
-    for (const routePath of [["chart", "TESTUSDT"], ["chart", "币安人生USDT"], ["macro"], ["screener", "cron", "status"]]) {
+    for (const routePath of [["chart", "TESTUSDT"], ["chart", "币安人生USDT"], ["macro"], ["watchlist", "auto"], ["screener", "cron", "status"]]) {
       const response = await publicRoute.GET(new NextRequest(`${APP_ORIGIN}/api/${routePath.join("/")}`), {
         params: Promise.resolve({ path: routePath }),
       });

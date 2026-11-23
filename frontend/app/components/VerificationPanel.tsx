@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect, memo } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef, memo } from "react";
 import {
   Check,
   X,
@@ -14,6 +14,7 @@ import RadarLifecycleCard from "./RadarLifecycleCard";
 import type { RadarQuote } from "../lib/radarInsights";
 import PlanDiagnosticsPanel from "./PlanDiagnosticsPanel";
 import { getSupabaseClient } from "../lib/supabaseClient";
+import { AccountScope } from "../lib/accountScope";
 
 export interface AdaptedLevels {
   pocPrice?: number;
@@ -138,19 +139,29 @@ function VerificationPanel({
   const [added, setAdded] = useState(false);
   const [adding, setAdding] = useState(false);
   const [alreadySaved, setAlreadySaved] = useState(false);
+  const accountScope = useRef(new AccountScope());
 
   // Check if the current opportunity is already in the signed-in user's personal watchlist
+  // and immediately isolate state across sign-out / account switches.
   useEffect(() => {
     let active = true;
-    if (!opportunity?.symbol) return;
+    const supabase = getSupabaseClient();
+    const targetSymbol = opportunity?.symbol?.toUpperCase() ?? null;
 
-    const checkSaved = async () => {
+    const checkSaved = async (explicitUserId?: string | null) => {
       try {
-        const supabase = getSupabaseClient();
-        const { data: sessionData } = await supabase.auth.getSession();
-        const uid = sessionData.session?.user?.id;
-        if (!uid || !active) {
-          if (active) setAlreadySaved(false);
+        let uid = explicitUserId;
+        if (uid === undefined) {
+          const { data: sessionData } = await supabase.auth.getSession();
+          uid = sessionData.session?.user?.id ?? null;
+          if (!active) return;
+          accountScope.current.setIdentity(uid);
+        }
+        const ticket = accountScope.current.capture();
+        if (!uid || !targetSymbol || ticket.userId !== uid) {
+          if (active && accountScope.current.isCurrent(ticket)) {
+            setAlreadySaved(false);
+          }
           return;
         }
 
@@ -158,10 +169,10 @@ function VerificationPanel({
           .from("user_watchlists")
           .select("symbol")
           .eq("user_id", uid)
-          .eq("symbol", opportunity.symbol.toUpperCase())
+          .eq("symbol", targetSymbol)
           .maybeSingle();
 
-        if (active) {
+        if (active && accountScope.current.isCurrent(ticket)) {
           setAlreadySaved(Boolean(data?.symbol));
         }
       } catch {
@@ -172,9 +183,20 @@ function VerificationPanel({
     void checkSaved();
     const handleUpdated = () => void checkSaved();
     window.addEventListener("atlas:watchlist-updated", handleUpdated);
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+      const nextUid = session?.user?.id ?? null;
+      if (accountScope.current.setIdentity(nextUid)) {
+        setAlreadySaved(false);
+        setAdded(false);
+        setAdding(false);
+      }
+      void checkSaved(nextUid);
+    });
     return () => {
       active = false;
       window.removeEventListener("atlas:watchlist-updated", handleUpdated);
+      authListener.subscription.unsubscribe();
     };
   }, [opportunity?.symbol]);
 
@@ -260,14 +282,18 @@ function VerificationPanel({
   const handleAddToWatchlist = useCallback(async () => {
     if (!opportunity || !bracket || adding) return;
     setAdding(true);
+    let ticket = accountScope.current.capture();
     try {
       const supabase = getSupabaseClient();
       const { data: sessionData } = await supabase.auth.getSession();
-      const uid = sessionData.session?.user?.id;
+      const uid = sessionData.session?.user?.id ?? null;
       if (!uid) {
         window.dispatchEvent(new CustomEvent("atlas:supabase-auth-required"));
         return;
       }
+      accountScope.current.setIdentity(uid);
+      ticket = accountScope.current.capture();
+      if (ticket.userId !== uid) return;
 
       const nowIso = new Date().toISOString();
       const triggerNum = Number(
@@ -319,19 +345,26 @@ function VerificationPanel({
         .from("user_watchlists")
         .upsert(rowPayload, { onConflict: "user_id,symbol" });
 
+      if (!accountScope.current.isCurrent(ticket)) return;
       if (!error) {
         setAdded(true);
         setAlreadySaved(true);
         window.dispatchEvent(new CustomEvent("atlas:watchlist-updated"));
         if (onWatchlistAdded) onWatchlistAdded();
-        setTimeout(() => setAdded(false), 3000);
+        setTimeout(() => {
+          if (accountScope.current.isCurrent(ticket)) {
+            setAdded(false);
+          }
+        }, 3000);
       } else {
         console.error("Failed to save to personal Supabase watchlist:", error.message);
       }
     } catch (e) {
       console.error("Failed to add to watchlist:", e);
     } finally {
-      setAdding(false);
+      if (accountScope.current.isCurrent(ticket)) {
+        setAdding(false);
+      }
     }
   }, [
     opportunity,

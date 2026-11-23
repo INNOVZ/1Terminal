@@ -29,6 +29,7 @@ class AuditStatus(StrEnum):
     SELLER_INFLUX = "SELLER_INFLUX"
     TARGET_REACHED = "TARGET_REACHED"
     STOP_BREACHED = "STOP_BREACHED"
+    DATA_UNAVAILABLE = "DATA_UNAVAILABLE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,34 +39,36 @@ class WatchlistLiveAudit:
     symbol: str
     status: AuditStatus
     status_title: str
-    live_price: Decimal
-    price_change_pct: Decimal
-    current_rsi_1h: Decimal
-    current_rsi_4h: Decimal
+    live_price: Decimal | None
+    price_change_pct: Decimal | None
+    current_rsi_1h: Decimal | None
+    current_rsi_4h: Decimal | None
     taker_ratio: Decimal | None
     vol_contraction_ratio: Decimal | None
     gate_tripped: str
     live_reading: str
     what_happened: str
     institutional_logic: str
-    audited_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    audited_at: datetime | None = field(default_factory=lambda: datetime.now(UTC))
+    telemetry_available: bool = True
 
     def as_dict(self) -> dict[str, object]:
         return {
             "symbol": self.symbol,
             "status": self.status.value,
             "status_title": self.status_title,
-            "live_price": float(self.live_price),
-            "price_change_pct": float(self.price_change_pct),
-            "current_rsi_1h": float(self.current_rsi_1h),
-            "current_rsi_4h": float(self.current_rsi_4h),
+            "live_price": float(self.live_price) if self.live_price is not None else None,
+            "price_change_pct": float(self.price_change_pct) if self.price_change_pct is not None else None,
+            "current_rsi_1h": float(self.current_rsi_1h) if self.current_rsi_1h is not None else None,
+            "current_rsi_4h": float(self.current_rsi_4h) if self.current_rsi_4h is not None else None,
             "taker_ratio": float(self.taker_ratio) if self.taker_ratio is not None else None,
             "vol_contraction_ratio": float(self.vol_contraction_ratio) if self.vol_contraction_ratio is not None else None,
             "gate_tripped": self.gate_tripped,
             "live_reading": self.live_reading,
             "what_happened": self.what_happened,
             "institutional_logic": self.institutional_logic,
-            "audited_at": self.audited_at.isoformat(),
+            "audited_at": self.audited_at.isoformat() if self.audited_at is not None else None,
+            "telemetry_available": self.telemetry_available,
         }
 
 

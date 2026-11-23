@@ -4,7 +4,7 @@ import os
 import sqlite3
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from threading import Lock
@@ -24,11 +24,13 @@ from algotrader.domain.watchlist_models import (
 
 @dataclass(frozen=True, slots=True)
 class _CachedSymbolTelemetry:
-    live_price: Decimal
+    live_price: Decimal | None
     c1h: tuple[Candle, ...]
     c4h: tuple[Candle, ...]
     taker_ratio: Decimal | None
     fetched_at: datetime
+    observed_at: datetime | None = None
+    flow_observed_at: datetime | None = None
 
 
 class WatchlistService:
@@ -352,12 +354,76 @@ class WatchlistService:
     def audit_item(
         self,
         item: WatchlistItem,
-        live_price: Decimal,
+        live_price: Decimal | None,
         closed_1h: Sequence[Candle],
         closed_4h: Sequence[Candle],
         derivatives: DerivativesSnapshot | None,
+        *,
+        observed_at: datetime | None = None,
     ) -> WatchlistLiveAudit:
-        """Runs a real-time institutional gate diagnosis against live Binance data."""
+        """Runs a real-time institutional gate diagnosis against verified Binance data.
+
+        Security invariant (W1): Missing market telemetry must NEVER fabricate
+        hardcoded prices/indicators or stamp a fresh observation timestamp.
+        """
+        now = datetime.now(UTC)
+        def recent(at: datetime | None, seconds: float) -> bool:
+            return at is not None and at.tzinfo is not None and -5 <= (now - at).total_seconds() <= seconds
+
+        def valid_history(bars: Sequence[Candle], minimum: int, hours: int) -> bool:
+            expected_sec = hours * 3600
+            return len(bars) >= minimum and all(
+                b.closed and b.opened_at.tzinfo is not None and b.closed_at.tzinfo is not None
+                and b.closed_at > b.opened_at and b.closed_at <= now
+                and abs((b.closed_at - b.opened_at).total_seconds() - expected_sec) <= 2.0
+                and all(v.is_finite() and v > 0 for v in (b.open, b.high, b.low, b.close))
+                and b.low <= min(b.open, b.close) <= max(b.open, b.close) <= b.high
+                for b in bars
+            ) and recent(bars[-1].closed_at, expected_sec + 300) and all(
+                timedelta(0) <= right.opened_at - left.closed_at <= timedelta(milliseconds=1)
+                for left, right in zip(bars, bars[1:], strict=False)
+            )
+
+        valid_live = live_price is not None and live_price.is_finite() and live_price > 0 and recent(observed_at, 60)
+        complete = valid_history(closed_1h, 48, 1) and valid_history(closed_4h, 15, 4) and (
+            derivatives is not None and recent(derivatives.observed_at, 7200)
+            and derivatives.taker_buy_sell_ratio is not None and derivatives.taker_buy_sell_ratio.is_finite()
+            and derivatives.taker_buy_sell_ratio > 0
+        )
+        if not valid_live or not complete:
+            return WatchlistLiveAudit(
+                symbol=item.symbol,
+                status=AuditStatus.DATA_UNAVAILABLE,
+                status_title="Market Telemetry Unavailable",
+                live_price=live_price if valid_live else None,
+                price_change_pct=(
+                    ((live_price - item.current_price) / item.current_price) * Decimal("100")
+                    if (valid_live and live_price is not None and item.current_price > 0)
+                    else None
+                ),
+                current_rsi_1h=None,
+                current_rsi_4h=None,
+                taker_ratio=None,
+                vol_contraction_ratio=None,
+                gate_tripped="Required price/history/flow evidence missing or stale; gates unverified.",
+                live_reading=(
+                    f"Live Price: ${live_price:.4f} | Candles unavailable"
+                    if valid_live and live_price is not None
+                    else "Live Price & Candles unavailable"
+                ),
+                what_happened=(
+                    f"Real-time Binance USD-M telemetry for {item.symbol} could not be verified. "
+                    "Saved reference levels are preserved without fabricating an audit verdict."
+                ),
+                institutional_logic=(
+                    "Audit status is explicitly marked unavailable rather than substituting fallback "
+                    "constants or user reference prices."
+                ),
+                audited_at=observed_at if valid_live else None,
+                telemetry_available=False,
+            )
+
+        assert live_price is not None
         base_price = item.current_price if item.current_price > 0 else live_price
         price_change_pct = ((live_price - base_price) / base_price) * Decimal("100")
 
@@ -366,11 +432,11 @@ class WatchlistService:
         if len(closed_1h) >= 24 and closed_1h[-24].close > 0:
             ret_24h_pct = ((live_price - closed_1h[-24].close) / closed_1h[-24].close) * Decimal("100")
 
-        # Technical indicators
+        # Technical indicators (never fabricate hardcoded defaults)
         closes_1h = [c.close for c in closed_1h]
         closes_4h = [c.close for c in closed_4h]
-        rsi_1h = rsi(closes_1h, 14)[-1] if len(closes_1h) >= 14 else Decimal("50.0")
-        rsi_4h = rsi(closes_4h, 14)[-1] if len(closes_4h) >= 14 else Decimal("50.0")
+        rsi_1h = rsi(closes_1h, 14)[-1]
+        rsi_4h = rsi(closes_4h, 14)[-1]
 
         # Volume contraction
         vol_contraction_ratio: Decimal | None = None
@@ -385,27 +451,8 @@ class WatchlistService:
         # Taker ratio
         taker_ratio = derivatives.taker_buy_sell_ratio if derivatives else None
 
-        # Fallback defaults for watched tokens if live network is rate-limited
-        if not closed_1h:
-            if item.symbol == "COMPUSDT":
-                live_price = Decimal("24.19")
-                price_change_pct = Decimal("5.96")
-                ret_24h_pct = Decimal("5.96")
-                rsi_1h = Decimal("65.48")
-                rsi_4h = Decimal("58.20")
-                taker_ratio = Decimal("1.08")
-            elif item.symbol == "ONTUSDT":
-                rsi_1h = Decimal("48.50")
-                rsi_4h = Decimal("46.20")
-                taker_ratio = Decimal("0.742")
-                vol_contraction_ratio = Decimal("1.254")
-            elif item.symbol == "JSTUSDT":
-                rsi_1h = Decimal("42.10")
-                rsi_4h = Decimal("44.80")
-                taker_ratio = Decimal("0.504")
-
-        taker_str = f"{taker_ratio:.3f}" if taker_ratio is not None else "1.020"
-        vol_str = f"{vol_contraction_ratio:.3f}" if vol_contraction_ratio is not None else "0.950"
+        taker_str = f"{taker_ratio:.3f}" if taker_ratio is not None else "N/A"
+        vol_str = f"{vol_contraction_ratio:.3f}" if vol_contraction_ratio is not None else "N/A"
 
         # Check setup direction
         is_short = (
@@ -514,7 +561,7 @@ class WatchlistService:
                     f"{item.symbol} remains quietly coiling between ${item.support_price:.4f} support and ${item.trigger_price:.4f} trigger. "
                     f"Live price at ${live_price:.4f} ({price_change_pct:+.2f}%)."
                 )
-                gate_tripped = "All 6 Institutional Gates Active & Holding (Pre-Breakout Coil)"
+                gate_tripped = "Watchlist price/history/flow checks holding; not a radar qualification"
                 live_reading = (
                     f"1H RSI: {rsi_1h:.2f} | 4H RSI: {rsi_4h:.2f} | "
                     f"Taker: {taker_str} | Vol Ratio: {vol_str}"
@@ -558,7 +605,7 @@ class WatchlistService:
                 status = AuditStatus.COIL_HOLDING
                 status_title = "Distribution Breakdown Coil Intact"
                 what_happened = f"{item.symbol} is coiling beneath resistance (${item.support_price:.4f})."
-                gate_tripped = "All Institutional Short Gates Active"
+                gate_tripped = "Watchlist short price/history/flow checks holding; not a radar qualification"
                 live_reading = f"1H RSI: {rsi_1h:.2f} | 4H RSI: {rsi_4h:.2f} | Taker: {taker_str}"
                 institutional_logic = "Distribution breakdown coil is intact. Maintain resting trigger order."
 
@@ -576,8 +623,25 @@ class WatchlistService:
             live_reading=live_reading,
             what_happened=what_happened,
             institutional_logic=institutional_logic,
-            audited_at=datetime.now(UTC),
+            audited_at=observed_at or (closed_1h[-1].closed_at if closed_1h else None),
+            telemetry_available=True,
         )
+
+    def audit_refresh_due(self, now: datetime | None = None, *, cooldown_seconds: float = 30.0) -> bool:
+        at = now or datetime.now(UTC)
+        return self._audit_cache_time is None or (at - self._audit_cache_time).total_seconds() >= cooldown_seconds
+
+    def get_fresh_audit_cache(
+        self, now: datetime | None = None, *, max_age_seconds: float = 60.0
+    ) -> dict[str, WatchlistLiveAudit]:
+        at = now or datetime.now(UTC)
+        if (
+            self._audit_cache
+            and self._audit_cache_time is not None
+            and (at - self._audit_cache_time).total_seconds() <= max_age_seconds
+        ):
+            return self._audit_cache
+        return {}
 
     async def run_live_audit(
         self,
@@ -585,93 +649,28 @@ class WatchlistService:
         instruments: Sequence[Instrument],
         force_refresh: bool = False,
     ) -> dict[str, WatchlistLiveAudit]:
-        """Runs concurrent audits for all watchlist items with live Binance market data."""
+        """Runs concurrent audits for all watchlist items with bounded server-side cooldown."""
         now = datetime.now(UTC)
-        if not force_refresh and self._audit_cache and self._audit_cache_time:
-            if (now - self._audit_cache_time).total_seconds() < 30.0:
-                return self._audit_cache
+        # V4: Enforce bounded server-side cooldown even for authorized force_refresh requests.
+        if self._audit_cache and not self.audit_refresh_due(now):
+            return self._audit_cache
 
         async with self._audit_lock:
-            if not force_refresh and self._audit_cache and self._audit_cache_time:
-                if (now - self._audit_cache_time).total_seconds() < 30.0:
-                    return self._audit_cache
+            now = datetime.now(UTC)
+            if self._audit_cache and not self.audit_refresh_due(now):
+                return self._audit_cache
+            # Reserve cooldown before I/O so failures cannot trigger retry storms.
+            self._audit_cache_time = now
 
             items = self.list_items()
             if not items:
                 return {}
 
-            inst_map = {i.id.symbol: i for i in instruments}
-
-            # Upfront fast bulk price snapshot for all Binance USD-M contracts
-            live_price_map: dict[str, Decimal] = {}
-            if hasattr(market_data, "_client"):
-                try:
-                    price_payload = await asyncio.wait_for(
-                        market_data._client.request("GET", "/fapi/v1/ticker/price"),
-                        timeout=3.0,
-                    )
-                    if isinstance(price_payload, list):
-                        for p in price_payload:
-                            sym = p.get("symbol")
-                            pr = p.get("price")
-                            if sym and pr:
-                                live_price_map[sym] = Decimal(str(pr))
-                except Exception:
-                    pass
-
-            async def _audit_single_item(item: WatchlistItem) -> tuple[str, WatchlistLiveAudit]:
-                inst = inst_map.get(item.symbol)
-                existing_audit = self._audit_cache.get(item.symbol)
-                live_price = live_price_map.get(item.symbol) or (
-                    existing_audit.live_price if existing_audit else item.current_price
-                )
-                c1h: Sequence[Candle] = ()
-                c4h: Sequence[Candle] = ()
-                taker_ratio: Decimal | None = existing_audit.taker_ratio if existing_audit else None
-
-                if inst:
-                    with contextlib.suppress(Exception):
-                        c1h = await asyncio.wait_for(market_data.candles(inst, "1h", 35), timeout=2.5)
-                        if c1h and c1h[-1].close > 0 and item.symbol not in live_price_map:
-                            live_price = c1h[-1].close
-
-                    with contextlib.suppress(Exception):
-                        c4h = await asyncio.wait_for(market_data.candles(inst, "4h", 25), timeout=2.5)
-
-                    # Lightweight taker long/short ratio fetch (weight 1)
-                    if hasattr(market_data, "_client"):
-                        try:
-                            t_res = await asyncio.wait_for(
-                                market_data._client.request(
-                                    "GET",
-                                    "/futures/data/takerlongshortRatio",
-                                    params={"symbol": inst.id.symbol, "period": "1h", "limit": 1},
-                                ),
-                                timeout=2.0,
-                            )
-                            if isinstance(t_res, list) and len(t_res) > 0:
-                                taker_ratio = Decimal(str(t_res[0].get("buySellRatio", "1.0")))
-                        except Exception:
-                            pass
-
-                deriv = None
-                if taker_ratio is not None:
-                    deriv = DerivativesSnapshot(
-                        funding_rate=Decimal("0.0001"),
-                        basis_rate=Decimal("0"),
-                        open_interest=Decimal("0"),
-                        open_interest_change_1h=None,
-                        taker_buy_sell_ratio=taker_ratio,
-                        bid_depth_notional=Decimal("100000"),
-                        ask_depth_notional=Decimal("100000"),
-                        open_interest_change_7d=None,
-                    )
-
-                audit = self.audit_item(item, live_price, c1h, c4h, deriv)
-                return item.symbol, audit
-
-            results = await asyncio.gather(*[_audit_single_item(item) for item in items])
-            audits = {sym: aud for sym, aud in results}
+            audits: dict[str, WatchlistLiveAudit] = {}
+            for offset in range(0, len(items), 25):
+                audits.update(await self.run_live_audit_for_items(
+                    items[offset:offset + 25], market_data, instruments, force_refresh=False,
+                ))
 
             self._audit_cache = audits
             self._audit_cache_time = datetime.now(UTC)
@@ -702,50 +701,39 @@ class WatchlistService:
         inst_map = {i.id.symbol: i for i in instruments}
         sem = asyncio.Semaphore(8)
 
-        # Shared 15-second bulk ticker price map across all users
+        # Only validated exchange-timestamped futures midpoints may enter shared telemetry.
         live_price_map: dict[str, Decimal] = {}
-        if (
-            not force_refresh
-            and self._price_map_cache
-            and self._price_map_cache_time
-            and (now - self._price_map_cache_time).total_seconds() < 15.0
-        ):
-            live_price_map = self._price_map_cache
-        elif hasattr(market_data, "_client"):
-            try:
-                price_payload = await asyncio.wait_for(
-                    market_data._client.request("GET", "/fapi/v1/ticker/price"),
-                    timeout=3.0,
-                )
-                if isinstance(price_payload, list):
-                    for p in price_payload:
-                        sym = p.get("symbol")
-                        pr = p.get("price")
-                        if sym and pr:
-                            live_price_map[sym] = Decimal(str(pr))
-                    if live_price_map:
-                        self._price_map_cache = live_price_map
-                        self._price_map_cache_time = datetime.now(UTC)
-            except Exception:
-                live_price_map = self._price_map_cache
+        quote_times: dict[str, datetime] = {}
+        requested = [inst_map[s] for s in deduped_by_sym if s in inst_map]
+        if requested:
+            with contextlib.suppress(Exception):
+                quotes = await asyncio.wait_for(market_data.quotes(requested), timeout=3.0)
+                for quote in quotes:
+                    sym = quote.instrument_id.symbol
+                    if sym in deduped_by_sym and quote.is_valid_book and quote.is_fresh_at(now, max_age_seconds=60):
+                        live_price_map[sym] = quote.mid
+                        quote_times[sym] = quote.observed_at
 
-        async def _fetch_telemetry_inner(sym: str, item: WatchlistItem, inst: Instrument) -> _CachedSymbolTelemetry:
+        async def _fetch_telemetry_inner(sym: str, inst: Instrument) -> _CachedSymbolTelemetry:
+            """Fetch verified exchange telemetry only; NEVER read or cache user-supplied reference prices."""
             cached = self._telemetry_cache.get(sym)
-            live_price = live_price_map.get(sym) or (
-                cached.live_price if cached else item.current_price
-            )
-            c1h: Sequence[Candle] = cached.c1h if cached else ()
-            c4h: Sequence[Candle] = cached.c4h if cached else ()
-            taker_ratio: Decimal | None = cached.taker_ratio if cached else None
+            live_price: Decimal | None = live_price_map.get(sym)
+            c1h: Sequence[Candle] = ()
+            c4h: Sequence[Candle] = ()
+            taker_ratio: Decimal | None = None
+            observed_at = quote_times.get(sym)
+            flow_observed_at: datetime | None = None
 
             async with sem:
                 with contextlib.suppress(Exception):
-                    c1h = await asyncio.wait_for(market_data.candles(inst, "1h", 35), timeout=2.5)
-                    if c1h and c1h[-1].close > 0 and sym not in live_price_map:
-                        live_price = c1h[-1].close
+                    fetched_1h = await asyncio.wait_for(market_data.candles(inst, "1h", 60), timeout=2.5)
+                    closed_1h = [c for c in fetched_1h if c.closed and c.close > 0]
+                    if closed_1h:
+                        c1h = closed_1h
 
                 with contextlib.suppress(Exception):
-                    c4h = await asyncio.wait_for(market_data.candles(inst, "4h", 25), timeout=2.5)
+                    fetched_4h = await asyncio.wait_for(market_data.candles(inst, "4h", 25), timeout=2.5)
+                    c4h = [c for c in fetched_4h if c.closed and c.close > 0]
 
                 if hasattr(market_data, "_client"):
                     try:
@@ -758,25 +746,45 @@ class WatchlistService:
                             timeout=2.0,
                         )
                         if isinstance(t_res, list) and len(t_res) > 0:
-                            taker_ratio = Decimal(str(t_res[0].get("buySellRatio", "1.0")))
+                            tr = Decimal(str(t_res[0].get("buySellRatio", "")))
+                            flow_time = datetime.fromtimestamp(float(t_res[0]["timestamp"]) / 1000, UTC)
+                            if tr.is_finite() and tr > 0 and -5 <= (now - flow_time).total_seconds() <= 7200:
+                                taker_ratio = tr
+                                flow_observed_at = flow_time
                     except Exception:
                         pass
 
-            telem = _CachedSymbolTelemetry(
+            # Only persist into the shared cache when actual verified exchange observations were obtained.
+            if live_price is not None and c1h:
+                telem = _CachedSymbolTelemetry(
+                    live_price=live_price,
+                    c1h=tuple(c1h),
+                    c4h=tuple(c4h),
+                    taker_ratio=taker_ratio,
+                    fetched_at=datetime.now(UTC),
+                    observed_at=observed_at,
+                    flow_observed_at=flow_observed_at,
+                )
+                if len(self._telemetry_cache) >= 512 and sym not in self._telemetry_cache:
+                    oldest_key = min(
+                        self._telemetry_cache, key=lambda k: self._telemetry_cache[k].fetched_at
+                    )
+                    self._telemetry_cache.pop(oldest_key, None)
+                self._telemetry_cache[sym] = telem
+                return telem
+
+            # If live fetch failed, return unavailable (never poison shared cache with user reference prices)
+            if cached is not None and (datetime.now(UTC) - cached.fetched_at).total_seconds() < 120.0:
+                return cached
+            return _CachedSymbolTelemetry(
                 live_price=live_price,
                 c1h=tuple(c1h),
                 c4h=tuple(c4h),
                 taker_ratio=taker_ratio,
-                fetched_at=datetime.now(UTC),
+                fetched_at=now,
+                observed_at=observed_at,
+                flow_observed_at=flow_observed_at,
             )
-            # Bounded LRU-style eviction if cache exceeds 512 listed instruments
-            if len(self._telemetry_cache) >= 512 and sym not in self._telemetry_cache:
-                oldest_key = min(
-                    self._telemetry_cache, key=lambda k: self._telemetry_cache[k].fetched_at
-                )
-                self._telemetry_cache.pop(oldest_key, None)
-            self._telemetry_cache[sym] = telem
-            return telem
 
         async def _get_or_fetch_telemetry(item: WatchlistItem) -> _CachedSymbolTelemetry:
             sym = item.symbol.upper()
@@ -785,28 +793,29 @@ class WatchlistService:
             # never allocate cache entries or trigger external network I/O.
             if inst is None:
                 return _CachedSymbolTelemetry(
-                    live_price=live_price_map.get(sym) or item.current_price,
+                    live_price=live_price_map.get(sym),
                     c1h=(),
                     c4h=(),
                     taker_ratio=None,
                     fetched_at=now,
+                    observed_at=None,
                 )
 
             cached = self._telemetry_cache.get(sym)
             if (
                 cached is not None
-                and not force_refresh
                 and (datetime.now(UTC) - cached.fetched_at).total_seconds() < 30.0
             ):
-                fresh_price = live_price_map.get(sym) or cached.live_price
-                return replace(cached, live_price=fresh_price)
+                if sym in live_price_map:
+                    return replace(cached, live_price=live_price_map[sym], observed_at=quote_times[sym])
+                return cached
 
             # Singleflight coalescing: concurrent callers for the same cold symbol share 1 in-flight task
             existing_task = self._telemetry_inflight.get(sym)
             if existing_task is not None and not existing_task.done():
                 return await existing_task
 
-            task = asyncio.create_task(_fetch_telemetry_inner(sym, item, inst))
+            task = asyncio.create_task(_fetch_telemetry_inner(sym, inst))
             self._telemetry_inflight[sym] = task
             try:
                 return await task
@@ -827,9 +836,17 @@ class WatchlistService:
                     bid_depth_notional=Decimal("100000"),
                     ask_depth_notional=Decimal("100000"),
                     open_interest_change_7d=None,
+                    observed_at=telem.flow_observed_at or datetime.min.replace(tzinfo=UTC),
                 )
 
-            audit = self.audit_item(item, telem.live_price, telem.c1h, telem.c4h, deriv)
+            audit = self.audit_item(
+                item,
+                telem.live_price,
+                telem.c1h,
+                telem.c4h,
+                deriv,
+                observed_at=telem.observed_at,
+            )
             return item.symbol, audit
 
         results = await asyncio.gather(
@@ -848,14 +865,15 @@ class WatchlistService:
         items = self.list_items()
         enriched: list[WatchlistItem] = []
         for item in items:
-            audit = audits.get(item.symbol) or self.audit_item(item, item.current_price, [], [], None)
+            audit = audits.get(item.symbol) or self.audit_item(item, None, [], [], None)
+            eff_price = audit.live_price if (audit.live_price is not None and audit.live_price > 0) else item.current_price
             enriched.append(
                 replace(
                     item,
-                    current_price=audit.live_price,
+                    current_price=eff_price,
                     distance_to_trigger_pct=(
-                        abs(item.trigger_price - audit.live_price) / audit.live_price * Decimal("100")
-                        if audit.live_price > 0
+                        abs(item.trigger_price - eff_price) / eff_price * Decimal("100")
+                        if eff_price > 0
                         else item.distance_to_trigger_pct
                     ),
                     audit=audit,
@@ -874,14 +892,15 @@ class WatchlistService:
         audits = await self.run_live_audit_for_items(items, market_data, instruments, force_refresh=force_refresh)
         enriched: list[WatchlistItem] = []
         for item in items:
-            audit = audits.get(item.symbol) or self.audit_item(item, item.current_price, [], [], None)
+            audit = audits.get(item.symbol) or self.audit_item(item, None, [], [], None)
+            eff_price = audit.live_price if (audit.live_price is not None and audit.live_price > 0) else item.current_price
             enriched.append(
                 replace(
                     item,
-                    current_price=audit.live_price,
+                    current_price=eff_price,
                     distance_to_trigger_pct=(
-                        abs(item.trigger_price - audit.live_price) / audit.live_price * Decimal("100")
-                        if audit.live_price > 0
+                        abs(item.trigger_price - eff_price) / eff_price * Decimal("100")
+                        if eff_price > 0
                         else item.distance_to_trigger_pct
                     ),
                     audit=audit,

@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from algotrader.application.crypto_screener import CryptoOpportunityScreener
-from algotrader.application.scan_recording import screening_identity
+from algotrader.application.scan_recording import (
+    screening_identity,
+    supported_screening_configuration,
+)
 from algotrader.application.scan_replay import ReplayMarket, ReplayMismatch, ReplayTape
 from algotrader.config import Settings
 from algotrader.domain.models import DerivativesSnapshot, Quote
@@ -99,8 +102,7 @@ async def run_arm(record: ScanRecord, challenger: bool, supplemental=()) -> dict
     journal = ScanDecisionJournal()
     # Avoid ambient BaseSettings and dotenv. These are the only consumed screener settings.
     config = record.identity["configuration"]
-    expected = {"excluded_base_assets", "support_resistance_lookback_bars"}
-    if set(config) not in (expected, expected | {"bearish_continuation_enabled"}):
+    if not supported_screening_configuration(config, allow_continuation=True):
         raise ReplayUnavailable("unsupported_screener_configuration")
     settings = Settings.model_construct(**config)
     cls = FundingCarryScreener if challenger else CryptoOpportunityScreener

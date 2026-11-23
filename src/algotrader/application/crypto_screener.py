@@ -104,6 +104,12 @@ from algotrader.domain.screening_gates import (
     evaluate_long_gates,
     evaluate_short_gates,
 )
+from algotrader.domain.stage2_allocation import (
+    DISCOVERY_PROBE_LIMIT,
+    ENRICHMENT_CONCURRENCY,
+    SHORTLIST_LIMIT,
+    stage2_capacity,
+)
 from algotrader.domain.structure import classify as classify_structure
 
 log = structlog.get_logger(__name__)
@@ -571,10 +577,10 @@ class CryptoOpportunityScreener:
                 log.debug("stage1_eval_exception", error=str(res))
 
         # Sort surviving Stage 1 candidates descending by preliminary structural score
-        stage1_survivors.sort(key=lambda o: o.score, reverse=True)
+        stage1_survivors.sort(key=lambda o: (-o.score, o.instrument.id.symbol, o.direction.value))
         self.scan_counts["stage1_survivors"] = len(stage1_survivors)
         # Cap Stage 2 derivatives enrichment at top 45 Stage 1 survivors
-        stage2_shortlist = stage1_survivors[:45]
+        stage2_shortlist = stage1_survivors[:SHORTLIST_LIMIT]
         if self._settings.bearish_continuation_enabled:
             # Reserve at most three of the existing 45 places; no extra requests.
             continuation = sorted(
@@ -582,16 +588,27 @@ class CryptoOpportunityScreener:
                 key=lambda o: (-o.score, o.instrument.id.symbol),
             )[:3]
             others = [o for o in stage1_survivors if o.setup_label is not SetupLabel.BREAKDOWN_RETEST_SHORT]
-            stage2_shortlist = continuation + others[:45 - len(continuation)]
+            stage2_shortlist = continuation + others[:SHORTLIST_LIMIT - len(continuation)]
             self.scan_counts["continuation_stage2_reserved"] = len(continuation)
         self.scan_counts["stage2_shortlist"] = len(stage2_shortlist)
+        probes_enabled = derivatives_port is not None and mode != ScreenerMode.BREAKOUT
+        capacity = stage2_capacity(
+            len(stage2_shortlist), discovery=self._feature_contract == "discovery_v2",
+            probes_enabled=probes_enabled,
+            rollover_enabled=self._settings.stage2_capacity_rollover_enabled,
+        )
+        self.scan_counts.update({
+            "stage2_budget": capacity.budget,
+            "stage2_probe_limit": capacity.probe_limit,
+            "stage2_rollover_slots": capacity.rollover_slots,
+        })
 
         # A derivatives-led setup may have no Stage 1 archetype before OI is fetched.
         # Probe a small, separate quote-anomaly lane without displacing core survivors.
         shortlisted_symbols = {opp.instrument.id.symbol for opp in stage2_shortlist}
         stage2_probes: list[Instrument] = []
         probe_overflow_symbols: set[str] = set()
-        if derivatives_port is not None and mode != ScreenerMode.BREAKOUT:
+        if probes_enabled:
             ranked_probes: list[tuple[tuple[int, Decimal, Decimal, str], Instrument]] = []
             for inst in selected_instruments:
                 q = quotes_by_symbol[inst.id.symbol]
@@ -628,12 +645,16 @@ class CryptoOpportunityScreener:
                 within_class_score = min(Decimal("999999"), raw_within_score) if raw_within_score.is_finite() else ZERO
                 ranked_probes.append(((probe_class, within_class_score, q.quote_volume_24h, inst.id.symbol), inst))
             ranked_probes.sort(key=lambda item: (-item[0][0], -item[0][1], -item[0][2], item[0][3]))
-            probe_limit = 30 if self._feature_contract == "discovery_v2" else 15
+            probe_limit = capacity.probe_limit
             stage2_probes = [inst for _, inst in ranked_probes[:probe_limit]]
             if self._feature_contract == "discovery_v2":
                 self.scan_counts["stage2_probe_overflow"] = max(0, len(ranked_probes) - probe_limit)
             probe_overflow_symbols = {i.id.symbol for _, i in ranked_probes[probe_limit:]}
         self.scan_counts["stage2_probes"] = len(stage2_probes)
+        self.scan_counts["stage2_rollover_admitted"] = (
+            max(0, len(stage2_probes) - DISCOVERY_PROBE_LIMIT) if capacity.rollover_slots else 0
+        )
+        self.scan_counts["stage2_unused_budget"] = capacity.budget - len(stage2_shortlist) - len(stage2_probes)
         admitted = shortlisted_symbols | {inst.id.symbol for inst in stage2_probes}
         for cached_symbol in list(candle_cache):
             if cached_symbol not in admitted:
@@ -643,22 +664,35 @@ class CryptoOpportunityScreener:
                        structural_ready=inst.id.symbol in self._stage1_ready_symbols,
                        vvi_ignition=inst.id.symbol in self._vvi_symbols,
                        additional_probe_priority=self._additional_probe_priority(inst.id.symbol),
-                       probe_overflow=inst.id.symbol in probe_overflow_symbols)
+                       probe_overflow=inst.id.symbol in probe_overflow_symbols,
+                       allocation_policy=capacity.policy, probe_limit=capacity.probe_limit,
+                       allocation_lane=("shortlist" if inst.id.symbol in shortlisted_symbols else
+                                        "probe" if inst.id.symbol in admitted else "not_admitted"))
 
         if self._continuation_context is not None and hasattr(self._continuation_context, "set_budget"):
             self._continuation_context.set_budget(56 + len(selected_instruments)*5
                                                   + (len(stage2_shortlist)+len(stage2_probes))*4)
         # Stage 2: Deep Derivatives Enrichment ONLY for surviving shortlist
-        stage2_semaphore = asyncio.Semaphore(8)
+        stage2_semaphore = asyncio.Semaphore(ENRICHMENT_CONCURRENCY)
+        self.scan_counts["stage2_derivatives_attempted"] = 0
+        self.scan_counts["stage2_derivatives_unavailable"] = 0
 
         async def enrich_opportunity(opp: CryptoOpportunity) -> CryptoOpportunity | None:
             if derivatives_port is None:
                 return opp
+            if opp.instrument.id.symbol not in candle_cache:
+                self._note(opp.instrument.id.symbol, "stage2", "enrichment_inputs_unavailable")
+                return None
             async with stage2_semaphore:
                 try:
+                    self.scan_counts["stage2_derivatives_attempted"] += 1
                     deriv_res = await asyncio.wait_for(
                         derivatives_port.derivatives_snapshot(opp.instrument), timeout=15.0
                     )
+                    if not isinstance(deriv_res, DerivativesSnapshot) or deriv_res.degraded_telemetry:
+                        self.scan_counts["stage2_derivatives_unavailable"] += 1
+                        self._note(opp.instrument.id.symbol, "stage2", "derivatives_unavailable")
+                        return None
                     is_mandatory_deriv_setup = (
                         opp.direction == Direction.SHORT
                         or opp.setup_label in (
@@ -674,7 +708,7 @@ class CryptoOpportunityScreener:
                                 symbol=opp.instrument.id.symbol,
                             )
                             return None
-                        cached_c = candle_cache.pop(opp.instrument.id.symbol, None)
+                        cached_c = candle_cache.get(opp.instrument.id.symbol)
                         if cached_c is not None:
                             c1h_cached = cached_c[0]
                             c4h_cached = cached_c[1]
@@ -701,10 +735,11 @@ class CryptoOpportunityScreener:
                                 explicit_derivatives=deriv_res,
                             )
                             return res_enriched[0] if res_enriched else None
-                    if is_mandatory_deriv_setup:
-                        return None
-                    return opp
+                    self._note(opp.instrument.id.symbol, "stage2", "enrichment_inputs_unavailable")
+                    return None
                 except Exception as exc:
+                    self.scan_counts["stage2_derivatives_unavailable"] += 1
+                    self._note(opp.instrument.id.symbol, "stage2", "enrichment_failed", error=type(exc).__name__)
                     log.warning(
                         "candidate_dropped_due_to_degraded_stage2_telemetry",
                         symbol=opp.instrument.id.symbol,
@@ -715,15 +750,19 @@ class CryptoOpportunityScreener:
         async def enrich_probe(inst: Instrument) -> CryptoOpportunity | None:
             if derivatives_port is None:
                 return None
-            cached_c = candle_cache.pop(inst.id.symbol, None)
+            cached_c = candle_cache.get(inst.id.symbol)
             if cached_c is None:
+                self._note(inst.id.symbol, "stage2", "enrichment_inputs_unavailable")
                 return None
             async with stage2_semaphore:
                 try:
+                    self.scan_counts["stage2_derivatives_attempted"] += 1
                     deriv_res = await asyncio.wait_for(
                         derivatives_port.derivatives_snapshot(inst), timeout=15.0
                     )
                     if not isinstance(deriv_res, DerivativesSnapshot) or deriv_res.degraded_telemetry:
+                        self.scan_counts["stage2_derivatives_unavailable"] += 1
+                        self._note(inst.id.symbol, "stage2", "derivatives_unavailable")
                         return None
                     res_enriched = await self._evaluate_single(
                         inst=inst,
@@ -743,6 +782,8 @@ class CryptoOpportunityScreener:
                     )
                     return res_enriched[0] if res_enriched else None
                 except Exception as exc:
+                    self.scan_counts["stage2_derivatives_unavailable"] += 1
+                    self._note(inst.id.symbol, "stage2", "enrichment_failed", error=type(exc).__name__)
                     log.warning("stage2_probe_failed", symbol=inst.id.symbol, error=str(exc))
                     return None
 

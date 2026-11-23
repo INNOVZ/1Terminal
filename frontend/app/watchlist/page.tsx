@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
+import { AccountScope } from "../lib/accountScope";
 import type { User } from "@supabase/supabase-js";
 import {
   BookmarkCheck,
@@ -15,6 +16,8 @@ import WatchlistCard, { getEffectiveAudit } from "./components/WatchlistCard";
 import type { CandidateFormData } from "./components/AddCandidateModal";
 import type { EditCandidateSetupPayload } from "./components/EditNotesModal";
 import SupabaseAuthPanel from "./components/SupabaseAuthPanel";
+import AutoWatchlistSection, { type AutoWatchEpisode } from "./components/AutoWatchlistSection";
+import { bookEventQuote, bookQuote, timestamp, type RadarQuote } from "../lib/radarInsights";
 import {
   getSupabaseClient,
   CURATED_INSTITUTIONAL_STARTER_SEEDS,
@@ -29,19 +32,21 @@ export interface WatchlistLiveAudit {
     | "FLOW_DIVERGENCE"
     | "SELLER_INFLUX"
     | "TARGET_REACHED"
-    | "STOP_BREACHED";
+    | "STOP_BREACHED"
+    | "DATA_UNAVAILABLE";
   status_title: string;
-  live_price: number;
-  price_change_pct: number;
-  current_rsi_1h: number;
-  current_rsi_4h: number;
+  live_price: number | null;
+  price_change_pct: number | null;
+  current_rsi_1h: number | null;
+  current_rsi_4h: number | null;
   taker_ratio: number | null;
   vol_contraction_ratio: number | null;
   gate_tripped: string;
   live_reading: string;
   what_happened: string;
   institutional_logic: string;
-  audited_at: string;
+  audited_at: string | null;
+  telemetry_available?: boolean;
 }
 
 export interface WatchlistItem {
@@ -103,6 +108,7 @@ function rowToWatchlistItem(row: UserWatchlistRow): WatchlistItem {
 }
 
 export default function WatchlistPage() {
+  const [workspaceTab, setWorkspaceTab] = useState<"auto" | "personal">("auto");
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [items, setItems] = useState<WatchlistItem[]>([]);
@@ -114,28 +120,70 @@ export default function WatchlistPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<WatchlistItem | null>(null);
   const [expandedAudits, setExpandedAudits] = useState<Record<string, boolean>>({});
-  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  const [liveQuotes, setLiveQuotes] = useState<Record<string, RadarQuote>>({});
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [wsConnected, setWsConnected] = useState(false);
 
-  // Track Supabase Auth session state
+  // W7: Track active account ID and request generation so stale/out-of-order
+  // responses from a previous user can never repopulate state after sign-out or switch.
+  const accountScope = useRef(new AccountScope());
+  const activeUserIdRef = useRef<string | null>(null);
+  const fetchGenerationRef = useRef<number>(0);
+  const fetchAbortRef = useRef<AbortController | null>(null);
+
+  const livePrices = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [sym, q] of Object.entries(liveQuotes)) {
+      const ts = timestamp(q.observed_at);
+      if (ts !== null && nowMs - ts >= -5000 && nowMs - ts <= 60000) {
+        const px = Number(q.price);
+        if (Number.isFinite(px) && px > 0) out[sym] = px;
+      }
+    }
+    return out;
+  }, [liveQuotes, nowMs]);
+
+  // Track Supabase Auth session state with immediate state isolation on identity changes (W7)
   useEffect(() => {
     const supabase = getSupabaseClient();
     let mounted = true;
 
-    supabase.auth.getSession().then(({ data }) => {
+    const applyIdentity = (nextUser: User | null) => {
       if (!mounted) return;
-      setUser(data.session?.user ?? null);
+      const nextId = nextUser?.id ?? null;
+      if (activeUserIdRef.current !== nextId) {
+        accountScope.current.setIdentity(nextId);
+        activeUserIdRef.current = nextId;
+        fetchGenerationRef.current += 1;
+        fetchAbortRef.current?.abort();
+        fetchAbortRef.current = null;
+        setItems([]);
+        setLiveQuotes({});
+        setEditingItem(null);
+        setExpandedAudits({});
+        setLastAudited(null);
+        setSeedingStarter(false);
+        setAuditLoading(false);
+        setIsAddModalOpen(false);
+        setLoading(Boolean(nextId));
+      }
+      setUser(nextUser);
       setAuthChecked(true);
+    };
+
+    let authEventSeen = false;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!authEventSeen) applyIdentity(data.session?.user ?? null);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return;
-      setUser(session?.user ?? null);
-      setAuthChecked(true);
+      authEventSeen = true;
+      applyIdentity(session?.user ?? null);
     });
 
     return () => {
       mounted = false;
+      fetchAbortRef.current?.abort();
       listener.subscription.unsubscribe();
     };
   }, []);
@@ -149,24 +197,37 @@ export default function WatchlistPage() {
 
   const fetchWatchlist = useCallback(
     async (forceRefresh: boolean = false) => {
-      if (!user) {
+      const targetUserId = user?.id ?? null;
+      if (!targetUserId) {
         setItems([]);
         setLoading(false);
         setAuditLoading(false);
         return;
       }
 
+      if (activeUserIdRef.current !== targetUserId) return;
+      fetchGenerationRef.current += 1;
+      const generation = fetchGenerationRef.current;
+      fetchAbortRef.current?.abort();
+      const controller = new AbortController();
+      fetchAbortRef.current = controller;
+
+      const isCurrent = () =>
+        fetchGenerationRef.current === generation && activeUserIdRef.current === targetUserId;
+
       try {
         const supabase = getSupabaseClient();
         const { data: rows, error } = await supabase
           .from("user_watchlists")
           .select("*")
-          .eq("user_id", user.id)
+          .eq("user_id", targetUserId)
           .order("score", { ascending: false })
           .order("added_at", { ascending: false });
 
+        if (!isCurrent()) return;
         if (error) {
           console.error("Failed to fetch user watchlist from Supabase:", error.message);
+          setItems([]);
           return;
         }
 
@@ -177,18 +238,22 @@ export default function WatchlistPage() {
           return;
         }
 
-        // Enrich user's personal watchlist items with live Binance gate audits
+        // Enrich user's personal watchlist items with live Binance USD-M gate audits
         const auditRes = await fetch("/api/watchlist/audit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             items: baseItems,
             refresh: forceRefresh,
           }),
         }).catch(() => null);
 
+        if (!isCurrent()) return;
+
         if (auditRes && auditRes.ok) {
           const auditPayload = await auditRes.json();
+          if (!isCurrent()) return;
           if (Array.isArray(auditPayload.items)) {
             setItems(auditPayload.items as WatchlistItem[]);
             setLastAudited(new Date());
@@ -201,10 +266,13 @@ export default function WatchlistPage() {
         setLastAudited(new Date());
         window.dispatchEvent(new CustomEvent("atlas:watchlist-updated"));
       } catch (e) {
+        if (!isCurrent()) return;
         console.error("Failed to load watchlist:", e);
       } finally {
-        setLoading(false);
-        setAuditLoading(false);
+        if (isCurrent()) {
+          setLoading(false);
+          setAuditLoading(false);
+        }
       }
     },
     [user],
@@ -217,41 +285,65 @@ export default function WatchlistPage() {
     const interval = setInterval(() => {
       void fetchWatchlist(false);
     }, 30000);
-    return () => clearInterval(interval);
+    const freshnessTimer = setInterval(() => {
+      setNowMs(Date.now());
+    }, 10000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(freshnessTimer);
+      fetchAbortRef.current?.abort();
+    };
   }, [user, fetchWatchlist]);
 
   // --------------------------------------------------------------------------
-  // Real-time Multi-Ticker Streaming & Snapshot for Watchlist tokens
+  // Real-time Verified USD-M Multi-Book Streaming & Snapshot for Watchlist tokens (W5)
+  // Uses strictly Binance USD-M Futures (never Spot) with exchange timestamp & monotonicity validation.
   // --------------------------------------------------------------------------
+  const watchedSymbolsKey = useMemo(() => {
+    if (!items || items.length === 0) return "";
+    return Array.from(new Set(items.map((i) => i.symbol.toUpperCase())))
+      .sort()
+      .join(",");
+  }, [items]);
+
   useEffect(() => {
-    if (!items || items.length === 0) return;
+    if (!watchedSymbolsKey) return;
 
     let isSubscribed = true;
     let ws: WebSocket | null = null;
     let pollTimer: NodeJS.Timeout | null = null;
 
-    const symbols = Array.from(new Set(items.map((i) => i.symbol.toUpperCase())));
-    if (symbols.length === 0) return;
+    const symbols = watchedSymbolsKey.split(",");
+    const symSet = new Set(symbols);
 
-    // 1. Instant REST snapshot for all watchlist symbols
+    const mergeQuote = (sym: string, quote: RadarQuote) => {
+      const nextTs = timestamp(quote.observed_at);
+      if (nextTs === null) return;
+      setLiveQuotes((prev) => {
+        const existing = prev[sym];
+        const prevTs = timestamp(existing?.observed_at);
+        if (prevTs !== null && nextTs < prevTs) return prev;
+        if (existing && existing.price === quote.price && existing.observed_at === quote.observed_at) {
+          return prev;
+        }
+        return { ...prev, [sym]: quote };
+      });
+    };
+
+    // 1. Instant USD-M Futures bookTicker REST snapshot (same contract as WebSocket & screener)
     const fetchSnapshot = async () => {
       try {
-        const encoded = encodeURIComponent(JSON.stringify(symbols));
-        let res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbols=${encoded}`).catch(() => null);
-        if (!res || !res.ok) {
-          res = await fetch("https://fapi.binance.com/fapi/v1/ticker/price").catch(() => null);
-        }
+        const res = await fetch("https://fapi.binance.com/fapi/v1/ticker/bookTicker").catch(() => null);
         if (res && res.ok && isSubscribed) {
           const data = await res.json();
           if (Array.isArray(data)) {
-            const symSet = new Set(symbols);
-            const prices: Record<string, number> = {};
-            data.forEach((item: { symbol: string; price: string }) => {
-              if (symSet.has(item.symbol)) {
-                prices[item.symbol] = parseFloat(item.price);
-              }
+            const now = Date.now();
+            data.forEach((row: { symbol?: string; bidPrice?: string; askPrice?: string; time?: number }) => {
+              const sym = typeof row.symbol === "string" ? row.symbol.toUpperCase() : "";
+              if (!symSet.has(sym)) return;
+              const q = bookQuote(row.bidPrice, row.askPrice, row.time, now);
+              if (q) mergeQuote(sym, q);
             });
-            setLivePrices((prev) => ({ ...prev, ...prices }));
           }
         }
       } catch {
@@ -259,16 +351,17 @@ export default function WatchlistPage() {
       }
     };
 
-    fetchSnapshot();
+    void fetchSnapshot();
 
-    // 2. Real-time Multi-ticker WebSocket stream
-    const streams = symbols.map((s) => `${s.toLowerCase()}@ticker`).join("/");
+    // 2. Real-time USD-M Futures bookTicker WebSocket stream with verified exchange timestamps
+    const streams = symbols.map((s) => `${s.toLowerCase()}@bookTicker`).join("/");
     const wsUrl = `wss://fstream.binance.com/stream?streams=${streams}`;
 
     const startPollingFallback = () => {
+      if (!isSubscribed) return;
       setWsConnected(false);
       if (pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(fetchSnapshot, 3000);
+      pollTimer = setInterval(() => void fetchSnapshot(), 5000);
     };
 
     try {
@@ -283,15 +376,10 @@ export default function WatchlistPage() {
         try {
           const payload = JSON.parse(event.data);
           const data = payload.data || payload;
-          if (data && data.s && data.c) {
-            const sym = data.s.toUpperCase();
-            const curPrice = parseFloat(data.c);
-
-            setLivePrices((prev) => {
-              if (prev[sym] === curPrice) return prev;
-              return { ...prev, [sym]: curPrice };
-            });
-          }
+          const sym = typeof data?.s === "string" ? data.s.toUpperCase() : "";
+          if (!symSet.has(sym)) return;
+          const q = bookEventQuote(data, Date.now());
+          if (q) mergeQuote(sym, q);
         } catch {
           // ignore parse errors
         }
@@ -312,20 +400,35 @@ export default function WatchlistPage() {
       isSubscribed = false;
       if (pollTimer) clearInterval(pollTimer);
       if (ws) {
+        ws.onmessage = null;
         ws.close();
       }
     };
-  }, [items]);
+  }, [watchedSymbolsKey]);
 
   const handleSignOut = useCallback(async () => {
-    const supabase = getSupabaseClient();
-    await supabase.auth.signOut();
+    accountScope.current.setIdentity(null);
+    activeUserIdRef.current = null;
+    fetchGenerationRef.current += 1;
+    fetchAbortRef.current?.abort();
+    fetchAbortRef.current = null;
     setUser(null);
     setItems([]);
+    setLiveQuotes({});
+    setEditingItem(null);
+    setExpandedAudits({});
+    setIsAddModalOpen(false);
+    setSeedingStarter(false);
+    setAuditLoading(false);
+    setLastAudited(null);
+    const supabase = getSupabaseClient();
+    await supabase.auth.signOut();
   }, []);
 
   const handleLoadStarterPicks = useCallback(async () => {
     if (!user || seedingStarter) return;
+    const ticket = accountScope.current.capture();
+    if (ticket.userId !== user.id) return;
     setSeedingStarter(true);
     try {
       const supabase = getSupabaseClient();
@@ -339,6 +442,7 @@ export default function WatchlistPage() {
       const { error } = await supabase
         .from("user_watchlists")
         .upsert(rowsToInsert, { onConflict: "user_id,symbol" });
+      if (!accountScope.current.isCurrent(ticket)) return;
       if (!error) {
         setAuditLoading(true);
         await fetchWatchlist(true);
@@ -346,13 +450,15 @@ export default function WatchlistPage() {
         console.error("Failed to seed starter setups:", error.message);
       }
     } finally {
-      setSeedingStarter(false);
+      if (accountScope.current.isCurrent(ticket)) setSeedingStarter(false);
     }
   }, [user, seedingStarter, fetchWatchlist]);
 
   const handleDelete = useCallback(
     async (symbol: string) => {
       if (!user) return;
+      const ticket = accountScope.current.capture();
+      if (ticket.userId !== user.id) return;
       if (!confirm(`Remove ${symbol} from your watchlist?`)) return;
       try {
         const supabase = getSupabaseClient();
@@ -361,6 +467,7 @@ export default function WatchlistPage() {
           .delete()
           .eq("user_id", user.id)
           .eq("symbol", symbol.toUpperCase());
+        if (!accountScope.current.isCurrent(ticket)) return;
         if (!error) {
           setItems((prev) => prev.filter((item) => item.symbol !== symbol));
           window.dispatchEvent(new CustomEvent("atlas:watchlist-updated"));
@@ -385,6 +492,8 @@ export default function WatchlistPage() {
   const handleSaveSetup = useCallback(
     async (updated: EditCandidateSetupPayload) => {
       if (!editingItem || !user) return;
+      const ticket = accountScope.current.capture();
+      if (ticket.userId !== user.id) return;
       const curPrice = livePrices[editingItem.symbol] ?? editingItem.current_price;
       const distPct =
         curPrice > 0
@@ -410,6 +519,7 @@ export default function WatchlistPage() {
           .eq("user_id", user.id)
           .eq("symbol", updated.symbol);
 
+        if (!accountScope.current.isCurrent(ticket)) return;
         if (!error) {
           setEditingItem(null);
           setAuditLoading(true);
@@ -435,6 +545,8 @@ export default function WatchlistPage() {
   const handleAddTokenSubmit = useCallback(
     async (formData: CandidateFormData) => {
       if (!user) return;
+      const ticket = accountScope.current.capture();
+      if (ticket.userId !== user.id) return;
       const curPrice = parseFloat(formData.current_price) || 1.0;
       const trigPrice = parseFloat(formData.trigger_price) || 1.05;
       const distPct =
@@ -469,6 +581,7 @@ export default function WatchlistPage() {
         const { error } = await supabase
           .from("user_watchlists")
           .upsert(rowPayload, { onConflict: "user_id,symbol" });
+        if (!accountScope.current.isCurrent(ticket)) return;
         if (!error) {
           setIsAddModalOpen(false);
           setAuditLoading(true);
@@ -515,33 +628,167 @@ export default function WatchlistPage() {
     [items.length],
   );
 
-  if (!authChecked) {
-    return (
+  const handlePinAutoWatchToPersonal = useCallback(
+    async (ep: AutoWatchEpisode): Promise<boolean> => {
+      if (!user) return false;
+      const ticket = accountScope.current.capture();
+      if (ticket.userId !== user.id) return false;
+      const supabase = getSupabaseClient();
+      const triggerPx = ep.trigger_price ?? ep.entry_price;
+      const dist =
+        ep.last_price > 0
+          ? Number(((Math.abs(triggerPx - ep.last_price) / ep.last_price) * 100).toFixed(2))
+          : 0;
+      const { error } = await supabase.from("user_watchlists").upsert(
+        {
+          user_id: user.id,
+          symbol: ep.symbol.toUpperCase(),
+          name: ep.symbol.replace(/USDT$/, ""),
+          sector: ep.direction.toUpperCase(),
+          stage: ep.setup_label,
+          timeframe: "1–2 Days",
+          current_price: ep.signal_price,
+          trigger_price: triggerPx,
+          support_price: ep.poc_price ?? ep.entry_price,
+          invalidation_price: ep.stop_price,
+          target_1: ep.target_1,
+          target_2: ep.target_2 ?? ep.target_1,
+          distance_to_trigger_pct: dist,
+          score: ep.score,
+          thesis: `Pinned from 48h Radar Auto-Watch (${ep.setup_label}, published ${ep.published_at}).`,
+          checklist_passed: 5,
+          checklist_total: 5,
+          priority: "HIGH",
+          notes: `Signal midpoint $${ep.signal_price}. Sampled peak move: ${ep.peak_mfe_pct === null ? "unavailable" : `${ep.peak_mfe_pct.toFixed(2)}%`}.`,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,symbol" },
+      );
+      if (!accountScope.current.isCurrent(ticket)) return false;
+      if (!error) {
+        void fetchWatchlist(false);
+        return true;
+      }
+      return false;
+    },
+    [user, fetchWatchlist],
+  );
+
+  const workspaceSwitcher = (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: "12px",
+        marginBottom: "20px",
+        paddingBottom: "14px",
+        borderBottom: "1px solid var(--border-subtle)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+        <BookmarkCheck size={24} style={{ color: "#f49d0d" }} />
+        <h1 style={{ fontSize: "22px", fontWeight: 800, letterSpacing: "-0.02em", margin: 0 }}>
+          Watchlist &amp; 48h Radar Performance
+        </h1>
+      </div>
+
       <div
         style={{
-          minHeight: "80vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--text-secondary)",
-          fontFamily: "var(--font-mono)",
-          fontSize: "13px",
-          gap: "10px",
+          display: "inline-flex",
+          gap: "6px",
+          padding: "4px",
+          borderRadius: "10px",
+          background: "rgba(255, 255, 255, 0.04)",
+          border: "1px solid var(--border-subtle)",
         }}
       >
-        <RefreshCw size={16} style={{ animation: "spin 1s linear infinite", color: "#f49d0d" }} />
-        Verifying Supabase session...
+        <button
+          type="button"
+          onClick={() => setWorkspaceTab("auto")}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "8px",
+            fontSize: "12.5px",
+            fontWeight: 800,
+            cursor: "pointer",
+            border: "none",
+            background: workspaceTab === "auto" ? "#f49d0d" : "transparent",
+            color: workspaceTab === "auto" ? "#07090e" : "var(--text-secondary)",
+          }}
+        >
+          Radar Auto-Watch (48h)
+        </button>
+        <button
+          type="button"
+          onClick={() => setWorkspaceTab("personal")}
+          style={{
+            padding: "8px 14px",
+            borderRadius: "8px",
+            fontSize: "12.5px",
+            fontWeight: 800,
+            cursor: "pointer",
+            border: "none",
+            background: workspaceTab === "personal" ? "#f49d0d" : "transparent",
+            color: workspaceTab === "personal" ? "#07090e" : "var(--text-secondary)",
+          }}
+        >
+          My Watchlist {user ? `(${items.length})` : ""}
+        </button>
+      </div>
+    </div>
+  );
+
+  if (workspaceTab === "auto") {
+    return (
+      <div style={{ minHeight: "100vh", padding: "28px 36px 100px", maxWidth: "1600px", margin: "0 auto" }}>
+        {workspaceSwitcher}
+        <AutoWatchlistSection
+          key={user?.id ?? "anonymous"}
+          canPinToPersonal={Boolean(user)}
+          onPinToPersonal={handlePinAutoWatchToPersonal}
+        />
       </div>
     );
   }
 
-  // Strict login requirement: show dedicated Supabase Auth wall when unauthenticated
+  if (!authChecked) {
+    return (
+      <div style={{ minHeight: "100vh", padding: "28px 36px 100px", maxWidth: "1600px", margin: "0 auto" }}>
+        {workspaceSwitcher}
+        <div
+          style={{
+            minHeight: "60vh",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--text-secondary)",
+            fontFamily: "var(--font-mono)",
+            fontSize: "13px",
+            gap: "10px",
+          }}
+        >
+          <RefreshCw size={16} style={{ animation: "spin 1s linear infinite", color: "#f49d0d" }} />
+          Verifying Supabase session...
+        </div>
+      </div>
+    );
+  }
+
+  // Strict login requirement for personal watchlist only
   if (!user) {
-    return <SupabaseAuthPanel />;
+    return (
+      <div style={{ minHeight: "100vh", padding: "28px 36px 100px", maxWidth: "1600px", margin: "0 auto" }}>
+        {workspaceSwitcher}
+        <SupabaseAuthPanel />
+      </div>
+    );
   }
 
   return (
     <div style={{ minHeight: "100vh", padding: "28px 36px 100px", maxWidth: "1600px", margin: "0 auto" }}>
+      {workspaceSwitcher}
       {/* Page Header */}
       <div
         style={{

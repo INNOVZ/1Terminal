@@ -61,6 +61,14 @@ export function getAuditStatusConfig(status?: string) {
         border: "rgba(239, 68, 68, 0.45)",
         icon: <XCircle size={12} strokeWidth={2.5} />,
       };
+    case "DATA_UNAVAILABLE":
+      return {
+        label: "Telemetry Unavailable",
+        color: "#94a3b8",
+        bg: "rgba(148, 163, 184, 0.12)",
+        border: "rgba(148, 163, 184, 0.35)",
+        icon: <AlertCircle size={12} strokeWidth={2.5} />,
+      };
     case "COIL_HOLDING":
     default:
       return {
@@ -76,24 +84,22 @@ export function getAuditStatusConfig(status?: string) {
 export function getEffectiveAudit(item: WatchlistItem): WatchlistLiveAudit {
   if (item.audit) return item.audit;
 
-  const priceChange = item.support_price > 0
-    ? ((item.current_price - item.support_price) / item.support_price) * 100
-    : 0;
   return {
     symbol: item.symbol,
-    status: "COIL_HOLDING",
-    status_title: "Coil Intact: Accumulation Holding",
-    live_price: item.current_price,
-    price_change_pct: priceChange,
-    current_rsi_1h: 50.0,
-    current_rsi_4h: 50.0,
-    taker_ratio: 1.0,
-    vol_contraction_ratio: 0.95,
-    gate_tripped: "All 6 Institutional Gates Active & Holding (Pre-Breakout Coil)",
-    live_reading: "1H RSI: 50.0 | 4H RSI: 50.0 | Taker: 1.000 | Vol Ratio: 0.950",
-    what_happened: `${item.symbol} remains compressed within its accumulation base between $${item.support_price.toFixed(4)} and $${item.trigger_price.toFixed(4)}.`,
-    institutional_logic: `Setup remains prime and compressed. Supply is drying up and institutions continue absorbing float. Maintain resting trigger order at $${item.trigger_price.toFixed(4)}.`,
-    audited_at: item.updated_at || new Date().toISOString(),
+    status: "DATA_UNAVAILABLE",
+    status_title: "Live Audit Pending",
+    live_price: null,
+    price_change_pct: null,
+    current_rsi_1h: null,
+    current_rsi_4h: null,
+    taker_ratio: null,
+    vol_contraction_ratio: null,
+    gate_tripped: "No verified live audit recorded yet.",
+    live_reading: "Awaiting verified Binance USD-M telemetry.",
+    what_happened: `Saved reference levels for ${item.symbol} are displayed; live Binance telemetry has not been verified yet.`,
+    institutional_logic: "Live gate evaluation requires fresh Binance USD-M candles and derivatives telemetry.",
+    audited_at: null,
+    telemetry_available: false,
   };
 }
 
@@ -264,7 +270,7 @@ function WatchlistCard({
         <div>
           <div style={{ color: "var(--text-muted)", fontSize: "10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-              LIVE PRICE
+              {livePrice !== undefined || audit.live_price !== null ? "LIVE PRICE" : "SAVED REF"}
               {livePrice !== undefined && (
                 <span
                   style={{
@@ -278,8 +284,8 @@ function WatchlistCard({
                 />
               )}
             </span>
-            <span style={{ color: audit.price_change_pct >= 0 ? "var(--accent-emerald)" : "var(--accent-crimson)", fontWeight: 700 }}>
-              {audit.price_change_pct >= 0 ? "+" : ""}{audit.price_change_pct.toFixed(2)}%
+            <span style={{ color: audit.price_change_pct === null ? "var(--text-muted)" : audit.price_change_pct >= 0 ? "var(--accent-emerald)" : "var(--accent-crimson)", fontWeight: 700 }}>
+              {audit.price_change_pct !== null ? `${audit.price_change_pct >= 0 ? "+" : ""}${audit.price_change_pct.toFixed(2)}%` : "—"}
             </span>
           </div>
           <div style={{ fontWeight: 800, color: "var(--text-primary)", marginTop: "2px", fontSize: "13px" }}>
@@ -421,26 +427,26 @@ function WatchlistCard({
         >
           <div>
             <span style={{ color: "var(--text-muted)", display: "block" }}>1H RSI</span>
-            <strong style={{ color: audit.current_rsi_1h > 65 ? "var(--accent-emerald)" : audit.current_rsi_1h < 35 ? "var(--accent-crimson)" : "#ffffff" }}>
-              {audit.current_rsi_1h.toFixed(1)}
+            <strong style={{ color: (audit.current_rsi_1h ?? 50) > 65 ? "var(--accent-emerald)" : (audit.current_rsi_1h ?? 50) < 35 ? "var(--accent-crimson)" : "#ffffff" }}>
+              {audit.current_rsi_1h !== null ? audit.current_rsi_1h.toFixed(1) : "—"}
             </strong>
           </div>
           <div>
             <span style={{ color: "var(--text-muted)", display: "block" }}>4H RSI</span>
-            <strong style={{ color: audit.current_rsi_4h > 65 ? "var(--accent-emerald)" : audit.current_rsi_4h < 35 ? "var(--accent-crimson)" : "#ffffff" }}>
-              {audit.current_rsi_4h.toFixed(1)}
+            <strong style={{ color: (audit.current_rsi_4h ?? 50) > 65 ? "var(--accent-emerald)" : (audit.current_rsi_4h ?? 50) < 35 ? "var(--accent-crimson)" : "#ffffff" }}>
+              {audit.current_rsi_4h !== null ? audit.current_rsi_4h.toFixed(1) : "—"}
             </strong>
           </div>
           <div>
             <span style={{ color: "var(--text-muted)", display: "block" }}>TAKER RATIO</span>
-            <strong style={{ color: (audit.taker_ratio || 1) < 0.85 ? "var(--accent-crimson)" : "var(--accent-emerald)" }}>
-              {audit.taker_ratio !== null ? audit.taker_ratio.toFixed(3) : "1.000"}
+            <strong style={{ color: audit.taker_ratio !== null && audit.taker_ratio < 0.85 ? "var(--accent-crimson)" : "var(--accent-emerald)" }}>
+              {audit.taker_ratio !== null ? audit.taker_ratio.toFixed(3) : "—"}
             </strong>
           </div>
           <div>
             <span style={{ color: "var(--text-muted)", display: "block" }}>VOL RATIO</span>
-            <strong style={{ color: (audit.vol_contraction_ratio || 1) > 1.25 ? "var(--accent-crimson)" : "#ffffff" }}>
-              {audit.vol_contraction_ratio !== null ? audit.vol_contraction_ratio.toFixed(3) : "0.950"}
+            <strong style={{ color: audit.vol_contraction_ratio !== null && audit.vol_contraction_ratio > 1.25 ? "var(--accent-crimson)" : "#ffffff" }}>
+              {audit.vol_contraction_ratio !== null ? audit.vol_contraction_ratio.toFixed(3) : "—"}
             </strong>
           </div>
         </div>

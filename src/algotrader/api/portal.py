@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from algotrader.application.auto_watchlist_service import AutoWatchlistService
 from algotrader.application.bearish_continuation import publication_inputs_current
 from algotrader.application.radar_service import reconcile_radar_cohort
 from algotrader.application.top_gainer_short_watch import TopGainerShortWatchService
@@ -54,8 +55,38 @@ _episode_policy_version: str | None = None
 _episode_macro_narrative: str | None = None
 _cached_instruments: Any = None
 _watchlist_service = WatchlistService()
+_auto_watchlist_service: AutoWatchlistService | None = None
+_auto_watchlist_backfilled: bool = False
 _short_watch_lock = asyncio.Lock()
 _short_watch_service: TopGainerShortWatchService | None = None
+
+
+def _live_radar_symbols_from_cache() -> list[str]:
+    opps = _screener_cache.get("opportunities")
+    if not isinstance(opps, list):
+        return []
+    return [
+        str(o.get("symbol", "")).upper().strip()
+        for o in opps
+        if isinstance(o, dict) and o.get("symbol")
+    ]
+
+
+def _get_auto_watchlist_service(runtime: Runtime | None = None) -> AutoWatchlistService:
+    global _auto_watchlist_service, _auto_watchlist_backfilled
+    if _auto_watchlist_service is None:
+        settings = runtime.settings if runtime is not None else load_settings()
+        raw_db_path = getattr(settings, "state_db_path", None)
+        db_path = raw_db_path if isinstance(raw_db_path, (str, Path)) else load_settings().state_db_path
+        _auto_watchlist_service = AutoWatchlistService(db_path)
+    if not _auto_watchlist_backfilled:
+        _auto_watchlist_backfilled = True
+        with contextlib.suppress(Exception):
+            _auto_watchlist_service.backfill_from_radar_events_dir(
+                Path("data/radar_events"),
+                live_radar_symbols=_live_radar_symbols_from_cache(),
+            )
+    return _auto_watchlist_service
 
 
 def _get_short_watch_service(runtime: Runtime | None = None) -> TopGainerShortWatchService:
@@ -466,7 +497,7 @@ async def _do_crypto_screen_locked(
     min_score: float = 50.0,
     max_symbols: int = 320,
 ) -> dict[str, Any]:
-    global _screener_cache, _cache_timestamp, _is_refreshing
+    global _screener_cache, _cache_timestamp, _is_refreshing, _cached_instruments
     global _episode_roster, _episode_policy_version, _episode_macro_narrative
     global _last_scan_attempted_at, _last_scan_succeeded_at, _last_scan_error, _consecutive_scan_failures
     _is_refreshing = True
@@ -808,6 +839,34 @@ async def _do_crypto_screen_locked(
         _last_scan_error = None
         _consecutive_scan_failures = 0
 
+        # Automatically enroll verified 5/5 episodes into the 48h Auto-Watchlist & update outcomes
+        with contextlib.suppress(Exception):
+            auto_watch = _get_auto_watchlist_service(runtime)
+            await asyncio.to_thread(
+                auto_watch.sync_from_scan,
+                published_opportunities=final_opps,
+                radar_events=radar_events,
+                now=now,
+                scan_id=run.receipt.scan_id,
+            )
+            futures_market = runtime.futures_market
+            if _cached_instruments is None:
+                with contextlib.suppress(Exception):
+                    _cached_instruments = await asyncio.wait_for(
+                        futures_market.instruments(), timeout=3.0
+                    )
+            if _cached_instruments:
+                await asyncio.wait_for(
+                    auto_watch.refresh_and_evaluate(
+                        futures_market,
+                        _cached_instruments,
+                        force_refresh=True,
+                        internal_scheduler=True,
+                        now=now,
+                    ),
+                    timeout=10.0,
+                )
+
         # Persist latest live scan to disk atomically off the main event loop thread
         try:
             cache_file = Path("data/screener_latest.json")
@@ -1093,6 +1152,7 @@ def start_screener_cron(interval_hours: int = 1) -> None:
 async def stop_portal() -> None:
     """Cancel scans before closing their shared public-data clients."""
     global _cron_task, _screener_task, _shared_runtime, _cached_instruments, _short_watch_service
+    global _auto_watchlist_service, _auto_watchlist_backfilled
     global _cache_timestamp, _last_cron_run, _next_cron_run
     global _episode_roster, _episode_policy_version, _episode_macro_narrative
     global _last_scan_attempted_at, _last_scan_succeeded_at, _last_scan_error
@@ -1104,6 +1164,8 @@ async def stop_portal() -> None:
     _cron_task = None
     _screener_task = None
     _short_watch_service = None
+    _auto_watchlist_service = None
+    _auto_watchlist_backfilled = False
     async with _runtime_lock:
         if _shared_runtime is not None:
             await _shared_runtime.close()
@@ -1338,10 +1400,60 @@ async def get_symbol_chart(symbol: str, interval: str = "1h", limit: int = 250) 
     }
 
 
+@portal_router.get("/watchlist/auto")
+async def get_auto_watchlist(
+    refresh: bool = False,
+    days: int = 14,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Returns 48h auto-tracked Radar candidates, immediately resolved outcomes, and performance summary.
+
+    Security invariant (W4):
+    - Public reads respect the server-side singleflight cooldown (cache-only when fresh).
+    - Explicit forced refresh (`refresh=true`) requires operator authorization and server cooldown.
+    """
+    global _cached_instruments
+    bounded_days = max(1, min(90, days))
+    if refresh:
+        _require_operator_auth(authorization)
+    auto_watch = _get_auto_watchlist_service()
+    live_syms = _live_radar_symbols_from_cache()
+    if not refresh and not auto_watch.refresh_due():
+        return auto_watch.build_response(days=bounded_days, live_radar_symbols=live_syms)
+    try:
+        runtime = await get_portal_runtime()
+        auto_watch = _get_auto_watchlist_service(runtime)
+        futures = runtime.futures_market
+        if _cached_instruments is None:
+            _cached_instruments = await asyncio.wait_for(futures.instruments(), timeout=3.0)
+        if _cached_instruments:
+            await asyncio.wait_for(
+                auto_watch.refresh_and_evaluate(
+                    futures,
+                    _cached_instruments,
+                    force_refresh=refresh,
+                ),
+                timeout=12.0,
+            )
+        return auto_watch.build_response(days=bounded_days, live_radar_symbols=_live_radar_symbols_from_cache())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        payload = auto_watch.build_response(days=bounded_days, live_radar_symbols=_live_radar_symbols_from_cache())
+        payload["refresh_warning"] = f"{type(exc).__name__}: {exc}"
+        return payload
+
+
 @portal_router.get("/watchlist")
-async def get_watchlist(live_audit: bool = True, refresh: bool = False) -> dict[str, Any]:
+async def get_watchlist(
+    live_audit: bool = True,
+    refresh: bool = False,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     """Returns all tokens on institutional watch for coming days, enriched with live gate audits."""
     global _cached_instruments
+    if refresh:
+        _require_operator_auth(authorization)
     if not live_audit:
         items = _watchlist_service.list_items()
         return {
@@ -1349,10 +1461,36 @@ async def get_watchlist(live_audit: bool = True, refresh: bool = False) -> dict[
             "total": len(items),
         }
 
+    if not _watchlist_service.audit_refresh_due():
+        items = _watchlist_service.list_items()
+        fresh_cached = _watchlist_service.get_fresh_audit_cache()
+        enriched_cached = []
+        for item in items:
+            aud = fresh_cached.get(item.symbol) or _watchlist_service.audit_item(
+                item, None, [], [], None
+            )
+            eff_price = aud.live_price if (aud.live_price is not None and aud.live_price > 0) else item.current_price
+            enriched_cached.append(
+                replace(
+                    item,
+                    current_price=eff_price,
+                    distance_to_trigger_pct=(
+                        abs(item.trigger_price - eff_price) / eff_price * Decimal("100")
+                        if eff_price > 0
+                        else item.distance_to_trigger_pct
+                    ),
+                    audit=aud,
+                )
+            )
+        return {
+            "items": [item.as_dict() for item in enriched_cached],
+            "total": len(enriched_cached),
+        }
+
     try:
         runtime = await get_portal_runtime()
         futures = runtime.futures_market
-        if _cached_instruments is None or refresh:
+        if _cached_instruments is None:
             _cached_instruments = await asyncio.wait_for(futures.instruments(), timeout=3.0)
 
         items = await asyncio.wait_for(
@@ -1365,21 +1503,24 @@ async def get_watchlist(live_audit: bool = True, refresh: bool = False) -> dict[
             "items": [item.as_dict() for item in items],
             "total": len(items),
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         items = _watchlist_service.list_items()
-        cached = _watchlist_service._audit_cache or {}
+        cached = _watchlist_service.get_fresh_audit_cache()
         enriched = []
         for item in items:
             aud = cached.get(item.symbol) or _watchlist_service.audit_item(
-                item, item.current_price, [], [], None
+                item, None, [], [], None
             )
+            eff_price = aud.live_price if (aud.live_price is not None and aud.live_price > 0) else item.current_price
             enriched.append(
                 replace(
                     item,
-                    current_price=aud.live_price,
+                    current_price=eff_price,
                     distance_to_trigger_pct=(
-                        abs(item.trigger_price - aud.live_price) / aud.live_price * Decimal("100")
-                        if aud.live_price > 0
+                        abs(item.trigger_price - eff_price) / eff_price * Decimal("100")
+                        if eff_price > 0
                         else item.distance_to_trigger_pct
                     ),
                     audit=aud,
@@ -1393,13 +1534,25 @@ async def get_watchlist(live_audit: bool = True, refresh: bool = False) -> dict[
 
 
 @portal_router.get("/watchlist/audit")
-async def get_watchlist_audit(refresh: bool = False) -> dict[str, Any]:
+async def get_watchlist_audit(
+    refresh: bool = False,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
     """Runs or retrieves real-time technical health and gate diagnostics for all watched positions."""
     global _cached_instruments
+    if refresh:
+        _require_operator_auth(authorization)
+    if not _watchlist_service.audit_refresh_due():
+        fresh_cached = _watchlist_service.get_fresh_audit_cache()
+        if fresh_cached:
+            return {
+                "audits": {sym: audit.as_dict() for sym, audit in fresh_cached.items()},
+                "count": len(fresh_cached),
+            }
     try:
         runtime = await get_portal_runtime()
         futures = runtime.futures_market
-        if _cached_instruments is None or refresh:
+        if _cached_instruments is None:
             _cached_instruments = await asyncio.wait_for(futures.instruments(), timeout=3.0)
 
         audits = await asyncio.wait_for(
@@ -1410,13 +1563,15 @@ async def get_watchlist_audit(refresh: bool = False) -> dict[str, Any]:
             "audits": {sym: audit.as_dict() for sym, audit in audits.items()},
             "count": len(audits),
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         items = _watchlist_service.list_items()
-        cached = _watchlist_service._audit_cache or {}
+        cached = _watchlist_service.get_fresh_audit_cache()
         results = {}
         for item in items:
             aud = cached.get(item.symbol) or _watchlist_service.audit_item(
-                item, item.current_price, [], [], None
+                item, None, [], [], None
             )
             results[item.symbol] = aud.as_dict()
         return {"audits": results, "count": len(results), "warning": f"{type(exc).__name__}: {exc}"}
@@ -1491,7 +1646,7 @@ async def post_watchlist_audit(payload: BatchAuditWatchlistRequest) -> dict[str,
         fallback_items: list[WatchlistItem] = []
         audits_map: dict[str, Any] = {}
         for item in domain_items:
-            aud = _watchlist_service.audit_item(item, item.current_price, [], [], None)
+            aud = _watchlist_service.audit_item(item, None, [], [], None)
             audits_map[item.symbol] = aud.as_dict()
             fallback_items.append(replace(item, audit=aud))
         return {

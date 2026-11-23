@@ -59,10 +59,22 @@ def screening_identity() -> dict[str, Any]:
 def screening_configuration(settings: Settings) -> dict[str, Any]:
     # Only settings consumed by CryptoOpportunityScreener; never dump operator tokens.
     config: dict[str, Any] = {"excluded_base_assets": settings.excluded_base_assets,
-                             "support_resistance_lookback_bars": settings.support_resistance_lookback_bars}
+                             "support_resistance_lookback_bars": settings.support_resistance_lookback_bars,
+                             "stage2_capacity_rollover_enabled": settings.stage2_capacity_rollover_enabled}
     if settings.bearish_continuation_enabled:
         config["bearish_continuation_enabled"] = True
     return config
+
+
+def supported_screening_configuration(config: dict[str, Any], *, allow_continuation: bool = False) -> bool:
+    """Strict research allowlist including the recorded allocation rollback switch."""
+    required = {"excluded_base_assets", "support_resistance_lookback_bars"}
+    optional = {"stage2_capacity_rollover_enabled"}
+    if allow_continuation:
+        optional.add("bearish_continuation_enabled")
+    return required <= config.keys() <= required | optional and all(
+        type(config[key]) is bool for key in optional & config.keys()
+    )
 
 
 class CallTape:
