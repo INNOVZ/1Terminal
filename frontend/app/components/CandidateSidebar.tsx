@@ -655,13 +655,6 @@ export interface SidebarWatchlistEpisode {
   worst_mae_pct: number;
 }
 
-function fmtRemainingShort(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return "0m";
-  const hrs = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
-}
-
 export interface CandidateSidebarProps {
   opportunities: Opportunity[];
   watchlistEpisodes?: SidebarWatchlistEpisode[];
@@ -946,9 +939,6 @@ function CandidateSidebar({
                     <span style={{ color: "#10b981", fontSize: "10px", fontWeight: 700 }}>
                       MFE {effectiveMfe >= 0 ? "+" : ""}
                       {effectiveMfe.toFixed(1)}%
-                    </span>
-                    <span style={{ color: "#facc15", fontSize: "10px", fontWeight: 700 }}>
-                      {fmtRemainingShort(ep.remaining_seconds)} left
                     </span>
                   </div>
 

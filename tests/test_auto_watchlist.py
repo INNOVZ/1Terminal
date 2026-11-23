@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -334,3 +336,208 @@ async def test_disjoint_lifecycle_zero_duplication_soft_promotion_and_radar_reen
     assert reopened["resolved"][0]["barrier_order_certified"] is True
     assert reopened["evicted_from_radar_cohort"]["target_reached"] == 1
     assert reopened["summary"]["target_hit_rate_pct"] == 100.0
+
+
+def test_backfill_same_scan_superseded_and_fresh_coil_promotes_soft_eviction_and_auto_heals(tmp_path: Path):
+    """Regression for the USUALUSDT 08:01/18:01 UTC bug:
+    - Scan 1 (T0): Old USUALUSDT thesis enrolled.
+    - Scan 2 (T0+8h): Same radar_events file contains BOTH `SUPERSEDED` (old thesis) AND
+      `FRESH_COIL` (new thesis). The new thesis MUST survive as ON_RADAR.
+    - Scan 3 (T0+18h): New thesis soft-evicts on `Smart Money Absorption` (taker 0.80 >= 0.78)
+      with 4/4 structural gates intact -> MUST land in 48h WATCHLIST.
+    - Pre-existing corrupted 0s `HARD_INVALIDATED` (`replaced_by_new_thesis`) row MUST auto-heal.
+    """
+    db_path = tmp_path / "auto_watch.sqlite3"
+    events_dir = tmp_path / "radar_events"
+    events_dir.mkdir()
+
+    t_old = T0
+    t_new = T0 + timedelta(hours=8)
+    t_evict = T0 + timedelta(hours=18)
+
+    old_cand = _sample_candidate(
+        symbol="USUALUSDT",
+        setup_label="VCP_COMPRESSION_LONG",
+        execution_mode="RETEST_ACCUMULATION",
+        published_at=t_old,
+        signal_price="0.010980",
+        entry="0.010780",
+        trigger="0.012035",
+        stop="0.009200",
+        t1="0.013150",
+        episode_id="ep-usual-old",
+    )
+    new_cand = _sample_candidate(
+        symbol="USUALUSDT",
+        setup_label="BREAKOUT_LONG",
+        execution_mode="CEILING_BREAKOUT",
+        published_at=t_new + timedelta(seconds=2),
+        signal_price="0.011421",
+        entry="0.012021",
+        trigger="0.012021",
+        stop="0.010709",
+        t1="0.013989",
+        episode_id="ep-usual-new",
+    )
+
+    # Write chronological radar_events files
+    (events_dir / "01_old.json").write_text(
+        json.dumps(
+            {
+                "schema": "atlas-radar-events-v2",
+                "scan_id": "scan-1",
+                "at": t_old.isoformat(),
+                "events": [
+                    {
+                        "symbol": "USUALUSDT",
+                        "at": t_old.isoformat(),
+                        "state": "FRESH_COIL",
+                        "retained": True,
+                        "reason": "new_setup",
+                        "candidate": old_cand,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (events_dir / "02_supersede_and_fresh.json").write_text(
+        json.dumps(
+            {
+                "schema": "atlas-radar-events-v2",
+                "scan_id": "scan-2",
+                "at": t_new.isoformat(),
+                "events": [
+                    {
+                        "symbol": "USUALUSDT",
+                        "at": t_new.isoformat(),
+                        "state": "SUPERSEDED",
+                        "retained": False,
+                        "reason": "replaced_by_new_thesis",
+                        "candidate": old_cand,
+                    },
+                    {
+                        "symbol": "USUALUSDT",
+                        "at": t_new.isoformat(),
+                        "state": "FRESH_COIL",
+                        "retained": True,
+                        "reason": "replaced_by_new_setup",
+                        "candidate": new_cand,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (events_dir / "03_soft_evict.json").write_text(
+        json.dumps(
+            {
+                "schema": "atlas-radar-events-v2",
+                "scan_id": "scan-3",
+                "at": t_evict.isoformat(),
+                "events": [
+                    {
+                        "symbol": "USUALUSDT",
+                        "at": t_evict.isoformat(),
+                        "state": "INVALIDATED",
+                        "retained": False,
+                        "reason": "radar_gates_degraded",
+                        "failed_gates": ["Smart Money Absorption"],
+                        "candidate": {
+                            **new_cand,
+                            "current_price": "0.011496",
+                            "checklist": _five_gate_checklist(
+                                failed_titles={"Smart Money Absorption"}
+                            ),
+                            "radar_metrics": {
+                                "taker_buy_sell_ratio": "0.7993",
+                                "oi_change_7d_pct": "+31.57%",
+                                "oi_change_1h_pct": "-2.23%",
+                                "funding_rate_bps": "+0.50 bps",
+                                "volume_contraction_ratio": "1.415",
+                            },
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    svc = AutoWatchlistService(db_path)
+
+    # Pre-seed the exact legacy corrupted state for `ep-usual-new` (resolved_at < published_at)
+    assert svc.enroll_candidate(new_cand, published_at=t_new + timedelta(seconds=2), scan_id="scan-2") is not None
+    conn = sqlite3.connect(str(db_path))
+    try:
+        with conn:
+            conn.execute(
+                """
+                UPDATE radar_auto_watchlist
+                SET status = 'HARD_INVALIDATED',
+                    radar_presence = 'EVICTED_FROM_RADAR',
+                    eviction_reason = 'replaced_by_new_thesis',
+                    resolution_reason = 'replaced_by_new_thesis',
+                    resolved_at = ?
+                WHERE episode_id = 'ep-usual-new'
+                """,
+                (t_new.isoformat(),),
+            )
+    finally:
+        conn.close()
+
+    # Backfill auto-heals the corrupted row and replays all 3 scans cleanly
+    svc.backfill_from_radar_events_dir(events_dir, lookback_days=7, live_radar_symbols=[], now=t_evict + timedelta(minutes=5))
+    resp = svc.build_response(days=7, live_radar_symbols=[], now=t_evict + timedelta(minutes=5))
+
+    assert [e["episode_id"] for e in resp["watchlist"]] == ["ep-usual-new"]
+    watch_ep = resp["watchlist"][0]
+    assert watch_ep["symbol"] == "USUALUSDT"
+    assert watch_ep["gates_passed"] == 4
+    assert watch_ep["soft_gate_summary"] is not None and "Taker 0.80" in watch_ep["soft_gate_summary"]
+    assert [e["episode_id"] for e in resp["resolved"]] == ["ep-usual-old"]
+    assert resp["resolved"][0]["eviction_reason"] == "replaced_by_new_thesis"
+
+
+def test_sync_from_scan_supersedes_old_episode_without_duplicating_on_radar(tmp_path: Path):
+    db_path = tmp_path / "auto_watch.sqlite3"
+    svc = AutoWatchlistService(db_path)
+
+    t1 = T0
+    t2 = T0 + timedelta(hours=4)
+    old_folks = _sample_candidate(
+        symbol="FOLKSUSDT",
+        setup_label="VCP_COMPRESSION_LONG",
+        published_at=t1,
+        episode_id="ep-folks-old",
+    )
+    new_folks = _sample_candidate(
+        symbol="FOLKSUSDT",
+        setup_label="VCP_COMPRESSION_LONG",
+        published_at=t2,
+        signal_price="102",
+        episode_id="ep-folks-new",
+    )
+
+    svc.sync_from_scan(published_opportunities=[old_folks], radar_events=[], now=t1, scan_id="s1")
+    svc.sync_from_scan(
+        published_opportunities=[new_folks],
+        radar_events=[
+            {
+                "symbol": "FOLKSUSDT",
+                "at": t2.isoformat(),
+                "state": "SUPERSEDED",
+                "retained": False,
+                "reason": "replaced_by_new_thesis",
+                "candidate": old_folks,
+            }
+        ],
+        now=t2,
+        scan_id="s2",
+    )
+
+    resp = svc.build_response(live_radar_symbols=["FOLKSUSDT"], now=t2)
+    assert [e["episode_id"] for e in resp["on_radar"]] == ["ep-folks-new"]
+    assert resp["watchlist"] == []
+    assert [e["episode_id"] for e in resp["resolved"]] == ["ep-folks-old"]
+    assert resp["resolved"][0]["eviction_reason"] == "replaced_by_new_thesis"

@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   RefreshCw,
-  Clock,
   ExternalLink,
   CheckCircle2,
   XCircle,
@@ -717,11 +716,11 @@ export default function AutoWatchlistSection({
                     </div>
                   </div>
 
-                  {/* Excursion & Clock Bar */}
+                  {/* Excursion Bar */}
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                       gap: "8px",
                       padding: "8px 10px",
                       borderRadius: "6px",
@@ -737,12 +736,6 @@ export default function AutoWatchlistSection({
                     <div>
                       <div style={{ color: C.muted, fontSize: "9.5px" }}>WORST MAE</div>
                       <strong style={{ color: C.red }}>{fmtPct(effectiveMae)}</strong>
-                    </div>
-                    <div>
-                      <div style={{ color: C.muted, fontSize: "9.5px" }}>48H CLOCK</div>
-                      <strong style={{ color: C.yellow, display: "inline-flex", alignItems: "center", gap: "3px" }}>
-                        <Clock size={10} /> {fmtDuration(ep.remaining_seconds)} left
-                      </strong>
                     </div>
                   </div>
 

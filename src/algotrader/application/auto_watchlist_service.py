@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import sqlite3
@@ -36,6 +37,39 @@ from algotrader.domain.auto_watchlist import (
 )
 from algotrader.domain.models import Candle, Instrument
 from algotrader.domain.ports import MarketDataPort
+
+
+def _extract_candidate_episode_id(candidate: Mapping[str, Any]) -> str | None:
+    """Derive the canonical episode_id matching `build_auto_watch_episode` without requiring 5/5 gates."""
+    radar_signal = candidate.get("radar_signal")
+    if isinstance(radar_signal, Mapping):
+        ep_id = str(radar_signal.get("episode_id") or "").strip()
+        if ep_id:
+            return ep_id
+    symbol = str(candidate.get("symbol", "")).upper().strip()
+    if not symbol:
+        return None
+    direction = str(candidate.get("direction", "long")).lower().strip()
+    setup_label = str(candidate.get("setup_label", "UNKNOWN")).strip() or "UNKNOWN"
+    origin_raw = candidate.get("first_seen_at") or candidate.get("evaluated_at")
+    if not isinstance(origin_raw, str) or not origin_raw:
+        return None
+    try:
+        origin_dt = datetime.fromisoformat(origin_raw)
+        if origin_dt.tzinfo is None or origin_dt.utcoffset() is None:
+            return None
+        origin_iso = origin_dt.astimezone(UTC).isoformat()
+    except ValueError:
+        return None
+    raw_key = f"{symbol}|{direction}|{setup_label}|{origin_iso}"
+    return hashlib.sha256(raw_key.encode()).hexdigest()[:32]
+
+
+def _extract_event_episode_id(event: Mapping[str, Any]) -> str | None:
+    cand = event.get("candidate")
+    if isinstance(cand, Mapping):
+        return _extract_candidate_episode_id(cand)
+    return None
 
 
 class AutoWatchlistService:
@@ -483,19 +517,47 @@ class AutoWatchlistService:
         enrolled_count = 0
 
         active_radar_by_symbol: dict[str, Mapping[str, Any]] = {}
+        active_radar_by_episode_id: dict[str, Mapping[str, Any]] = {}
         for opp in published_opportunities:
             sym = str(opp.get("symbol", "")).upper().strip()
             if sym:
                 active_radar_by_symbol[sym] = opp
-            if self.enroll_candidate(opp, published_at=ref_now, scan_id=scan_id) is not None:
-                enrolled_count += 1
+            opp_ep_id = _extract_candidate_episode_id(opp)
+            if opp_ep_id:
+                active_radar_by_episode_id[opp_ep_id] = opp
 
         evictions_by_symbol: dict[str, Mapping[str, Any]] = {}
+        evictions_by_episode_id: dict[str, Mapping[str, Any]] = {}
         for ev in radar_events:
             if isinstance(ev, Mapping) and ev.get("retained") is False:
                 sym = str(ev.get("symbol", "")).upper().strip()
                 if sym:
                     evictions_by_symbol[sym] = ev
+                ev_ep_id = _extract_event_episode_id(ev)
+                if ev_ep_id:
+                    evictions_by_episode_id[ev_ep_id] = ev
+
+        # Apply explicit episode-matched evictions (e.g. SUPERSEDED old thesis) BEFORE enrolling
+        # newly published candidates so a <6h thesis replacement is never swallowed by dedup.
+        if evictions_by_episode_id:
+            with self._lock, self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM radar_auto_watchlist WHERE status IN ('ON_RADAR', 'WATCHLIST')"
+                ).fetchall()
+                for row in rows:
+                    ep = self._row_to_episode(row)
+                    ev_for_ep = evictions_by_episode_id.get(ep.episode_id)
+                    if ev_for_ep is not None and ep.episode_id not in active_radar_by_episode_id:
+                        updated = self._apply_eviction_to_episode(
+                            ep, eviction_event=ev_for_ep, ref_now=ref_now
+                        )
+                        self._upsert_episode_locked(conn, updated)
+
+        for opp in published_opportunities:
+            enrolled_ep = self.enroll_candidate(opp, published_at=ref_now, scan_id=scan_id)
+            if enrolled_ep is not None:
+                enrolled_count += 1
+                active_radar_by_episode_id[enrolled_ep.episode_id] = opp
 
         with self._lock, self._get_connection() as conn:
             rows = conn.execute(
@@ -503,8 +565,33 @@ class AutoWatchlistService:
             ).fetchall()
             for row in rows:
                 ep = self._row_to_episode(row)
-                live_opp = active_radar_by_symbol.get(ep.symbol)
-                if live_opp is not None:
+                ev_for_ep = evictions_by_episode_id.get(ep.episode_id)
+                live_for_ep = active_radar_by_episode_id.get(ep.episode_id)
+                live_for_sym = active_radar_by_symbol.get(ep.symbol)
+                live_sym_ep_id = (
+                    _extract_candidate_episode_id(live_for_sym)
+                    if live_for_sym is not None
+                    else None
+                )
+
+                # If this exact episode was explicitly evicted (including SUPERSEDED by a newer
+                # thesis on the same symbol), apply its eviction instead of keeping it ON_RADAR.
+                if ev_for_ep is not None and live_for_ep is None:
+                    updated = self._apply_eviction_to_episode(
+                        ep, eviction_event=ev_for_ep, ref_now=ref_now
+                    )
+                    self._upsert_episode_locked(conn, updated)
+                    continue
+
+                # Same episode is live on 5/5 Radar (or live opportunity matches this symbol without
+                # a distinct newer episode_id).
+                is_same_live_episode = live_for_ep is not None or (
+                    live_for_sym is not None
+                    and (live_sym_ep_id is None or live_sym_ep_id == ep.episode_id)
+                )
+                if is_same_live_episode:
+                    live_opp = live_for_ep or live_for_sym
+                    assert live_opp is not None
                     raw_cl = live_opp.get("checklist")
                     cl = (
                         tuple(
@@ -538,12 +625,58 @@ class AutoWatchlistService:
                     if updated != ep:
                         self._upsert_episode_locked(conn, updated)
                 elif ep.status is AutoWatchStatus.ON_RADAR:
-                    ev_obj = evictions_by_symbol.get(ep.symbol)
+                    ev_obj: Mapping[str, Any] | None = evictions_by_episode_id.get(ep.episode_id)
+                    if ev_obj is None:
+                        if live_for_sym is not None and live_sym_ep_id != ep.episode_id:
+                            # Replaced on live Radar by a distinct newer episode_id
+                            sym_ev = evictions_by_symbol.get(ep.symbol)
+                            ev_obj = sym_ev or {
+                                "symbol": ep.symbol,
+                                "state": "SUPERSEDED",
+                                "retained": False,
+                                "reason": "replaced_by_new_thesis",
+                            }
+                        else:
+                            ev_obj = evictions_by_symbol.get(ep.symbol)
                     updated = self._apply_eviction_to_episode(
                         ep, eviction_event=ev_obj, ref_now=ref_now
                     )
                     self._upsert_episode_locked(conn, updated)
         return enrolled_count
+
+    def _heal_premature_same_scan_superseded_locked(self, conn: sqlite3.Connection) -> int:
+        """Delete corrupted rows killed by the legacy same-scan SUPERSEDED symbol-matching bug.
+
+        When an older thesis was superseded in the same scan as a brand-new FRESH_COIL episode,
+        the legacy symbol-only backfill marked the brand-new episode HARD_INVALIDATED with
+        `replaced_by_new_thesis` within <= 60s of its own `published_at`. Removing those rows
+        before chronological replay lets `backfill_from_radar_events_dir` reconstruct their true
+        lifecycle (including soft promotion to WATCHLIST).
+        """
+        rows = conn.execute(
+            """
+            SELECT episode_id, published_at, resolved_at
+            FROM radar_auto_watchlist
+            WHERE status = 'HARD_INVALIDATED'
+              AND eviction_reason = 'replaced_by_new_thesis'
+              AND resolved_at IS NOT NULL
+            """
+        ).fetchall()
+        corrupted_ids: list[tuple[str]] = []
+        for row in rows:
+            try:
+                pub_dt = datetime.fromisoformat(str(row["published_at"])).astimezone(UTC)
+                res_dt = datetime.fromisoformat(str(row["resolved_at"])).astimezone(UTC)
+                if (res_dt - pub_dt).total_seconds() <= 60.0:
+                    corrupted_ids.append((str(row["episode_id"]),))
+            except Exception:
+                continue
+        if corrupted_ids:
+            conn.executemany(
+                "DELETE FROM radar_auto_watchlist WHERE episode_id = ?",
+                corrupted_ids,
+            )
+        return len(corrupted_ids)
 
     def backfill_from_radar_events_dir(
         self,
@@ -559,6 +692,10 @@ class AutoWatchlistService:
             return 0
         ref_now = (now or datetime.now(UTC)).astimezone(UTC)
         cutoff = ref_now - timedelta(days=max(1, lookback_days))
+
+        with self._lock, self._get_connection() as conn:
+            self._heal_premature_same_scan_superseded_locked(conn)
+
         indexed: list[tuple[datetime, Path]] = []
         for path in directory.glob("*.json"):
             if path.is_symlink() or not path.is_file():
@@ -588,6 +725,53 @@ class AutoWatchlistService:
                 doc = json.loads(path.read_text(encoding="utf-8"))
                 scan_id = str(doc.get("scan_id") or "") or None
                 events = doc.get("events") or []
+
+                # 1. Process evictions FIRST (matched by episode_id, falling back to symbol
+                #    only when episode_id is absent) so a same-scan SUPERSEDED / INVALIDATED
+                #    event for an OLD thesis can NEVER kill a brand-new FRESH_COIL episode.
+                evictions_by_ep_id: dict[str, Mapping[str, Any]] = {}
+                evictions_by_sym_fallback: dict[str, Mapping[str, Any]] = {}
+                fresh_ep_ids_in_file: set[str] = set()
+                for ev in events:
+                    if not isinstance(ev, Mapping):
+                        continue
+                    if ev.get("state") == "FRESH_COIL" and ev.get("retained") is True:
+                        cand = ev.get("candidate")
+                        if isinstance(cand, Mapping):
+                            cid = _extract_candidate_episode_id(cand)
+                            if cid:
+                                fresh_ep_ids_in_file.add(cid)
+                    elif ev.get("retained") is False:
+                        ev_ep_id = _extract_event_episode_id(ev)
+                        if ev_ep_id:
+                            evictions_by_ep_id[ev_ep_id] = ev
+                        else:
+                            sym = str(ev.get("symbol", "")).upper().strip()
+                            if sym:
+                                evictions_by_sym_fallback[sym] = ev
+
+                if evictions_by_ep_id or evictions_by_sym_fallback:
+                    with self._lock, self._get_connection() as conn:
+                        rows = conn.execute(
+                            "SELECT * FROM radar_auto_watchlist WHERE status = 'ON_RADAR'"
+                        ).fetchall()
+                        for row in rows:
+                            ep = self._row_to_episode(row)
+                            if ep.episode_id in fresh_ep_ids_in_file:
+                                continue
+                            ev_obj = evictions_by_ep_id.get(ep.episode_id)
+                            if ev_obj is None:
+                                fallback = evictions_by_sym_fallback.get(ep.symbol)
+                                if fallback is not None and ep.published_at <= file_at + timedelta(seconds=60):
+                                    ev_obj = fallback
+                            if ev_obj is None:
+                                continue
+                            updated = self._apply_eviction_to_episode(
+                                ep, eviction_event=ev_obj, ref_now=file_at
+                            )
+                            self._upsert_episode_locked(conn, updated)
+
+                # 2. Enroll brand-new FRESH_COIL episodes AFTER prior-episode evictions.
                 for ev in events:
                     if not isinstance(ev, Mapping):
                         continue
@@ -602,40 +786,45 @@ class AutoWatchlistService:
                         if isinstance(ev_at_raw, str)
                         else file_at
                     )
-                    if self.enroll_candidate(cand, published_at=ev_at, scan_id=scan_id) is not None:
+                    new_ep = self.enroll_candidate(cand, published_at=ev_at, scan_id=scan_id)
+                    if new_ep is not None:
                         enrolled += 1
-
-                evictions: dict[str, Mapping[str, Any]] = {}
-                for ev in events:
-                    if isinstance(ev, Mapping) and ev.get("retained") is False:
-                        sym = str(ev.get("symbol", "")).upper().strip()
-                        if sym:
-                            evictions[sym] = ev
-                if evictions:
-                    with self._lock, self._get_connection() as conn:
-                        rows = conn.execute(
-                            "SELECT * FROM radar_auto_watchlist WHERE status = 'ON_RADAR'"
-                        ).fetchall()
-                        for row in rows:
-                            ep = self._row_to_episode(row)
-                            ev_obj = evictions.get(ep.symbol)
-                            if ev_obj is None or ep.published_at > file_at + timedelta(seconds=60):
-                                continue
-                            updated = self._apply_eviction_to_episode(
-                                ep, eviction_event=ev_obj, ref_now=file_at
-                            )
-                            self._upsert_episode_locked(conn, updated)
+                        # Ensure no older ON_RADAR thesis on the same symbol stays orphaned
+                        with self._lock, self._get_connection() as conn:
+                            older_rows = conn.execute(
+                                """
+                                SELECT * FROM radar_auto_watchlist
+                                WHERE symbol = ? AND status = 'ON_RADAR' AND episode_id != ?
+                                """,
+                                (new_ep.symbol, new_ep.episode_id),
+                            ).fetchall()
+                            for older_row in older_rows:
+                                older_ep = self._row_to_episode(older_row)
+                                if older_ep.published_at < new_ep.published_at:
+                                    superseded = self._apply_eviction_to_episode(
+                                        older_ep,
+                                        eviction_event={
+                                            "symbol": older_ep.symbol,
+                                            "state": "SUPERSEDED",
+                                            "retained": False,
+                                            "reason": "replaced_by_new_thesis",
+                                        },
+                                        ref_now=ev_at,
+                                    )
+                                    self._upsert_episode_locked(conn, superseded)
             except Exception:
                 continue
 
         if live_set:
             with self._lock, self._get_connection() as conn:
                 rows = conn.execute(
-                    "SELECT * FROM radar_auto_watchlist WHERE status = 'WATCHLIST'"
+                    "SELECT * FROM radar_auto_watchlist WHERE status = 'WATCHLIST' ORDER BY published_at DESC"
                 ).fetchall()
+                promoted_syms: set[str] = set()
                 for row in rows:
                     ep = self._row_to_episode(row)
-                    if ep.symbol in live_set:
+                    if ep.symbol in live_set and ep.symbol not in promoted_syms:
+                        promoted_syms.add(ep.symbol)
                         self._upsert_episode_locked(
                             conn,
                             replace(
