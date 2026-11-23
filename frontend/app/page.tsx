@@ -12,6 +12,7 @@ import baselineCandles from "@/public/baseline_candles.json";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import OperatorAuthModal from "./components/OperatorAuthModal";
 import { operatorRequestHeaders } from "./lib/operatorClient";
+import { isWithheldStatus, screenerPublication } from "./lib/screenerPublication";
 
 const candleStore = baselineCandles as Record<string, Candle[]>;
 
@@ -274,7 +275,7 @@ function RadarPageContent() {
 
   // User indicator & timeframe preferences (persisted across tokens and browser reloads)
   const [showLevels, setShowLevels] = useLocalStorage(
-    "atlas_pref_show_levels",
+    "atlas_pref_show_levels_v2",
     true,
     parseBool,
   );
@@ -399,7 +400,13 @@ function RadarPageContent() {
       if (incoming?.screening_policy_version) {
         setPolicyVersion(incoming.screening_policy_version);
       }
-      if (!incoming || !incoming.opportunities || incoming.opportunities.length === 0) return;
+      if (!incoming || !incoming.opportunities) return;
+      if (incoming.opportunities.length === 0) {
+        setOpportunities([]);
+        setActiveOpportunity(null);
+        setActiveCandle(null);
+        return;
+      }
       const enriched: Opportunity[] = incoming.opportunities.map((o: Opportunity) => ({
         ...o,
         candles:
@@ -570,6 +577,16 @@ function RadarPageContent() {
         setPolicyVersion(data.screening_policy_version);
       }
 
+      const publication = data ? screenerPublication(data) : null;
+      // Withholding takes precedence over progress, including during a scheduled refresh.
+      if (publication?.action === "withhold") {
+        setDataStatus(publication.status);
+        setStatusDetail(publication.detail);
+        setOpportunities([]);
+        setActiveOpportunity(null);
+        setActiveCandle(null);
+      }
+
       // If backend reports an active background scan:
       // - For scheduled hourly refreshes carrying current verified cards, render them immediately
       //   so visitors see active setups while the background scan runs.
@@ -578,17 +595,16 @@ function RadarPageContent() {
         setLoading(false);
         setIsScanning(true);
         setScanSource(data.scan_source || "manual_or_init");
-        if (
-          data.scan_source === "scheduled" &&
-          data.data_status !== "stale" &&
-          data.data_status !== "scan_failed" &&
-          data.data_status !== "degraded_zero_usable_inputs" &&
-          Array.isArray(data.opportunities) &&
-          data.opportunities.length > 0
-        ) {
+        if (publication?.action === "replace" && Array.isArray(data.opportunities)) {
           setDataStatus(data.data_status || "current");
           setStatusDetail(null);
-          await applyScreenerData(data, false);
+          if (data.opportunities.length > 0) {
+            await applyScreenerData(data, false);
+          } else {
+            setOpportunities([]);
+            setActiveOpportunity(null);
+            setActiveCandle(null);
+          }
         }
         awaitingScanCompletionRef.current = true;
         if (!scanStartedAtRef.current) {
@@ -631,12 +647,9 @@ function RadarPageContent() {
       setIsScanning(false);
       setScanSource(null);
 
-      const resolvedStatus = data.data_status || (data.stale ? "stale" : "current");
+      const resolvedStatus = publication?.status || "current";
       setDataStatus(resolvedStatus);
-      const isDegradedOrStale =
-        resolvedStatus === "stale" ||
-        resolvedStatus === "scan_failed" ||
-        resolvedStatus === "degraded_zero_usable_inputs";
+      const isDegradedOrStale = publication?.action === "withhold";
       if (isDegradedOrStale) {
         const detail =
           data.macro_narrative ||
@@ -901,6 +914,7 @@ function RadarPageContent() {
     };
 
     fetchSnapshot();
+    const snapshotRefreshTimer = setInterval(fetchSnapshot, 12000);
 
     // 2. Real-time Multi-ticker WebSocket stream (Binance combined stream)
     const streams = symbols.flatMap((s) => [`${s.toLowerCase()}@ticker`, `${s.toLowerCase()}@bookTicker`]).join("/");
@@ -920,7 +934,7 @@ function RadarPageContent() {
           const payload = JSON.parse(event.data);
           const data = payload.data || payload;
           if (data?.e === "bookTicker" && typeof data.s === "string" && symbols.includes(data.s)) {
-            const quote = bookQuote(data.b, data.a, data.E, Date.now());
+            const quote = bookQuote(data.b, data.a, data.E ?? data.T ?? Date.now(), Date.now());
             if (quote) {
               const sym = data.s;
               setRadarQuotes(prev => prev[sym] && prev[sym].observed_at > quote.observed_at
@@ -934,6 +948,23 @@ function RadarPageContent() {
             if (!symbols.includes(sym) || !Number.isFinite(curPrice) || curPrice <= 0
               || typeof data.E !== "number" || Date.now() - data.E < -5000 || Date.now() - data.E > 60000) return;
             const pct = data.P !== undefined ? parseFloat(data.P) : undefined;
+
+            if (data.b !== undefined && data.a !== undefined) {
+              const tickerBookQuote = bookQuote(data.b, data.a, data.E, Date.now());
+              if (tickerBookQuote) {
+                setRadarQuotes((prev) =>
+                  prev[sym] && prev[sym].observed_at > tickerBookQuote.observed_at
+                    ? prev
+                    : {
+                        ...prev,
+                        [sym]: {
+                          price: Number(tickerBookQuote.price),
+                          observed_at: tickerBookQuote.observed_at,
+                        },
+                      },
+                );
+              }
+            }
 
             setLivePrices((prev) => {
               if (prev[sym] === curPrice) return prev;
@@ -963,6 +994,7 @@ function RadarPageContent() {
 
     return () => {
       isSubscribed = false;
+      clearInterval(snapshotRefreshTimer);
       if (ws) {
         ws.onopen = null;
         ws.onmessage = null;
@@ -1071,14 +1103,24 @@ function RadarPageContent() {
 
   const memoizedTargets = useMemo(() => {
     const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity?.symbol || ""];
-    if (adapted?.targets && adapted.targets.length > 0) return adapted.targets;
-    return (activeOpportunity?.suggested_targets || []).map((t) => Number(t));
-  }, [
-    activeOpportunity?.symbol,
-    activeOpportunity?.setup_label,
-    activeOpportunity?.suggested_targets,
-    adaptedLevelsMap,
-  ]);
+    const rawList =
+      adapted?.targets && adapted.targets.length > 0
+        ? adapted.targets
+        : (activeOpportunity?.suggested_targets || []).map((t) => Number(t));
+    const lockedEntry = Number(activeOpportunity?.radar_trigger_entry || 0);
+    if (
+      activeOpportunity?.radar_triggered_at &&
+      Number.isFinite(lockedEntry) &&
+      lockedEntry > 0
+    ) {
+      const isShortDir = activeOpportunity.direction?.toLowerCase() === "short";
+      const ahead = rawList.filter((t) =>
+        isShortDir ? t > 0 && t < lockedEntry : t > lockedEntry,
+      );
+      if (ahead.length > 0) return ahead;
+    }
+    return rawList;
+  }, [activeOpportunity, adaptedLevelsMap]);
 
   const breakoutTriggerPrice = useMemo(() => {
     if (!activeOpportunity) return 0;
@@ -1093,6 +1135,15 @@ function RadarPageContent() {
 
   const entryPriceVal = useMemo(() => {
     if (!activeOpportunity) return 0;
+    const lockedEntry = Number(activeOpportunity.radar_trigger_entry || 0);
+    if (
+      activeOpportunity.radar_triggered_at &&
+      activeOpportunity.radar_trigger_basis === "retest" &&
+      Number.isFinite(lockedEntry) &&
+      lockedEntry > 0
+    ) {
+      return lockedEntry;
+    }
     const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity.symbol];
     if (adapted?.entryPrice) return adapted.entryPrice;
     return Number(
@@ -1103,9 +1154,11 @@ function RadarPageContent() {
   }, [activeOpportunity, adaptedLevelsMap]);
 
   const pocPriceVal = useMemo(() => {
+    const publishedPoc = Number(activeOpportunity?.poc_price || 0);
+    if (publishedPoc > 0) return publishedPoc;
     const adapted = adaptedLevelsMap[activeOpportunity?.symbol || ""];
     if (adapted?.pocPrice) return adapted.pocPrice;
-    return Number(activeOpportunity?.poc_price || 0);
+    return 0;
   }, [
     activeOpportunity?.symbol,
     activeOpportunity?.poc_price,
@@ -1113,9 +1166,11 @@ function RadarPageContent() {
   ]);
 
   const vahPriceVal = useMemo(() => {
+    const publishedVah = Number(activeOpportunity?.vah_price || 0);
+    if (publishedVah > 0) return publishedVah;
     const adapted = adaptedLevelsMap[activeOpportunity?.symbol || ""];
     if (adapted?.vahPrice) return adapted.vahPrice;
-    return Number(activeOpportunity?.vah_price || 0);
+    return 0;
   }, [
     activeOpportunity?.symbol,
     activeOpportunity?.vah_price,
@@ -1123,9 +1178,11 @@ function RadarPageContent() {
   ]);
 
   const valPriceVal = useMemo(() => {
+    const publishedVal = Number(activeOpportunity?.val_price || 0);
+    if (publishedVal > 0) return publishedVal;
     const adapted = adaptedLevelsMap[activeOpportunity?.symbol || ""];
     if (adapted?.valPrice) return adapted.valPrice;
-    return Number(activeOpportunity?.val_price || 0);
+    return 0;
   }, [
     activeOpportunity?.symbol,
     activeOpportunity?.val_price,
@@ -1133,6 +1190,14 @@ function RadarPageContent() {
   ]);
 
   const stopPriceVal = useMemo(() => {
+    const lockedStop = Number(activeOpportunity?.radar_trigger_stop || 0);
+    if (
+      activeOpportunity?.radar_triggered_at &&
+      Number.isFinite(lockedStop) &&
+      lockedStop > 0
+    ) {
+      return lockedStop;
+    }
     const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity?.symbol || ""];
     if (adapted?.stopPrice) return adapted.stopPrice;
     return Number(activeOpportunity?.suggested_stop || 0);
@@ -1140,11 +1205,13 @@ function RadarPageContent() {
     activeOpportunity?.symbol,
     activeOpportunity?.setup_label,
     activeOpportunity?.suggested_stop,
+    activeOpportunity?.radar_triggered_at,
+    activeOpportunity?.radar_trigger_stop,
     adaptedLevelsMap,
   ]);
 
   if (!activeOpportunity && !inspectedView) {
-    if (loading || isScanning) {
+    if ((loading || isScanning) && !isWithheldStatus(dataStatus)) {
       return (
         <div
           style={{
@@ -1230,15 +1297,14 @@ function RadarPageContent() {
       );
     }
 
-    const isDegradedState =
-      dataStatus === "stale" ||
-      dataStatus === "scan_failed" ||
-      dataStatus === "degraded_zero_usable_inputs";
+    const isDegradedState = isWithheldStatus(dataStatus);
     const emptyHeading =
       dataStatus === "stale"
         ? "Cached Qualifications Expired (Stale)"
         : dataStatus === "degraded_zero_usable_inputs"
           ? "Market Inputs Unavailable — Qualifications Withheld"
+          : dataStatus === "startup_revalidation_required"
+            ? "Saved Qualifications Await Live Re-verification"
           : dataStatus === "scan_failed"
             ? "Live Scan Failed — Qualifications Withheld"
             : "No Active Pre-Breakout Setups Qualified";
@@ -1698,7 +1764,9 @@ function RadarPageContent() {
                   key={activeOpportunity.symbol}
                   symbol={activeOpportunity.symbol}
                   direction={activeOpportunity.direction}
-                  preservePublishedLevels={activeOpportunity.risk_reward_target_index != null}
+                  preservePublishedLevels={true}
+                  isTriggered={Boolean(activeOpportunity.radar_triggered_at)}
+                  triggerBasis={activeOpportunity.radar_trigger_basis}
                   tickSize={Number(activeOpportunity.tick_size) || undefined}
                   candles={activeCandles}
                   pocPrice={pocPriceVal}

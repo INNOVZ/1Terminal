@@ -94,7 +94,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         cache_status = str(portal._screener_cache.get("data_status") or "")
         scan_degraded = (
-            cache_status in ("scan_failed", "degraded_zero_usable_inputs")
+            cache_status in portal.WITHHELD_SCREENER_STATUSES
             or portal._consecutive_scan_failures >= 2
         )
         if not cron_ready:

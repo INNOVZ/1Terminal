@@ -31,6 +31,24 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Deploy on Vercel
 
+Set `API_BACKEND_URL` as a server-side environment variable to the backend's verified
+HTTPS origin. There is no production default host. Production requests fail
+with 503 before any upstream call if the URL is missing, invalid or HTTP; upstream
+redirects are refused. Public API reads use the same server transport boundary to
+protect both market-data integrity and operator credentials.
+Local development defaults to `http://127.0.0.1:8000`.
+
+Set the same strong `ATLAS_OPERATOR_TOKEN` on the backend and the frontend server.
+Never use a `NEXT_PUBLIC_*` variable for the token. Authorized controls require an
+operator session or explicit Bearer authentication. Verify TLS and the production
+environment separately before deployment; a successful build does not verify them.
+
+After a backend restart, saved episodes remain private and `/readyz` returns 503
+until a successful live scan revalidates publication. The API reports
+`startup_revalidation_required`; live and chart routes both withhold saved candidates.
+The scheduler or first live request initiates verification. An empty successful scan
+is a valid result, distinct from a failed scan.
+
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

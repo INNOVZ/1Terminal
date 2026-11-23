@@ -635,3 +635,101 @@ def test_r8_prune_separates_protected_and_unpinned_counts_and_bytes(tmp_path: Pa
     assert archive.last_prune_stats["total_kept_count"] == 50
     assert archive.last_prune_stats["protected_bytes"] > 0
     assert archive.last_prune_stats["unpinned_bytes"] > 0
+
+
+def test_below_poc_bottom_coil_target1_never_inverts_below_breakout_trigger() -> None:
+    """When close < poc_30d and local_compression_high_4h <= poc_30d (e.g. GALAUSDT bottom base),
+    Target 1 must remain strictly above breakout_trigger.
+    """
+    from algotrader.domain.execution_brackets import build_long_bracket
+
+    bracket = build_long_bracket(
+        close=Decimal("0.001293"),
+        ema50_4h=Decimal("0.001280"),
+        poc_30d=Decimal("0.001716"),
+        atr14_4h=Decimal("0.000040"),
+        local_compression_high_4h=Decimal("0.001340"),
+        swing_low_4h=Decimal("0.001180"),
+        high_30d=Decimal("0.001848"),
+        vah_30d=Decimal("0.001795"),
+        val_30d=Decimal("0.001402"),
+        tick_size=Decimal("0.000001"),
+        resistance_absorption_score=Decimal("58.0"),
+    )
+    assert bracket.retest_entry < Decimal("0.001293")
+    assert bracket.t1 > bracket.breakout_trigger
+    assert bracket.t2 > bracket.t1
+    assert bracket.t3 > bracket.t2
+
+
+async def test_retention_uses_4h_structural_taker_flow_when_1h_bar_is_quiet() -> None:
+    """A single quiet 1h bar (taker_1h=0.83) must not fail Smart Money when 4h taker flow (1.08) is healthy."""
+    now = datetime(2026, 11, 23, 3, 1, tzinfo=UTC)
+    inst = _inst("KITEUSDT")
+    candidate = {
+        "symbol": "KITEUSDT",
+        "direction": "long",
+        "setup_label": "VCP_COMPRESSION_LONG",
+        "current_price": "0.1414",
+        "discovery_price": "0.1414",
+        "suggested_entry": "0.1342",
+        "breakout_trigger": "0.1446",
+        "suggested_stop": "0.1124",
+        "suggested_targets": ["0.1620", "0.1735", "0.1886"],
+        "poc_price": "0.1285",
+        "val_price": "0.1146",
+        "vah_price": "0.1372",
+        "evaluated_at": (now - timedelta(hours=2)).isoformat(),
+    }
+
+    class Provider:
+        async def instruments(self) -> list[Instrument]:
+            return [inst]
+
+        async def quotes(self, instruments: list[Instrument]) -> list[Quote]:
+            return [
+                Quote(
+                    inst.id,
+                    Decimal("0.1414"),
+                    Decimal("0.1414"),
+                    Decimal("0.1414"),
+                    Decimal("10000000"),
+                    observed_at=now,
+                    exchange_observed_at=now,
+                    received_at=now,
+                    book_observed_at=now,
+                    ticker_observed_at=now,
+                )
+            ]
+
+        async def candles(self, instrument: Instrument, interval: str, limit: int) -> list[Candle]:
+            hours = 1 if interval == "1h" else 4
+            return [
+                Candle(
+                    opened_at=now - timedelta(hours=hours * (limit - i)),
+                    closed_at=now - timedelta(hours=hours * (limit - i - 1)),
+                    open=Decimal("0.1400"),
+                    high=Decimal("0.1420"),
+                    low=Decimal("0.1390"),
+                    close=Decimal("0.1414"),
+                    volume=Decimal("100"),
+                )
+                for i in range(limit)
+            ]
+
+        async def derivatives_snapshot(self, instrument: Instrument) -> SimpleNamespace:
+            return SimpleNamespace(
+                observed_at=now,
+                degraded_telemetry=False,
+                open_interest_change_7d=Decimal("0.014"),
+                open_interest_change_1h=Decimal("-0.001"),
+                funding_rate=Decimal("0.00005"),
+                taker_buy_sell_ratio=Decimal("0.83"),
+                taker_buy_sell_ratio_4h=Decimal("1.08"),
+            )
+
+    retained = await reconcile_radar_cohort([candidate], set(), Provider(), now=now)
+    assert len(retained) == 1
+    assert retained[0]["gates_passed"] == 5
+    assert retained[0]["failed_gates"] == []
+

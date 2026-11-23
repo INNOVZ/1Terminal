@@ -132,17 +132,14 @@ def reverify_candidate_gates(
     val = _to_dec(candidate.get("val_price")) or _to_dec(candidate.get("val_30d"))
     entry = _to_dec(candidate.get("suggested_entry")) or _to_dec(candidate.get("pullback_entry"))
 
-    effective_is_triggered = bool(
-        is_triggered or (_parse_iso(candidate.get("radar_triggered_at")) is not None)
-    )
-    profit_entry = (
-        trigger_entry_price
-        or _to_dec(candidate.get("radar_trigger_entry"))
-        or (entry if effective_is_triggered else None)
-    )
+    # The lifecycle caller validates chronology and locks the observed entry reference.
+    # Raw candidate metadata must not revive a rejected trigger or invent an entry.
+    effective_is_triggered = is_triggered
+    profit_entry = trigger_entry_price
     in_profit_expansion = bool(
         effective_is_triggered
         and profit_entry is not None
+        and profit_entry.is_finite()
         and profit_entry > Decimal("0")
         and (
             (not is_short and current_price > profit_entry * Decimal("1.02"))

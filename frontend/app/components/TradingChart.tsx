@@ -185,6 +185,8 @@ export interface ChartProps {
   onChangeInterval?: (interval: CandleInterval) => void;
   direction?: string;
   preservePublishedLevels?: boolean;
+  isTriggered?: boolean;
+  triggerBasis?: string;
   tickSize?: number;
 }
 
@@ -195,6 +197,8 @@ function TradingChart({
   symbol,
   direction = "long",
   preservePublishedLevels = false,
+  isTriggered = false,
+  triggerBasis,
   tickSize,
   pocPrice,
   vahPrice,
@@ -295,6 +299,7 @@ function TradingChart({
   // Real-Time Connection Status
   const [connectionMode, setConnectionMode] = useState<"connecting" | "live_ws" | "live_poll">("connecting");
   const [futuresHistoryWarning, setFuturesHistoryWarning] = useState<string | null>(null);
+  const [candlesVersion, setCandlesVersion] = useState(0);
   const tickSizeRef = useRef(tickSize);
   useEffect(() => {
     tickSizeRef.current = tickSize;
@@ -530,6 +535,7 @@ function TradingChart({
             }));
 
             activeCandlesRef.current = fetchedCandles;
+            setCandlesVersion((v) => v + 1);
 
             if (candleSeriesRef.current) {
               const formattedCandles: CandlestickData<Time>[] = fetchedCandles.map((c) => ({
@@ -782,28 +788,76 @@ function TradingChart({
     const lastCandle = candles.length > 0 ? candles[candles.length - 1] : null;
     const currentPrice = lastCandle ? lastCandle.close : (entryPrice || 0);
 
-    // Compute live Volume Profile over last 30 days of loaded candles
-    const computedVP = computeVolumeProfile(candles);
+    // Compute live Volume Profile over last 30 days of loaded candles only when published levels are absent
+    const computedVP = preservePublishedLevels ? null : computeVolumeProfile(candles);
 
-    // Check if prop POC is disconnected (> 25% discrepancy from active price action) or missing
-    const isPocDisconnected = !pocPrice || (!preservePublishedLevels && currentPrice > 0 && Math.abs(pocPrice - currentPrice) / currentPrice > 0.25);
-    const effectivePoc = (!isPocDisconnected && pocPrice) ? pocPrice : (computedVP?.pocPrice ?? pocPrice ?? currentPrice);
-    const effectiveVah = (!isPocDisconnected && vahPrice) ? vahPrice : (computedVP?.vahPrice ?? vahPrice ?? (effectivePoc ? effectivePoc * 1.03 : currentPrice * 1.03));
-    const effectiveVal = (!isPocDisconnected && valPrice) ? valPrice : (computedVP?.valPrice ?? valPrice ?? (effectivePoc ? effectivePoc * 0.97 : currentPrice * 0.97));
+    // When preservePublishedLevels is true, strictly trust the backend's audited 30d POC/VAH/VAL and brackets
+    const isPocDisconnected =
+      !pocPrice ||
+      (!preservePublishedLevels &&
+        currentPrice > 0 &&
+        Math.abs(pocPrice - currentPrice) / currentPrice > 0.25);
+    const effectivePoc = preservePublishedLevels
+      ? (pocPrice || 0)
+      : !isPocDisconnected && pocPrice
+        ? pocPrice
+        : (computedVP?.pocPrice ?? pocPrice ?? currentPrice);
+    const effectiveVah = preservePublishedLevels
+      ? (vahPrice || 0)
+      : !isPocDisconnected && vahPrice
+        ? vahPrice
+        : (computedVP?.vahPrice ??
+          vahPrice ??
+          (effectivePoc ? effectivePoc * 1.03 : currentPrice * 1.03));
+    const effectiveVal = preservePublishedLevels
+      ? (valPrice || 0)
+      : !isPocDisconnected && valPrice
+        ? valPrice
+        : (computedVP?.valPrice ??
+          valPrice ??
+          (effectivePoc ? effectivePoc * 0.97 : currentPrice * 0.97));
 
     // Check if execution bracket/targets are disconnected (> 25% discrepancy from active price action)
-    const isBracketDisconnected = currentPrice > 0 && entryPrice && (Math.abs(entryPrice - currentPrice) / currentPrice > 0.25);
-    const scaleFactor = (!preservePublishedLevels && isBracketDisconnected && entryPrice) ? (currentPrice / entryPrice) : 1;
+    const isBracketDisconnected =
+      !preservePublishedLevels &&
+      currentPrice > 0 &&
+      entryPrice &&
+      Math.abs(entryPrice - currentPrice) / currentPrice > 0.25;
+    const scaleFactor =
+      !preservePublishedLevels && isBracketDisconnected && entryPrice
+        ? currentPrice / entryPrice
+        : 1;
 
-    const effectiveEntry = entryPrice ? (preservePublishedLevels ? entryPrice : Number((entryPrice * scaleFactor).toFixed(6))) : currentPrice;
-    const effectiveStop = stopPrice ? (preservePublishedLevels ? stopPrice : Number((stopPrice * scaleFactor).toFixed(6))) : Number((currentPrice * 0.95).toFixed(6));
-    const effectiveTrigger = breakoutTrigger ? (preservePublishedLevels ? breakoutTrigger : Number((breakoutTrigger * scaleFactor).toFixed(6))) : Number((currentPrice * 1.03).toFixed(6));
-    const effectiveTargets = (targets && targets.length > 0)
-      ? targets.map((t) => preservePublishedLevels ? t : Number((t * scaleFactor).toFixed(6)))
-      : [Number((currentPrice * 1.08).toFixed(6)), Number((currentPrice * 1.15).toFixed(6)), Number((currentPrice * 1.25).toFixed(6))];
+    const effectiveEntry = entryPrice
+      ? preservePublishedLevels
+        ? entryPrice
+        : Number((entryPrice * scaleFactor).toFixed(6))
+      : currentPrice;
+    const effectiveStop = stopPrice
+      ? preservePublishedLevels
+        ? stopPrice
+        : Number((stopPrice * scaleFactor).toFixed(6))
+      : Number((currentPrice * 0.95).toFixed(6));
+    const effectiveTrigger = breakoutTrigger
+      ? preservePublishedLevels
+        ? breakoutTrigger
+        : Number((breakoutTrigger * scaleFactor).toFixed(6))
+      : Number((currentPrice * 1.03).toFixed(6));
+    const effectiveTargets =
+      targets && targets.length > 0
+        ? targets.map((t) =>
+            preservePublishedLevels ? t : Number((t * scaleFactor).toFixed(6)),
+          )
+        : preservePublishedLevels
+          ? []
+          : [
+              Number((currentPrice * 1.08).toFixed(6)),
+              Number((currentPrice * 1.15).toFixed(6)),
+              Number((currentPrice * 1.25).toFixed(6)),
+            ];
 
-    // Emit live adapted levels back to parent so VerificationPanel and Header stay perfectly synced
-    if (effectivePoc && onLevelsUpdatedRef.current) {
+    // Only emit adapted fallback levels when not preserving published radar candidate levels
+    if (!preservePublishedLevels && effectivePoc && onLevelsUpdatedRef.current) {
       onLevelsUpdatedRef.current({
         pocPrice: effectivePoc,
         vahPrice: effectiveVah,
@@ -815,13 +869,13 @@ function TradingChart({
       });
     }
 
-    // Structure Levels (POC, VAH, VAL) strictly adhering to #f49d0d & white
+    // Structure Levels (POC, VAH, VAL) — distinct cyan #38bdf8 for 30d POC so it never visually collides with orange BREAKOUT TRIGGER
     if (showLevels) {
       if (effectivePoc && effectivePoc > 0) {
         priceLinesRef.current.push(
           series.createPriceLine({
             price: effectivePoc,
-            color: "#f49d0d",
+            color: "#38bdf8",
             lineWidth: 2,
             lineStyle: 0,
             axisLabelVisible: true,
@@ -855,7 +909,7 @@ function TradingChart({
       }
     }
 
-    // Risk & Target Brackets (Stop, Entry, Targets)
+    // Risk & Target Brackets (Stop, Entry, Trigger, Targets)
     if (showTargets) {
       if (effectiveStop && effectiveStop > 0) {
         priceLinesRef.current.push(
@@ -865,11 +919,17 @@ function TradingChart({
             lineWidth: 2,
             lineStyle: 2,
             axisLabelVisible: true,
-            title: "STOP LOSS",
+            title: isTriggered ? "LOCKED STOP LOSS" : "STOP LOSS",
           })
         );
       }
       if (effectiveEntry && effectiveEntry > 0) {
+        const entryTitle =
+          isTriggered && triggerBasis === "retest"
+            ? "TRIGGERED ENTRY (RETEST)"
+            : preservePublishedLevels
+              ? "SUGGESTED ENTRY"
+              : "LIMIT ENTRY";
         priceLinesRef.current.push(
           series.createPriceLine({
             price: effectiveEntry,
@@ -877,11 +937,19 @@ function TradingChart({
             lineWidth: 1,
             lineStyle: 3,
             axisLabelVisible: true,
-            title: preservePublishedLevels ? "SUGGESTED ENTRY" : "LIMIT ENTRY",
+            title: entryTitle,
           })
         );
       }
       if (effectiveTrigger && effectiveTrigger > 0) {
+        const triggerTitle =
+          isTriggered && triggerBasis === "breakout"
+            ? direction === "short"
+              ? "TRIGGERED BREAKDOWN"
+              : "TRIGGERED BREAKOUT"
+            : direction === "short"
+              ? "BREAKDOWN TRIGGER"
+              : "BREAKOUT TRIGGER";
         priceLinesRef.current.push(
           series.createPriceLine({
             price: effectiveTrigger,
@@ -889,7 +957,7 @@ function TradingChart({
             lineWidth: 1,
             lineStyle: 2,
             axisLabelVisible: true,
-            title: direction === "short" ? "BREAKDOWN TRIGGER" : "BREAKOUT TRIGGER",
+            title: triggerTitle,
           })
         );
       }
@@ -921,7 +989,10 @@ function TradingChart({
     showTargets,
     direction,
     preservePublishedLevels,
+    isTriggered,
+    triggerBasis,
     candleInterval,
+    candlesVersion,
   ]);
 
   // --------------------------------------------------------------------------

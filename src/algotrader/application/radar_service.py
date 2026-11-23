@@ -239,10 +239,16 @@ async def reconcile_radar_cohort(
                     metrics["funding_rate_bps"] = (
                         f"{float(deriv_snap.funding_rate * Decimal('10000')):+.2f} bps"
                     )
-                if getattr(deriv_snap, "taker_buy_sell_ratio", None) is not None:
-                    metrics["taker_buy_sell_ratio"] = (
-                        f"{float(deriv_snap.taker_buy_sell_ratio):.4f}"
-                    )
+                taker_1h = getattr(deriv_snap, "taker_buy_sell_ratio", None)
+                taker_4h = getattr(deriv_snap, "taker_buy_sell_ratio_4h", None)
+                is_short_dir = str(prev.get("direction", "long")).lower() == "short"
+                if taker_1h is not None and taker_4h is not None:
+                    eff_taker = min(taker_1h, taker_4h) if is_short_dir else max(taker_1h, taker_4h)
+                    metrics["taker_buy_sell_ratio"] = f"{float(eff_taker):.4f}"
+                elif taker_1h is not None:
+                    metrics["taker_buy_sell_ratio"] = f"{float(taker_1h):.4f}"
+                elif taker_4h is not None:
+                    metrics["taker_buy_sell_ratio"] = f"{float(taker_4h):.4f}"
             continuation_gates = None
             is_continuation = prev.get("setup_label") == "BREAKDOWN_RETEST_SHORT"
             continuation_horizon = 4.0

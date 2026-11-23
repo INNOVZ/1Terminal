@@ -146,39 +146,8 @@ function VerificationPanel({
   }, [opportunity?.tick_size, livePrice, opportunity?.current_price]);
 
   const checklist = useMemo(() => {
-    const raw = opportunity?.checklist || [];
-    if (!adaptedLevels?.pocPrice) return raw;
-    const currPrice = livePrice ?? Number(opportunity?.current_price || 0);
-    const isShortDir = opportunity?.direction?.toLowerCase() === "short";
-    return raw.map((item) => {
-      if (item.status === "unknown") return item;
-      let detail = item.detail;
-      if (item.title === "Value Acceptance" && adaptedLevels.pocPrice) {
-        const poc = adaptedLevels.pocPrice;
-        const pocDiffPct = poc > 0 && currPrice > 0 ? ((currPrice - poc) / poc) * 100 : 0;
-        const vahStr = adaptedLevels.vahPrice ? ` | VAH: $${adaptedLevels.vahPrice.toFixed(decimals)}` : "";
-        const valStr = adaptedLevels.valPrice ? ` | VAL: $${adaptedLevels.valPrice.toFixed(decimals)}` : "";
-        if (!isShortDir) {
-          if (currPrice >= poc) {
-            detail = `Accepted above 30d POC ($${poc.toFixed(decimals)}, +${pocDiffPct.toFixed(1)}%)${vahStr}`;
-          } else if (item.passed) {
-            detail = `Holding Value Area Base -> POC ($${poc.toFixed(decimals)}, ${pocDiffPct.toFixed(1)}%)${valStr}${vahStr}`;
-          } else {
-            detail = `Below 30d POC ($${poc.toFixed(decimals)}, ${pocDiffPct.toFixed(1)}%)${valStr}`;
-          }
-        } else {
-          if (currPrice <= poc) {
-            detail = `Accepted below 30d POC ($${poc.toFixed(decimals)}, ${pocDiffPct.toFixed(1)}%)${valStr}`;
-          } else if (item.passed) {
-            detail = `Testing 30d POC ceiling ($${poc.toFixed(decimals)}, +${pocDiffPct.toFixed(1)}%)${valStr}`;
-          } else {
-            detail = `Reclaimed above 30d POC ($${poc.toFixed(decimals)}, +${pocDiffPct.toFixed(1)}%)${vahStr}`;
-          }
-        }
-      }
-      return { ...item, detail };
-    });
-  }, [opportunity?.checklist, opportunity?.direction, opportunity?.current_price, adaptedLevels, decimals, livePrice]);
+    return opportunity?.checklist || [];
+  }, [opportunity?.checklist]);
 
   const passCount = useMemo(
     () => checklist.filter((c) => c.passed).length,
@@ -191,29 +160,51 @@ function VerificationPanel({
   const isShort = opportunity?.direction?.toLowerCase() === "short";
   const isContinuation = opportunity?.setup_label === "BREAKDOWN_RETEST_SHORT";
 
-  // Memoize bracket calculations with adapted live levels and dynamic tick precision
+  // Memoize bracket calculations with locked trigger references and dynamic tick precision
   const bracket = useMemo(() => {
     if (!opportunity) return null;
     const effectiveLevels = isContinuation ? undefined : adaptedLevels;
     const currentPriceNum = livePrice ?? Number(opportunity.current_price || 0);
-    const stopPrice =
-      effectiveLevels?.stopPrice ?? Number(opportunity.suggested_stop || 0);
+    const lockedStopNum = Number(opportunity.radar_trigger_stop || 0);
+    const lockedEntryNum = Number(opportunity.radar_trigger_entry || 0);
+    const hasLockedTrigger =
+      Boolean(opportunity.radar_triggered_at) &&
+      Number.isFinite(lockedStopNum) &&
+      lockedStopNum > 0 &&
+      Number.isFinite(lockedEntryNum) &&
+      lockedEntryNum > 0;
+
+    const stopPrice = hasLockedTrigger
+      ? lockedStopNum
+      : (effectiveLevels?.stopPrice ?? Number(opportunity.suggested_stop || 0));
     const entryPrice =
-      effectiveLevels?.entryPrice ??
-      Number(opportunity.suggested_entry || opportunity.pullback_entry || 0);
+      hasLockedTrigger && opportunity.radar_trigger_basis === "retest"
+        ? lockedEntryNum
+        : (effectiveLevels?.entryPrice ??
+          Number(opportunity.suggested_entry || opportunity.pullback_entry || 0));
     const triggerPrice =
-      effectiveLevels?.breakoutTrigger ??
-      Number(
-        opportunity.breakout_trigger ||
-          currentPriceNum * (isShort ? 0.975 : 1.025),
-      );
-    const targets =
+      hasLockedTrigger && opportunity.radar_trigger_basis === "breakout"
+        ? lockedEntryNum
+        : (effectiveLevels?.breakoutTrigger ??
+          Number(
+            opportunity.breakout_trigger ||
+              currentPriceNum * (isShort ? 0.975 : 1.025),
+          ));
+    const rawTargets =
       effectiveLevels?.targets && effectiveLevels.targets.length > 0
         ? effectiveLevels.targets
         : (opportunity.suggested_targets || []).map((t) => Number(t || 0));
+    const filteredTargets = hasLockedTrigger
+      ? rawTargets.filter((t) =>
+          isShort ? t > 0 && t < lockedEntryNum : t > lockedEntryNum,
+        )
+      : rawTargets;
+    const targets = filteredTargets.length > 0 ? filteredTargets : rawTargets;
 
     return {
       currentPriceNum,
+      hasLockedTrigger,
+      triggerBasis: opportunity.radar_trigger_basis,
       stopPrice: stopPrice.toFixed(decimals),
       entryPrice: entryPrice.toFixed(decimals),
       triggerPrice: triggerPrice.toFixed(decimals),
@@ -589,7 +580,9 @@ function VerificationPanel({
             }}
           >
             <span style={{ color: "var(--accent-crimson)" }}>
-              Invalidation Stop
+              {bracket.hasLockedTrigger
+                ? `Locked Stop (${bracket.triggerBasis || "triggered"})`
+                : "Invalidation Stop"}
             </span>
             <strong style={{ color: "var(--accent-crimson)" }}>
               ${bracket.stopPrice}

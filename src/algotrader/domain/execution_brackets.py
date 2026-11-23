@@ -210,6 +210,14 @@ def build_long_bracket(
                     effective_entry + max(tick_size, Decimal("0.50") * risk_unit), tick_size
                 )
                 t1 = max(normalize_price(poc_30d, tick_size), min_t1_below_poc)
+                if local_compression_high_4h <= poc_30d and t1 <= breakout_trigger:
+                    t1 = normalize_price(
+                        max(
+                            vah_30d,
+                            breakout_trigger + max(tick_size, Decimal("0.50") * atr),
+                        ),
+                        tick_size,
+                    )
                 t2 = max(
                     normalize_price(vah_30d, tick_size),
                     normalize_price(effective_entry + Decimal("2.00") * risk_unit, tick_size),
@@ -263,6 +271,14 @@ def build_long_bracket(
                     effective_entry + max(tick_size, Decimal("0.50") * risk_unit), tick_size
                 )
                 t1 = max(normalize_price(poc_30d, tick_size), min_t1_below_poc)
+                if local_compression_high_4h <= poc_30d and t1 <= breakout_trigger:
+                    t1 = normalize_price(
+                        max(
+                            vah_30d,
+                            breakout_trigger + max(tick_size, Decimal("0.50") * atr),
+                        ),
+                        tick_size,
+                    )
                 t2 = max(
                     normalize_price(vah_30d, tick_size),
                     normalize_price(effective_entry + Decimal("2.00") * risk_unit, tick_size),

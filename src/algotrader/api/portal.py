@@ -165,6 +165,9 @@ def _get_fresh_baseline_opportunities() -> dict[str, Any]:
 
 
 _PRIVATE_CACHE_KEYS = frozenset({"_prior_episodes", "_prior_policy_version"})
+WITHHELD_SCREENER_STATUSES = frozenset({
+    "scan_failed", "degraded_zero_usable_inputs", "startup_revalidation_required",
+})
 
 
 def _strip_private_cache_keys(payload: dict[str, Any]) -> dict[str, Any]:
@@ -176,7 +179,7 @@ def _get_prior_episodes_for_reconciliation() -> tuple[list[dict[str, Any]], str 
     if not _screener_cache:
         return [], None
     status = _screener_cache.get("data_status")
-    if status in ("scan_failed", "degraded_zero_usable_inputs"):
+    if status in WITHHELD_SCREENER_STATUSES:
         if _episode_roster:
             return list(_episode_roster), _episode_policy_version
         return [], None
@@ -193,7 +196,7 @@ def _snapshot_episode_roster_from_cache() -> None:
     global _episode_roster, _episode_policy_version, _episode_macro_narrative
     status = _screener_cache.get("data_status")
     if (
-        status not in ("scan_failed", "degraded_zero_usable_inputs")
+        status not in WITHHELD_SCREENER_STATUSES
         and isinstance(_screener_cache.get("opportunities"), list)
         and _screener_cache["opportunities"]
     ):
@@ -208,8 +211,8 @@ def _snapshot_episode_roster_from_cache() -> None:
 def warm_screener_cache(path: Path | str = "data/screener_latest.json") -> dict[str, Any] | None:
     """Pre-populates the in-memory screener cache and private episode roster from disk on cold start.
 
-    Loads ALL valid operational envelopes — including zero-candidate scans, scan_failed, and
-    degraded_zero_usable_inputs — so a restart never resurrects superseded pre-failure cards.
+    Disk episodes are historical evidence, never current boot-time qualifications. Even a
+    healthy file may precede an outage whose failure envelope could not be written.
     """
     global _screener_cache, _cache_timestamp
     global _episode_roster, _episode_policy_version, _episode_macro_narrative
@@ -223,7 +226,7 @@ def warm_screener_cache(path: Path | str = "data/screener_latest.json") -> dict[
                 "opportunities" in data or "data_status" in data
             ):
                 status = data.get("data_status")
-                if status in ("scan_failed", "degraded_zero_usable_inputs"):
+                if status in WITHHELD_SCREENER_STATUSES:
                     prior_eps = data.get("_prior_episodes")
                     if isinstance(prior_eps, list):
                         _episode_roster = list(prior_eps)
@@ -246,6 +249,16 @@ def warm_screener_cache(path: Path | str = "data/screener_latest.json") -> dict[
                         _episode_macro_narrative = str(data["macro_narrative"])
 
                 _screener_cache = _strip_private_cache_keys(data)
+                if status not in WITHHELD_SCREENER_STATUSES:
+                    _screener_cache.update({
+                        "data_status": "startup_revalidation_required",
+                        "stale": True,
+                        "stale_reason": "restart_requires_live_revalidation",
+                        "macro_narrative": "Saved episodes await live re-verification after restart.",
+                        "opportunities": [],
+                        "qualifying_count": 0,
+                    })
+                _cache_timestamp = None
                 ts_str = _screener_cache.get("timestamp")
                 if isinstance(ts_str, str) and ts_str:
                     with contextlib.suppress(Exception):
@@ -320,7 +333,7 @@ def _project_public_screener_state(
         return "needs_refresh", {}
 
     cache_status = _screener_cache.get("data_status")
-    if cache_status in ("scan_failed", "degraded_zero_usable_inputs"):
+    if cache_status in WITHHELD_SCREENER_STATUSES:
         failed_payload = _strip_private_cache_keys(_screener_cache)
         failed_payload["opportunities"] = []
         failed_payload["qualifying_count"] = 0
@@ -887,6 +900,14 @@ async def get_live_screener(
     is_manual_scanning = _screener_task is not None and not _screener_task.done()
 
     if is_manual_scanning:
+        if _screener_cache.get("data_status") == "startup_revalidation_required":
+            active_settings = (
+                _shared_runtime.settings if _shared_runtime is not None else load_settings()
+            )
+            _, projected = _project_public_screener_state(active_settings)
+            projected["is_scanning"] = True
+            projected["scan_source"] = "scheduled"
+            return projected
         # Never serve cached candidate results while an explicit manual/init scan is running
         return {
             "timestamp": datetime.now(UTC).isoformat(),
@@ -920,6 +941,14 @@ async def get_live_screener(
             "opportunities": [],
             "is_scanning": True,
         }
+
+    if pub_status == "startup_revalidation_required":
+        async with _screener_task_lock:
+            if _screener_task is None or _screener_task.done():
+                _screener_task = asyncio.create_task(_do_crypto_screen("all", 50.0, 320))
+        projected["is_scanning"] = True
+        projected["scan_source"] = "scheduled"
+        return projected
 
     if pub_status != "current":
         return projected
@@ -985,6 +1014,7 @@ async def _screener_cron_loop(interval_hours: int = 1) -> None:
     )
     if (
         not _screener_cache
+        or _screener_cache.get("data_status") == "startup_revalidation_required"
         or cache_age_hours >= float(interval_hours)
         or _screener_cache.get("radar_lifecycle_version") != RADAR_PUBLICATION_VERSION
         or _screener_cache.get("screening_policy_version") != SCREENING_POLICY_VERSION

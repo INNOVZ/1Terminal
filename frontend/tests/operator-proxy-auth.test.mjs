@@ -29,6 +29,7 @@ const operatorAuth = req(path.join(frontendRoot, "app/api/_lib/operatorAuth.ts")
 const sessionRoute = req(path.join(frontendRoot, "app/api/operator/session/route.ts"));
 const liveRoute = req(path.join(frontendRoot, "app/api/screener/live/route.ts"));
 const rescanRoute = req(path.join(frontendRoot, "app/api/screener/rescan/route.ts"));
+const publicRoute = req(path.join(frontendRoot, "app/api/[...path]/route.ts"));
 const shortWatchTickRoute = req(
   path.join(frontendRoot, "app/api/screener/short-watch/tick/route.ts"),
 );
@@ -53,6 +54,7 @@ function setupFakeUpstream() {
       url: String(url),
       method: init?.method || "GET",
       authorization: new Headers(init?.headers).get("authorization"),
+      redirect: init?.redirect,
     });
     return new Response(JSON.stringify({ status: "ok" }), {
       status: 200,
@@ -109,6 +111,93 @@ test("R1: anonymous requests to all privileged proxy routes fail 401 with ZERO u
     }
     assert.equal(upstream.calls.length, 0);
   } finally {
+    upstream.restore();
+  }
+});
+
+test("production credential transport rejects missing/insecure upstream and prevents redirects", async () => {
+  const upstream = setupFakeUpstream();
+  const previousMode = process.env.NODE_ENV;
+  const previousPublic = process.env.NEXT_PUBLIC_API_URL;
+  const previousRequireHttps = process.env.ATLAS_REQUIRE_HTTPS_BACKEND;
+  process.env.NODE_ENV = "production";
+  process.env.ATLAS_REQUIRE_HTTPS_BACKEND = "true";
+  delete process.env.NEXT_PUBLIC_API_URL;
+  const request = () => new NextRequest(`${APP_ORIGIN}/api/screener/rescan`, {
+    method: "POST", headers: { authorization: `Bearer ${TEST_TOKEN}` },
+  });
+  try {
+    for (const url of [undefined, "http://34.51.164.30:8000", "ftp://upstream.invalid", "https://user:password@upstream.invalid"]) {
+      if (url) process.env.API_BACKEND_URL = url;
+      else delete process.env.API_BACKEND_URL;
+      assert.equal((await rescanRoute.POST(request())).status, 503);
+    }
+    // Forwarded client Bearers on otherwise public reads need the same transport protection.
+    process.env.API_BACKEND_URL = "http://upstream.invalid";
+    assert.equal((await liveRoute.GET(new NextRequest(`${APP_ORIGIN}/api/screener/live`, {
+      headers: { authorization: `Bearer ${TEST_TOKEN}` },
+    }))).status, 503);
+    assert.equal(upstream.calls.length, 0);
+    process.env.API_BACKEND_URL = "https://upstream-test.invalid";
+    assert.equal((await rescanRoute.POST(request())).status, 200);
+    assert.equal(upstream.calls.length, 1);
+    assert.equal(upstream.calls[0].authorization, `Bearer ${TEST_TOKEN}`);
+    assert.equal(upstream.calls[0].redirect, "error");
+    // Actual fetch rejects redirects with this mode; sanitize that transport failure.
+    global.fetch = async () => { throw new TypeError("fetch redirect refused"); };
+    const response = await rescanRoute.POST(request());
+    assert.equal(response.status, 502);
+    assert.ok(!(await response.text()).includes(TEST_TOKEN));
+  } finally {
+    if (previousMode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousMode;
+    if (previousPublic === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+    else process.env.NEXT_PUBLIC_API_URL = previousPublic;
+    if (previousRequireHttps === undefined) delete process.env.ATLAS_REQUIRE_HTTPS_BACKEND;
+    else process.env.ATLAS_REQUIRE_HTTPS_BACKEND = previousRequireHttps;
+    process.env.API_BACKEND_URL = "https://upstream-test.invalid";
+    upstream.restore();
+  }
+});
+
+test("public chart/macro routes use the shared transport boundary without a rewrite bypass", async () => {
+  const upstream = setupFakeUpstream();
+  const previousMode = process.env.NODE_ENV;
+  const previousRequireHttps = process.env.ATLAS_REQUIRE_HTTPS_BACKEND;
+  process.env.NODE_ENV = "production";
+  process.env.ATLAS_REQUIRE_HTTPS_BACKEND = "true";
+  try {
+    for (const routePath of [["chart", "TESTUSDT"], ["chart", "币安人生USDT"], ["macro"], ["screener", "cron", "status"]]) {
+      const response = await publicRoute.GET(new NextRequest(`${APP_ORIGIN}/api/${routePath.join("/")}`), {
+        params: Promise.resolve({ path: routePath }),
+      });
+      assert.equal(response.status, 200);
+    }
+    const auditRoute = req(path.join(frontendRoot, "app/api/watchlist/audit/route.ts"));
+    assert.equal((await auditRoute.GET(new NextRequest(`${APP_ORIGIN}/api/watchlist/audit`))).status, 200);
+    assert.ok(upstream.calls.every(call => call.authorization === null && call.redirect === "error"));
+    upstream.calls.length = 0;
+    process.env.API_BACKEND_URL = "http://upstream.invalid";
+    assert.equal((await publicRoute.GET(new NextRequest(`${APP_ORIGIN}/api/chart/TESTUSDT`), {
+      params: Promise.resolve({ path: ["chart", "TESTUSDT"] }),
+    })).status, 503);
+    const response = await publicRoute.GET(new NextRequest(`${APP_ORIGIN}/api/chart/TESTUSDT`, {
+      headers: { authorization: `Bearer ${TEST_TOKEN}` },
+    }), { params: Promise.resolve({ path: ["chart", "TESTUSDT"] }) });
+    assert.equal(response.status, 503);
+    const unknown = await publicRoute.GET(new NextRequest(`${APP_ORIGIN}/api/admin`), {
+      params: Promise.resolve({ path: ["admin"] }),
+    });
+    assert.equal(unknown.status, 404);
+    assert.equal(upstream.calls.length, 0);
+    const nextConfig = req(path.join(frontendRoot, "next.config.ts")).default;
+    assert.ok(!(await nextConfig.rewrites()).some(rule => rule.source === "/api/:path*"));
+  } finally {
+    if (previousMode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousMode;
+    if (previousRequireHttps === undefined) delete process.env.ATLAS_REQUIRE_HTTPS_BACKEND;
+    else process.env.ATLAS_REQUIRE_HTTPS_BACKEND = previousRequireHttps;
+    process.env.API_BACKEND_URL = "https://upstream-test.invalid";
     upstream.restore();
   }
 });
