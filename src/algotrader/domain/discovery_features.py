@@ -35,7 +35,7 @@ def discovery_volume_metrics(
 
 def discovery_watch_selection(
     selected: list[Instrument], liquid: list[Instrument], quotes: dict[str, Quote],
-    budget: int, at: datetime,
+    budget: int, at: datetime, *, max_watch_slots: int = 20,
 ) -> list[Instrument]:
     selected_ids = {i.id for i in selected}
     remaining = max(0, budget - len(selected))
@@ -45,7 +45,7 @@ def discovery_watch_selection(
             and min(quotes[i.id.symbol].bid, quotes[i.id.symbol].ask, quotes[i.id.symbol].last) > 0
             and Decimal("0") <= quotes[i.id.symbol].spread_bps <= Decimal("25")]
     pool.sort(key=lambda i: hashlib.sha256(f"{DISCOVERY_VERSION}|{bucket}|{i.id.symbol}".encode()).hexdigest())
-    return [*selected, *pool[:min(remaining, 20)]]
+    return [*selected, *pool[:min(remaining, max(1, int(max_watch_slots)))]]
 
 
 def discovery_temporal_features(

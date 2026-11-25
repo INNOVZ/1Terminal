@@ -19,6 +19,20 @@ from algotrader.domain.bearish_continuation import (
     ContinuationPlan,
     evaluate_continuation,
 )
+from algotrader.domain.bearish_continuation import (
+    TITLES as CONTINUATION_TITLES,
+)
+from algotrader.domain.early_recovery import (
+    DEFAULT_EARLY_RECOVERY_POLICY,
+    EarlyRecoveryPlan,
+    evaluate_early_recovery,
+)
+from algotrader.domain.early_recovery import (
+    POLICY_VERSION as EARLY_RECOVERY_POLICY_VERSION,
+)
+from algotrader.domain.early_recovery import (
+    TITLES as RECOVERY_TITLES,
+)
 from algotrader.domain.indicators import bollinger_bands, ema, volume_contraction_metrics
 from algotrader.domain.models import Candle, Quote
 from algotrader.domain.radar_insights import radar_quote_snapshot
@@ -32,6 +46,7 @@ async def reconcile_radar_cohort(
     now: datetime | None = None,
     events: list[dict[str, Any]] | None = None,
     bearish_continuation_enabled: bool = False,
+    early_recovery_enabled: bool = False,
     additional_instruments: Sequence[Any] = (),
     quote_sink: dict[str, Quote] | None = None,
 ) -> list[dict[str, Any]]:
@@ -62,6 +77,20 @@ async def reconcile_radar_cohort(
         )
         updated["radar_origin"] = "retained"
         updated["radar_status_label"] = "DATA UNAVAILABLE"
+        setup_lbl = prev.get("setup_label")
+        gate_titles: tuple[str, ...] = (
+            RECOVERY_TITLES
+            if setup_lbl == "RECOVERY_RECLAIM_LONG"
+            else CONTINUATION_TITLES
+            if setup_lbl == "BREAKDOWN_RETEST_SHORT"
+            else (
+                "Trend Baseline",
+                "Anti-Chasing Validated",
+                "Value Acceptance",
+                "Volatility Compression",
+                "Smart Money Absorption",
+            )
+        )
         updated["checklist"] = [
             {
                 "title": title,
@@ -69,13 +98,7 @@ async def reconcile_radar_cohort(
                 "status": "unknown",
                 "detail": "Unavailable: fresh market data required",
             }
-            for title in (
-                "Trend Baseline",
-                "Anti-Chasing Validated",
-                "Value Acceptance",
-                "Volatility Compression",
-                "Smart Money Absorption",
-            )
+            for title in gate_titles
         ]
         return updated
 
@@ -100,6 +123,20 @@ async def reconcile_radar_cohort(
                 quote_sink.update(quotes_by_symbol)
     except Exception:
         pass  # Retain uncertainty explicitly; a provider error is not invalidation.
+
+    btc_candles_1h: Sequence[Candle] = ()
+    if early_recovery_enabled and any(
+        p.get("setup_label") == "RECOVERY_RECLAIM_LONG" for p in prior_opportunities
+    ):
+        btc_inst = inst_by_symbol.get("BTCUSDT") or next(
+            (i for i in inst_by_symbol.values() if getattr(i, "base_asset", "") == "BTC"),
+            None,
+        )
+        if btc_inst is not None:
+            with contextlib.suppress(Exception):
+                btc_candles_1h = await asyncio.wait_for(
+                    futures.candles(btc_inst, "1h", 240), timeout=6.0
+                )
 
     sem = asyncio.Semaphore(8)
     retained: list[dict[str, Any]] = []
@@ -286,6 +323,63 @@ async def reconcile_radar_cohort(
                             continuation_gates = (*current.gates[:2], False, *current.gates[3:])
                     except (KeyError, TypeError, ValueError, ArithmeticError):
                         continuation_gates = None
+            recovery_gates = None
+            recovery_details = None
+            is_recovery = prev.get("setup_label") == "RECOVERY_RECLAIM_LONG"
+            recovery_horizon = 12.0
+            if is_recovery and early_recovery_enabled:
+                rec_ev = prev.get("recovery_evidence") or {}
+                if rec_ev.get("policy_version") == EARLY_RECOVERY_POLICY_VERSION:
+                    try:
+                        rec_plan = EarlyRecoveryPlan.from_dict(rec_ev["plan"])
+                        rec_discovered = datetime.fromisoformat(
+                            str(prev.get("first_seen_at") or prev["evaluated_at"])
+                        )
+                        rec_wait_deadline = rec_plan.break_bar_at + timedelta(
+                            hours=DEFAULT_EARLY_RECOVERY_POLICY.trigger_wait_hours
+                        )
+                        recovery_horizon = max(
+                            0.0, (rec_wait_deadline - rec_discovered).total_seconds() / 3600.0
+                        )
+                        rec_observed = evaluate_radar_candidate_lifecycle(
+                            updated,
+                            current_price=live_price,
+                            recent_candles_1h=candles_payload,
+                            ema50_4h=ema50,
+                            now=checked_at,
+                            max_age_hours=recovery_horizon,
+                        )
+                        rec_trigger_at = (
+                            datetime.fromisoformat(rec_observed.triggered_at)
+                            if rec_observed.triggered_at
+                            else None
+                        )
+                        rec_is_triggered = (
+                            rec_observed.retained
+                            and rec_trigger_at is not None
+                            and rec_plan.break_bar_at <= rec_trigger_at <= rec_wait_deadline
+                            and rec_observed.trigger_basis in ("breakout", "retest")
+                            and rec_observed.trigger_entry_price is not None
+                            and rec_observed.trigger_stop_price is not None
+                        )
+                        current_rec = evaluate_early_recovery(
+                            closed_1h,
+                            closed_4h,
+                            btc_candles_1h,
+                            now=checked_at,
+                            quote=quote,
+                            tick=inst.price_tick,
+                            derivatives=deriv_snap,
+                            existing_plan=rec_plan,
+                            is_triggered=rec_is_triggered,
+                            trigger_entry_price=rec_observed.trigger_entry_price,
+                        )
+                        recovery_gates = current_rec.gates
+                        recovery_details = current_rec.details
+                        metrics.update(current_rec.metrics)
+                    except (KeyError, TypeError, ValueError, ArithmeticError):
+                        recovery_gates = None
+                        recovery_details = None
             decision = evaluate_radar_candidate_lifecycle(
                 updated,
                 current_price=live_price,
@@ -293,7 +387,15 @@ async def reconcile_radar_cohort(
                 ema50_4h=ema50,
                 now=checked_at,
                 continuation_gates=continuation_gates,
-                max_age_hours=continuation_horizon if is_continuation else 72.0,
+                recovery_gates=recovery_gates,
+                recovery_details=recovery_details,
+                max_age_hours=(
+                    continuation_horizon
+                    if is_continuation
+                    else recovery_horizon
+                    if is_recovery
+                    else 72.0
+                ),
             )
             if events is not None:
                 events.append(

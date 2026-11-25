@@ -11,7 +11,10 @@ from typing import Any
 
 from algotrader.config import load_settings
 from algotrader.domain.crypto_screener_models import ScreenerMode
-from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
+from algotrader.domain.screener_policy import (
+    SCREENING_POLICY_VERSION as SCREENING_POLICY_VERSION,
+)
+from algotrader.domain.screener_policy import screening_policy_version_for
 from algotrader.infrastructure.persistence import atomic_write_json
 from algotrader.infrastructure.runtime import Runtime, build_runtime
 
@@ -124,7 +127,7 @@ async def execute_screener_job(
         "mode": "screener",
         "order_execution_enabled": False,
         "validation_status": "uncalibrated_research",
-        "screening_policy_version": SCREENING_POLICY_VERSION,
+        "screening_policy_version": screening_policy_version_for(settings),
         "screening_feature_contract": "discovery_v2",
         "qualifying_count": len(opps_list),
         "long_count": len([o for o in opps_list if o["direction"] == "long"]),
@@ -143,7 +146,7 @@ async def execute_screener_job(
     history_file = out_dir / "screener_runs.jsonl"
     audit_entry = {
         "timestamp": now.isoformat(),
-        "screening_policy_version": SCREENING_POLICY_VERSION,
+        "screening_policy_version": screening_policy_version_for(settings),
         "total_scanned": run.counts.get("evaluated", 0),
         "scan_id": run.receipt.scan_id,
         "scan_archive": run.receipt.as_dict(),

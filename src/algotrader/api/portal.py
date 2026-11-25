@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 
 from algotrader.application.auto_watchlist_service import AutoWatchlistService
 from algotrader.application.bearish_continuation import publication_inputs_current
+from algotrader.application.early_recovery import recovery_publication_inputs_current
+from algotrader.application.kinetic_scout_service import KineticScoutService
 from algotrader.application.radar_service import reconcile_radar_cohort
 from algotrader.application.top_gainer_short_watch import TopGainerShortWatchService
 from algotrader.application.watchlist_service import WatchlistService
@@ -35,7 +37,12 @@ from algotrader.domain.radar_lifecycle import (
     RadarLifecycleState,
     same_radar_episode,
 )
-from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
+from algotrader.domain.screener_policy import (
+    SCREENING_POLICY_VERSION as SCREENING_POLICY_VERSION,
+)
+from algotrader.domain.screener_policy import (
+    screening_policy_version_for,
+)
 from algotrader.domain.watchlist_models import WatchlistItem, WatchlistPriority, WyckoffStage
 from algotrader.infrastructure.persistence import atomic_write_json
 from algotrader.infrastructure.runtime import Runtime, build_runtime
@@ -59,6 +66,8 @@ _auto_watchlist_service: AutoWatchlistService | None = None
 _auto_watchlist_backfilled: bool = False
 _short_watch_lock = asyncio.Lock()
 _short_watch_service: TopGainerShortWatchService | None = None
+_kinetic_scout_task: asyncio.Task[None] | None = None
+_kinetic_scout_service: KineticScoutService | None = None
 
 
 def _live_radar_symbols_from_cache() -> list[str]:
@@ -361,10 +370,11 @@ def _project_public_screener_state(
     Enforces screening_policy_version, radar_lifecycle_version, operational failure/degraded
     withholding, cache freshness TTL, and disabled-continuation rollback identically everywhere.
     """
+    active_policy_ver = screening_policy_version_for(settings)
     if (
         not _screener_cache
         or _screener_cache.get("radar_lifecycle_version") != RADAR_PUBLICATION_VERSION
-        or _screener_cache.get("screening_policy_version") != SCREENING_POLICY_VERSION
+        or _screener_cache.get("screening_policy_version") != active_policy_ver
     ):
         return "needs_refresh", {}
 
@@ -386,7 +396,7 @@ def _project_public_screener_state(
             "data_status": "stale",
             "stale": True,
             "stale_reason": "cache_ttl_exceeded",
-            "screening_policy_version": SCREENING_POLICY_VERSION,
+            "screening_policy_version": active_policy_ver,
             "radar_lifecycle_version": RADAR_PUBLICATION_VERSION,
             "macro_narrative": "Cached qualifications expired past freshness TTL; awaiting fresh live scan.",
             "opportunities": [],
@@ -398,9 +408,12 @@ def _project_public_screener_state(
     result.setdefault("stale", False)
     opps = list(result.get("opportunities", []))
     if any(o.get("setup_label") == "BREAKDOWN_RETEST_SHORT" for o in opps):
-        if not settings.bearish_continuation_enabled:
+        if getattr(settings, "bearish_continuation_enabled", False) is not True:
             # A rollback also withholds previously cached experimental cards across all routes.
             opps = [o for o in opps if o.get("setup_label") != "BREAKDOWN_RETEST_SHORT"]
+    if any(o.get("setup_label") == "RECOVERY_RECLAIM_LONG" for o in opps):
+        if getattr(settings, "early_recovery_enabled", False) is not True:
+            opps = [o for o in opps if o.get("setup_label") != "RECOVERY_RECLAIM_LONG"]
     result["opportunities"] = opps
     result["qualifying_count"] = len(opps)
     return "current", result
@@ -423,6 +436,7 @@ async def _persist_degraded_state(
     _consecutive_scan_failures += 1
     failed_at = datetime.now(UTC)
 
+    active_settings = _shared_runtime.settings if _shared_runtime is not None else load_settings()
     public_payload: dict[str, Any] = {
         "timestamp": failed_at.isoformat(),
         "total_scanned": 0,
@@ -432,7 +446,7 @@ async def _persist_degraded_state(
         "stale_reason": stale_reason,
         "last_scan_error": error_message,
         "consecutive_scan_failures": _consecutive_scan_failures,
-        "screening_policy_version": SCREENING_POLICY_VERSION,
+        "screening_policy_version": screening_policy_version_for(active_settings),
         "radar_lifecycle_version": RADAR_PUBLICATION_VERSION,
         "macro_narrative": macro_narrative,
         "opportunities": [],
@@ -587,11 +601,27 @@ async def _do_crypto_screen_locked(
             opps_list = []
 
         # Deduplicate by base asset preserving order (retaining single canonical contract per token)
+        v33_kinetic_on = getattr(settings, "kinetic_ignition_v33_enabled", False) is True
+        blocked_radar_pairs: dict[tuple[str, str], str] = {}
+        if v33_kinetic_on:
+            with contextlib.suppress(Exception):
+                blocked_radar_pairs = _get_auto_watchlist_service(runtime).blocked_from_radar_symbols(
+                    now=datetime.now(UTC),
+                    cooldown_hours=12.0,
+                )
+        pre_ignition_coils: list[dict[str, Any]] = []
         seen_bases: set[str] = set()
         deduped_opps: list[dict[str, Any]] = []
         for o in opps_list:
             if o.get("setup_label") == "BREAKDOWN_RETEST_SHORT" and not publication_inputs_current(
                 o.get("continuation_evidence"), datetime.now(UTC)
+            ):
+                continue
+            if o.get("setup_label") == "RECOVERY_RECLAIM_LONG" and (
+                getattr(settings, "early_recovery_enabled", False) is not True
+                or not recovery_publication_inputs_current(
+                    o.get("recovery_evidence"), datetime.now(UTC)
+                )
             ):
                 continue
             checklist = o.get("checklist")
@@ -602,6 +632,12 @@ async def _do_crypto_screen_locked(
             ):
                 continue
             sym = str(o.get("symbol", ""))
+            direction_key = str(o.get("direction", "long")).lower().strip()
+            if v33_kinetic_on and (sym.upper().strip(), direction_key) in blocked_radar_pairs:
+                continue
+            if v33_kinetic_on and o.get("publication_lane") == "WATCHLIST_COIL":
+                pre_ignition_coils.append(o)
+                continue
             base = o.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
             if base and base not in seen_bases:
                 seen_bases.add(base)
@@ -627,8 +663,9 @@ async def _do_crypto_screen_locked(
                     o.setdefault("failed_gates", [])
                 deduped_opps.append(o)
 
+        active_policy_ver = screening_policy_version_for(settings)
         cached_prior, prior_policy_ver = _get_prior_episodes_for_reconciliation()
-        prior_policy_current = prior_policy_ver == SCREENING_POLICY_VERSION
+        prior_policy_current = prior_policy_ver == active_policy_ver
         prior_by_base = {
             str(
                 p.get("base_asset")
@@ -669,7 +706,8 @@ async def _do_crypto_screen_locked(
             seen_bases=set(),
             futures=futures,
             events=radar_events,
-            bearish_continuation_enabled=getattr(settings, "bearish_continuation_enabled", False),
+            bearish_continuation_enabled=getattr(settings, "bearish_continuation_enabled", False) is True,
+            early_recovery_enabled=getattr(settings, "early_recovery_enabled", False) is True,
             additional_instruments=[inst_map[o["symbol"]] for o in deduped_opps
                                     if o.get("symbol") in inst_map],
             quote_sink=publication_quotes,
@@ -796,7 +834,7 @@ async def _do_crypto_screen_locked(
             "mode": "screener",
             "order_execution_enabled": False,
             "validation_status": "uncalibrated_research",
-            "screening_policy_version": SCREENING_POLICY_VERSION,
+            "screening_policy_version": active_policy_ver,
             "screening_feature_contract": "discovery_v2",
             "qualifying_count": len(final_opps),
             "fresh_count": sum(p.get("radar_origin") == "fresh" for p in final_opps),
@@ -833,7 +871,7 @@ async def _do_crypto_screen_locked(
         _screener_cache = result
         _cache_timestamp = now
         _episode_roster = list(final_opps)
-        _episode_policy_version = SCREENING_POLICY_VERSION
+        _episode_policy_version = active_policy_ver
         _episode_macro_narrative = macro_narrative
         _last_scan_succeeded_at = now
         _last_scan_error = None
@@ -849,6 +887,14 @@ async def _do_crypto_screen_locked(
                 now=now,
                 scan_id=run.receipt.scan_id,
             )
+            if pre_ignition_coils:
+                for coil_cand in pre_ignition_coils:
+                    await asyncio.to_thread(
+                        auto_watch.enroll_pre_ignition_coil,
+                        coil_cand,
+                        published_at=now,
+                        scan_id=run.receipt.scan_id,
+                    )
             futures_market = runtime.futures_market
             if _cached_instruments is None:
                 with contextlib.suppress(Exception):
@@ -1076,12 +1122,13 @@ async def _screener_cron_loop(interval_hours: int = 1) -> None:
         if _cache_timestamp is not None
         else 999.0
     )
+    cron_settings = _shared_runtime.settings if _shared_runtime is not None else load_settings()
     if (
         not _screener_cache
         or _screener_cache.get("data_status") == "startup_revalidation_required"
         or cache_age_hours >= float(interval_hours)
         or _screener_cache.get("radar_lifecycle_version") != RADAR_PUBLICATION_VERSION
-        or _screener_cache.get("screening_policy_version") != SCREENING_POLICY_VERSION
+        or _screener_cache.get("screening_policy_version") != screening_policy_version_for(cron_settings)
     ):
         try:
             async with _screener_task_lock:
@@ -1134,9 +1181,73 @@ async def _screener_cron_loop(interval_hours: int = 1) -> None:
             await asyncio.sleep(60.0)
 
 
+async def _merge_scout_promotions(
+    promoted: list[dict[str, Any]],
+    promoted_at: datetime,
+    scan_id: str,
+) -> None:
+    """Merge 5/5 quarter-hour kinetic promotions into live Radar cache without clobbering retained cards."""
+    global _screener_cache, _cache_timestamp, _episode_roster
+    if not promoted or not _screener_cache:
+        return
+    existing = list(_screener_cache.get("opportunities") or [])
+    seen_syms = {str(p.get("symbol", "")).upper() for p in promoted}
+    merged = list(promoted) + [
+        o for o in existing if str(o.get("symbol", "")).upper() not in seen_syms
+    ]
+    merged = merged[:16]
+    updated = dict(_screener_cache)
+    updated["opportunities"] = merged
+    updated["qualifying_count"] = len(merged)
+    updated["fresh_count"] = sum(p.get("radar_origin") == "fresh" for p in merged)
+    updated["retained_count"] = sum(p.get("radar_origin") == "retained" for p in merged)
+    updated["last_scout_scan_id"] = scan_id
+    updated["last_scout_at"] = promoted_at.isoformat()
+    _screener_cache = updated
+    _cache_timestamp = promoted_at
+    _episode_roster = list(merged)
+    with contextlib.suppress(Exception):
+        await asyncio.to_thread(atomic_write_json, Path("data/screener_latest.json"), updated)
+
+
+async def _kinetic_scout_loop() -> None:
+    """Aligned :16/:31/:46 UTC 15-minute Kinetic Scout loop (skips :01 full-sweep window)."""
+    global _kinetic_scout_service
+    while True:
+        try:
+            now = datetime.now(UTC)
+            # Next quarter-hour + 60s (:01, :16, :31, :46)
+            epoch = int(now.timestamp())
+            next_q = ((epoch // 900) + 1) * 900 + 60
+            delay = max(5.0, float(next_q - now.timestamp()))
+            await asyncio.sleep(delay)
+            tick_now = datetime.now(UTC)
+            if tick_now.minute < 6 or tick_now.minute >= 58:
+                continue
+            runtime = await get_portal_runtime()
+            if getattr(runtime.settings, "kinetic_scout_15m_enabled", False) is not True:
+                continue
+            if _kinetic_scout_service is None:
+                _kinetic_scout_service = KineticScoutService(
+                    settings=runtime.settings,
+                    market=runtime.futures_market,
+                    derivatives=runtime.futures_market,
+                    macro_provider=runtime.macro_provider,
+                    auto_watchlist=_get_auto_watchlist_service(runtime),
+                    scan_lock=_scan_execution_lock,
+                    on_promoted=_merge_scout_promotions,
+                )
+            await _kinetic_scout_service.run_quarter_hour_tick(now=tick_now)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logging.getLogger(__name__).exception("Kinetic 15m scout cycle failed")
+            await asyncio.sleep(30.0)
+
+
 def start_screener_cron(interval_hours: int = 1) -> None:
-    """Starts the background screener daemon if not already running."""
-    global _cron_task
+    """Starts the background screener daemon (and optional 15m kinetic scout) if not already running."""
+    global _cron_task, _kinetic_scout_task
     if not _screener_cache:
         warm_screener_cache()
     if _cron_task is None or _cron_task.done():
@@ -1147,22 +1258,32 @@ def start_screener_cron(interval_hours: int = 1) -> None:
         print(
             f"✅ [Cron] Atlas {interval_hours}-hour background screener cron started successfully."
         )
+    active_settings = _shared_runtime.settings if _shared_runtime is not None else load_settings()
+    if getattr(active_settings, "kinetic_scout_15m_enabled", False) is True:
+        if _kinetic_scout_task is None or _kinetic_scout_task.done():
+            _kinetic_scout_task = asyncio.create_task(
+                _kinetic_scout_loop(),
+                name="atlas-15m-kinetic-scout",
+            )
 
 
 async def stop_portal() -> None:
     """Cancel scans before closing their shared public-data clients."""
-    global _cron_task, _screener_task, _shared_runtime, _cached_instruments, _short_watch_service
+    global _cron_task, _screener_task, _kinetic_scout_task, _kinetic_scout_service
+    global _shared_runtime, _cached_instruments, _short_watch_service
     global _auto_watchlist_service, _auto_watchlist_backfilled
     global _cache_timestamp, _last_cron_run, _next_cron_run
     global _episode_roster, _episode_policy_version, _episode_macro_narrative
     global _last_scan_attempted_at, _last_scan_succeeded_at, _last_scan_error
     global _consecutive_scan_failures, _last_manual_refresh_at
-    tasks = [task for task in (_cron_task, _screener_task) if task is not None]
+    tasks = [task for task in (_cron_task, _screener_task, _kinetic_scout_task) if task is not None]
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
     _cron_task = None
     _screener_task = None
+    _kinetic_scout_task = None
+    _kinetic_scout_service = None
     _short_watch_service = None
     _auto_watchlist_service = None
     _auto_watchlist_backfilled = False
@@ -1416,12 +1537,19 @@ async def get_auto_watchlist(
     bounded_days = max(1, min(90, days))
     if refresh:
         _require_operator_auth(authorization)
+    active_settings = _shared_runtime.settings if _shared_runtime is not None else load_settings()
+    rec_enabled = getattr(active_settings, "early_recovery_enabled", False) is True
     auto_watch = _get_auto_watchlist_service()
     live_syms = _live_radar_symbols_from_cache()
     if not refresh and not auto_watch.refresh_due():
-        return auto_watch.build_response(days=bounded_days, live_radar_symbols=live_syms)
+        return auto_watch.build_response(
+            days=bounded_days,
+            live_radar_symbols=live_syms,
+            early_recovery_enabled=rec_enabled,
+        )
     try:
         runtime = await get_portal_runtime()
+        rec_enabled = getattr(runtime.settings, "early_recovery_enabled", False) is True
         auto_watch = _get_auto_watchlist_service(runtime)
         futures = runtime.futures_market
         if _cached_instruments is None:
@@ -1435,11 +1563,19 @@ async def get_auto_watchlist(
                 ),
                 timeout=12.0,
             )
-        return auto_watch.build_response(days=bounded_days, live_radar_symbols=_live_radar_symbols_from_cache())
+        return auto_watch.build_response(
+            days=bounded_days,
+            live_radar_symbols=_live_radar_symbols_from_cache(),
+            early_recovery_enabled=rec_enabled,
+        )
     except HTTPException:
         raise
     except Exception as exc:
-        payload = auto_watch.build_response(days=bounded_days, live_radar_symbols=_live_radar_symbols_from_cache())
+        payload = auto_watch.build_response(
+            days=bounded_days,
+            live_radar_symbols=_live_radar_symbols_from_cache(),
+            early_recovery_enabled=rec_enabled,
+        )
         payload["refresh_warning"] = f"{type(exc).__name__}: {exc}"
         return payload
 

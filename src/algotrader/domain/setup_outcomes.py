@@ -81,6 +81,9 @@ def freeze_plan(candidate: Mapping[str, Any], visible_at: datetime) -> dict[str,
     if setup == "BREAKDOWN_RETEST_SHORT":
         evidence = candidate["continuation_evidence"]
         deadline = (aware(evidence["plan"]["rejection_at"]) + timedelta(hours=4)).isoformat()
+    elif setup == "RECOVERY_RECLAIM_LONG":
+        evidence = candidate["recovery_evidence"]
+        deadline = (aware(evidence["plan"]["break_bar_at"]) + timedelta(hours=12)).isoformat()
     return {"symbol": symbol, "direction": direction.value, "setup_label": setup,
             "origin_at": origin.isoformat(), "first_visible_at": visible.isoformat(),
             "score": str(number(candidate["score"])), "execution_mode": mode,

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Sequence
-from dataclasses import asdict
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -16,6 +16,10 @@ from algotrader.application.alt_momentum import _participation_ratio, _return_ov
 from algotrader.application.bearish_continuation import (
     publication_inputs_current,
     score_continuation,
+)
+from algotrader.application.early_recovery import (
+    recovery_publication_inputs_current,
+    score_early_recovery,
 )
 from algotrader.application.research import beta_correlation
 from algotrader.application.scan_recording import MacroContextSource
@@ -41,6 +45,12 @@ from algotrader.domain.discovery_features import (
     discovery_volume_metrics,
     discovery_watch_selection,
 )
+from algotrader.domain.discovery_selection import activity_watch_selection
+from algotrader.domain.early_recovery import (
+    DEFAULT_EARLY_RECOVERY_POLICY,
+    RECOVERY_PROBE_CAP,
+    EarlyRecoveryPolicy,
+)
 from algotrader.domain.execution_brackets import (
     InvalidExecutionBracket,
     build_long_bracket,
@@ -65,6 +75,11 @@ from algotrader.domain.indicators import (
     taker_buy_ratio_from_candles,
     volume_contraction_metrics,
     volume_profile,
+)
+from algotrader.domain.kinetic_readiness import (
+    assess_kinetic_readiness,
+    evaluate_v33_local_base_or_flag,
+    has_recent_bearish_divergence_below_support,
 )
 from algotrader.domain.liquidity import SymbolLiquidityMetrics, compute_ili_ranks
 from algotrader.domain.models import (
@@ -173,9 +188,17 @@ class CryptoOpportunityScreener:
         journal: ScanDecisionJournal | None = None,
         feature_contract: str = "legacy",
         continuation_context: Any = None,
+        early_recovery_policy: EarlyRecoveryPolicy | None = None,
+        recovery_clock: Callable[[Instrument | None], Awaitable[datetime]] | None = None,
     ) -> None:
         self._continuation_context = continuation_context
         self._continuation_current: dict[str, dict[str, Any]] = {}
+        self._early_recovery_policy = early_recovery_policy or DEFAULT_EARLY_RECOVERY_POLICY
+        self._recovery_clock = recovery_clock
+        self._recovery_decision_at: dict[str, datetime] = {}
+        self._recovery_ready_scores: dict[str, Decimal] = {}
+        self._active_top10_gainers: frozenset[str] = frozenset()
+        self._enforce_quality_in_scan: bool = False
         self._settings = settings
         self._macro_provider = macro_provider or MacroSentimentProvider()
         self.scan_counts: dict[str, int] = {}
@@ -215,8 +238,12 @@ class CryptoOpportunityScreener:
     ) -> list[Instrument]:
         """Explicit seam for versioned research selection policies."""
         if self._feature_contract == "discovery_v2":
-            return discovery_watch_selection(selected, liquid, quotes, max_symbols or 265,
-                                             self._evaluated_at or datetime.now(UTC))
+            now_at = self._evaluated_at or datetime.now(UTC)
+            if self._settings.kinetic_ignition_v33_enabled:
+                return activity_watch_selection(
+                    selected, liquid, quotes, max_symbols or 320, now_at, max_watch_slots=45
+                )
+            return discovery_watch_selection(selected, liquid, quotes, max_symbols or 265, now_at)
         return selected
 
     def _hourly_history_limit(self) -> int:
@@ -249,6 +276,10 @@ class CryptoOpportunityScreener:
         self._continuation_current.clear()
         if self._continuation_context is not None and hasattr(self._continuation_context, "reset"):
             self._continuation_context.reset()
+        self._recovery_decision_at.clear()
+        self._recovery_ready_scores.clear()
+        self._active_top10_gainers = frozenset()
+        self._enforce_quality_in_scan = enforce_quality
         self._fetch_failures.clear()
         self._feature_unavailable.clear()
         self._ready_waiting_symbols.clear()
@@ -373,15 +404,27 @@ class CryptoOpportunityScreener:
             )
         else:
             effective_top10_gainers = frozenset()
+        self._active_top10_gainers = effective_top10_gainers
 
         # Stage 5: Dynamic 265-Pair Funnel (Top 215 ILI Core + Top 50 Pre-Pump Anomaly Discovery)
-        alloc_cap = (
-            max(1, max_symbols - min(20, max(0, max_symbols - 265)))
-            if (max_symbols is not None and self._feature_contract == "discovery_v2")
-            else max_symbols
-        )
-        target_core = 215 if alloc_cap is None else min(alloc_cap, max(1, int(alloc_cap * (215 / 265))))
-        target_discovery = 50 if alloc_cap is None else max(0, alloc_cap - target_core)
+        if (
+            self._settings.kinetic_ignition_v33_enabled
+            and self._feature_contract == "discovery_v2"
+            and max_symbols is not None
+            and max_symbols >= 265
+        ):
+            watch_reserve = min(45, max(20, max_symbols - 275))
+            v33_alloc = max(1, max_symbols - watch_reserve)
+            target_core: int = min(v33_alloc, max(1, int(round(v33_alloc * (200 / 275)))))
+            target_discovery: int = max(0, v33_alloc - target_core)
+        else:
+            alloc_cap = (
+                max(1, max_symbols - min(20, max(0, max_symbols - 265)))
+                if (max_symbols is not None and self._feature_contract == "discovery_v2")
+                else max_symbols
+            )
+            target_core = 215 if alloc_cap is None else min(alloc_cap, max(1, int(alloc_cap * (215 / 265))))
+            target_discovery = 50 if alloc_cap is None else max(0, alloc_cap - target_core)
 
         ili_inputs = [
             SymbolLiquidityMetrics(
@@ -646,10 +689,83 @@ class CryptoOpportunityScreener:
                 ranked_probes.append(((probe_class, within_class_score, q.quote_volume_24h, inst.id.symbol), inst))
             ranked_probes.sort(key=lambda item: (-item[0][0], -item[0][1], -item[0][2], item[0][3]))
             probe_limit = capacity.probe_limit
-            stage2_probes = [inst for _, inst in ranked_probes[:probe_limit]]
-            if self._feature_contract == "discovery_v2":
-                self.scan_counts["stage2_probe_overflow"] = max(0, len(ranked_probes) - probe_limit)
-            probe_overflow_symbols = {i.id.symbol for _, i in ranked_probes[probe_limit:]}
+            if self._settings.early_recovery_enabled:
+                rec_candidates: list[tuple[tuple[Decimal, Decimal, str], Instrument]] = []
+                for inst in selected_instruments:
+                    sym = inst.id.symbol
+                    if sym in shortlisted_symbols or sym not in self._recovery_ready_scores:
+                        continue
+                    q = quotes_by_symbol[sym]
+                    probe_rejection = self._probe_rejection_reason(q, target_direction)
+                    if probe_rejection is not None:
+                        self._note(sym, "probe_admission", probe_rejection)
+                        continue
+                    if (
+                        q.quote_volume_24h < self._early_recovery_policy.min_quote_volume_24h
+                        or q.spread_bps > self._early_recovery_policy.max_spread_bps
+                    ):
+                        continue
+                    rec_candidates.append(
+                        ((self._recovery_ready_scores[sym], q.quote_volume_24h, sym), inst)
+                    )
+                rec_candidates.sort(key=lambda item: (-item[0][0], -item[0][1], item[0][2]))
+                rec_cap = min(RECOVERY_PROBE_CAP, probe_limit)
+                rec_admitted = [inst for _, inst in rec_candidates[:rec_cap]]
+                rec_admitted_ids = {inst.id.symbol for inst in rec_admitted}
+                rec_overflow_ids = [inst.id.symbol for _, inst in rec_candidates[rec_cap:]]
+                rem_slots = max(0, probe_limit - len(rec_admitted))
+                remaining_baseline = [
+                    inst for _, inst in ranked_probes if inst.id.symbol not in rec_admitted_ids
+                ]
+                baseline_admitted = remaining_baseline[:rem_slots]
+                stage2_probes = rec_admitted + baseline_admitted
+                final_probe_ids = {inst.id.symbol for inst in stage2_probes}
+                baseline_would_admit = [inst.id.symbol for _, inst in ranked_probes[:probe_limit]]
+                displaced_ids = [s for s in baseline_would_admit if s not in final_probe_ids]
+                self.scan_counts["recovery_stage1_ready"] = len(self._recovery_ready_scores)
+                self.scan_counts["recovery_probe_admitted"] = len(rec_admitted)
+                self.scan_counts["recovery_probe_cap_overflow"] = len(rec_overflow_ids)
+                self.scan_counts["recovery_displaced_probes"] = len(displaced_ids)
+                for s in rec_admitted_ids:
+                    self._note(
+                        s,
+                        "recovery_allocation",
+                        "admitted_within_cap",
+                        cap=RECOVERY_PROBE_CAP,
+                        score=self._recovery_ready_scores[s],
+                    )
+                for s in rec_overflow_ids:
+                    self._note(
+                        s,
+                        "recovery_allocation",
+                        "cap_overflow",
+                        cap=RECOVERY_PROBE_CAP,
+                        score=self._recovery_ready_scores[s],
+                    )
+                for s in displaced_ids:
+                    self._note(
+                        s,
+                        "recovery_allocation",
+                        "displaced_baseline_probe",
+                        cap=RECOVERY_PROBE_CAP,
+                    )
+                if self._feature_contract == "discovery_v2":
+                    total_unique_probes = len(
+                        {inst.id.symbol for _, inst in ranked_probes}
+                        | {inst.id.symbol for _, inst in rec_candidates}
+                    )
+                    self.scan_counts["stage2_probe_overflow"] = max(
+                        0, total_unique_probes - len(stage2_probes)
+                    )
+                probe_overflow_symbols = (
+                    {i.id.symbol for _, i in ranked_probes if i.id.symbol not in final_probe_ids}
+                    | set(rec_overflow_ids)
+                )
+            else:
+                stage2_probes = [inst for _, inst in ranked_probes[:probe_limit]]
+                if self._feature_contract == "discovery_v2":
+                    self.scan_counts["stage2_probe_overflow"] = max(0, len(ranked_probes) - probe_limit)
+                probe_overflow_symbols = {i.id.symbol for _, i in ranked_probes[probe_limit:]}
         self.scan_counts["stage2_probes"] = len(stage2_probes)
         self.scan_counts["stage2_rollover_admitted"] = (
             max(0, len(stage2_probes) - DISCOVERY_PROBE_LIMIT) if capacity.rollover_slots else 0
@@ -702,7 +818,17 @@ class CryptoOpportunityScreener:
                         )
                     )
                     if isinstance(deriv_res, DerivativesSnapshot):
-                        if (deriv_res.degraded_telemetry or (deriv_res.open_interest_change_7d is None and opp.setup_label is not SetupLabel.BREAKDOWN_RETEST_SHORT)) and is_mandatory_deriv_setup:
+                        if (
+                            deriv_res.degraded_telemetry
+                            or (
+                                deriv_res.open_interest_change_7d is None
+                                and opp.setup_label
+                                not in (
+                                    SetupLabel.BREAKDOWN_RETEST_SHORT,
+                                    SetupLabel.RECOVERY_RECLAIM_LONG,
+                                )
+                            )
+                        ) and is_mandatory_deriv_setup:
                             log.warning(
                                 "candidate_dropped_due_to_degraded_stage2_telemetry",
                                 symbol=opp.instrument.id.symbol,
@@ -717,6 +843,10 @@ class CryptoOpportunityScreener:
                                     and self._continuation_context is not None):
                                 self._continuation_current[opp.instrument.id.symbol] = await self._continuation_context.get(
                                     opp.instrument, quotes_by_symbol[opp.instrument.id.symbol], c1h_cached, c4h_cached,
+                                )
+                            if self._settings.early_recovery_enabled and self._recovery_clock is not None:
+                                self._recovery_decision_at[opp.instrument.id.symbol] = await self._recovery_clock(
+                                    opp.instrument
                                 )
                             res_enriched = await self._evaluate_single(
                                 inst=opp.instrument,
@@ -764,6 +894,8 @@ class CryptoOpportunityScreener:
                         self.scan_counts["stage2_derivatives_unavailable"] += 1
                         self._note(inst.id.symbol, "stage2", "derivatives_unavailable")
                         return None
+                    if self._settings.early_recovery_enabled and self._recovery_clock is not None:
+                        self._recovery_decision_at[inst.id.symbol] = await self._recovery_clock(inst)
                     res_enriched = await self._evaluate_single(
                         inst=inst,
                         quote=quotes_by_symbol[inst.id.symbol],
@@ -800,6 +932,17 @@ class CryptoOpportunityScreener:
             for item in enriched_results
         ):
             continuation_publication_at = await self._continuation_context.publication_time()
+        recovery_publication_at = None
+        if self._settings.early_recovery_enabled and any(
+            isinstance(item, CryptoOpportunity)
+            and item.setup_label is SetupLabel.RECOVERY_RECLAIM_LONG
+            for item in enriched_results
+        ):
+            recovery_publication_at = (
+                await self._recovery_clock(None)
+                if self._recovery_clock is not None
+                else (self._evaluated_at or datetime.now(UTC))
+            )
 
         opportunities: list[CryptoOpportunity] = []
         stage2_symbols = [opp.instrument.id.symbol for opp in stage2_shortlist] + [inst.id.symbol for inst in stage2_probes]
@@ -818,6 +961,13 @@ class CryptoOpportunityScreener:
                     if continuation_reasons:
                         for reason in continuation_reasons:
                             self._note(symbol, "publication", "publication:" + reason)
+                        continue
+                if opp.setup_label is SetupLabel.RECOVERY_RECLAIM_LONG and (
+                    self._settings.early_recovery_enabled or opp.recovery_evidence is not None
+                ):
+                    pub_check_now = recovery_publication_at or self._evaluated_at or datetime.now(UTC)
+                    if not recovery_publication_inputs_current(opp.recovery_evidence, pub_check_now):
+                        self._note(symbol, "publication", "publication:stale_recovery_inputs")
                         continue
                 if not valid_execution_prices(opp.direction, opp.suggested_entry, opp.suggested_stop, opp.suggested_targets):
                     self._note(symbol, "publication", "publication:invalid_execution_prices")
@@ -1001,7 +1151,12 @@ class CryptoOpportunityScreener:
                     c1w if not isinstance(c1w, BaseException) else (),
                 )
 
-        if isinstance(c1h, BaseException) or not c1h or len(c1h) < 120:
+        min_1h_raw = (
+            self._early_recovery_policy.min_closed_1h_bars
+            if self._settings.early_recovery_enabled
+            else 120
+        )
+        if isinstance(c1h, BaseException) or not c1h or len(c1h) < min_1h_raw:
             return []
         if isinstance(c4h, BaseException) or not c4h or len(c4h) < 40:
             return []
@@ -1012,25 +1167,133 @@ class CryptoOpportunityScreener:
         closed_1w = sorted((c for c in c1w if c.closed), key=lambda c: c.closed_at) if not isinstance(c1w, BaseException) else []
         candles_1w = closed_1w if len(closed_1w) >= 15 else resample_candles(candles_1d, "1w")
 
-        if len(closed_1h) < 120 or len(closed_4h) < 40:
-            return []
-
-        # The legacy indicator snapshot requires 210 bars; continuation has its
-        # own validated OHLCV contract and must not inherit that unrelated blocker.
-        if (self._settings.bearish_continuation_enabled and len(closed_1h) < 210
-                and target_direction in (None, Direction.SHORT)
-                and mode in (ScreenerMode.ALL, ScreenerMode.DISTRIBUTION)):
-            context = self._continuation_current.get(inst.id.symbol, {})
-            if context.get("status", "current") != "current":
-                self._note(inst.id.symbol, "continuation_rejection", "refresh_unavailable")
+        if not self._settings.early_recovery_enabled:
+            if len(closed_1h) < 120 or len(closed_4h) < 40:
                 return []
-            continuation = score_continuation(
-                inst, context.get("quote", quote), context.get("hourly", closed_1h), context.get("four_hour", closed_4h),
-                now=context.get("decision_at", self._evaluated_at or datetime.now(UTC)), derivatives=explicit_derivatives,
-                note=self._note, macro_narrative="Experimental bearish continuation",
-                beta=Decimal("1"), residual=ZERO, is_discovery_tier=is_discovery_tier,
-            )
-            return [continuation] if continuation is not None else []
+            # The legacy indicator snapshot requires 210 bars; continuation has its
+            # own validated OHLCV contract and must not inherit that unrelated blocker.
+            if (
+                self._settings.bearish_continuation_enabled
+                and len(closed_1h) < 210
+                and target_direction in (None, Direction.SHORT)
+                and mode in (ScreenerMode.ALL, ScreenerMode.DISTRIBUTION)
+            ):
+                context = self._continuation_current.get(inst.id.symbol, {})
+                if context.get("status", "current") != "current":
+                    self._note(inst.id.symbol, "continuation_rejection", "refresh_unavailable")
+                    return []
+                continuation = score_continuation(
+                    inst,
+                    context.get("quote", quote),
+                    context.get("hourly", closed_1h),
+                    context.get("four_hour", closed_4h),
+                    now=context.get("decision_at", self._evaluated_at or datetime.now(UTC)),
+                    derivatives=explicit_derivatives,
+                    note=self._note,
+                    macro_narrative="Experimental bearish continuation",
+                    beta=Decimal("1"),
+                    residual=ZERO,
+                    is_discovery_tier=is_discovery_tier,
+                )
+                return [continuation] if continuation is not None else []
+        elif len(closed_1h) < 210 or len(closed_4h) < 40:
+            short_hist_opps: list[CryptoOpportunity] = []
+            cont_opp: CryptoOpportunity | None = None
+            if (
+                self._settings.bearish_continuation_enabled
+                and len(closed_1h) >= 120
+                and len(closed_4h) >= 40
+                and target_direction in (None, Direction.SHORT)
+                and mode in (ScreenerMode.ALL, ScreenerMode.DISTRIBUTION)
+            ):
+                context = self._continuation_current.get(inst.id.symbol, {})
+                if context.get("status", "current") != "current":
+                    self._note(inst.id.symbol, "continuation_rejection", "refresh_unavailable")
+                else:
+                    cont_opp = score_continuation(
+                        inst,
+                        context.get("quote", quote),
+                        context.get("hourly", closed_1h),
+                        context.get("four_hour", closed_4h),
+                        now=context.get("decision_at", self._evaluated_at or datetime.now(UTC)),
+                        derivatives=explicit_derivatives,
+                        note=self._note,
+                        macro_narrative="Experimental bearish continuation",
+                        beta=Decimal("1"),
+                        residual=ZERO,
+                        is_discovery_tier=is_discovery_tier,
+                    )
+
+            rec_short_hist: CryptoOpportunity | None = None
+            if (
+                len(closed_1h) >= self._early_recovery_policy.min_closed_1h_bars
+                and len(closed_4h) >= self._early_recovery_policy.min_closed_4h_bars
+                and (target_direction is None or target_direction is Direction.LONG)
+                and mode in (ScreenerMode.ACCUMULATION, ScreenerMode.BREAKOUT, ScreenerMode.ALL, None)
+            ):
+                sh_derivs = explicit_derivatives
+                if sh_derivs is None and derivatives_port is not None and mode == ScreenerMode.BREAKOUT:
+                    try:
+                        d_res = await asyncio.wait_for(
+                            derivatives_port.derivatives_snapshot(inst), timeout=4.0
+                        )
+                        if isinstance(d_res, DerivativesSnapshot):
+                            sh_derivs = d_res
+                    except Exception:
+                        sh_derivs = None
+                sh_beta, _, sh_res24, _, _ = self._calc_residual_alpha(closed_1h, btc_candles)
+                rec_now = (
+                    self._recovery_decision_at.get(inst.id.symbol)
+                    or self._evaluated_at
+                    or datetime.now(UTC)
+                )
+                rec_cand, rec_eval = score_early_recovery(
+                    inst,
+                    quote,
+                    closed_1h,
+                    closed_4h,
+                    btc_candles,
+                    now=rec_now,
+                    derivatives=sh_derivs,
+                    is_btc_cascade=is_btc_cascade,
+                    macro_multiplier=macro_context.multiplier_for(Direction.LONG),
+                    macro_narrative=macro_context.narrative(),
+                    beta=sh_beta,
+                    residual_24h=sh_res24,
+                    is_discovery_tier=is_discovery_tier,
+                    note=self._note,
+                    policy=self._early_recovery_policy,
+                )
+                if sh_derivs is None:
+                    if rec_eval.structurally_ready and rec_cand is not None:
+                        self._recovery_ready_scores[inst.id.symbol] = rec_cand.score
+                else:
+                    rec_short_hist = rec_cand
+
+            if cont_opp is not None and rec_short_hist is not None:
+                if cont_opp.score > rec_short_hist.score:
+                    self._note(
+                        inst.id.symbol,
+                        "deduplication",
+                        "selected_short_over_recovery",
+                        kept=cont_opp.setup_label.value,
+                        suppressed=rec_short_hist.setup_label.value,
+                    )
+                    short_hist_opps.append(cont_opp)
+                else:
+                    self._note(
+                        inst.id.symbol,
+                        "deduplication",
+                        "selected_recovery_over_short",
+                        kept=rec_short_hist.setup_label.value,
+                        suppressed=cont_opp.setup_label.value,
+                    )
+                    short_hist_opps.append(rec_short_hist)
+            elif cont_opp is not None:
+                short_hist_opps.append(cont_opp)
+            elif rec_short_hist is not None:
+                short_hist_opps.append(rec_short_hist)
+            return short_hist_opps
 
         # Indicators
         await asyncio.sleep(0)  # Cooperative yield to event loop for healthchecks
@@ -1120,6 +1383,118 @@ class CryptoOpportunityScreener:
                 is_discovery_tier=is_discovery_tier,
             )
 
+        def _dedup_core_vs_recovery(
+            core_cand: CryptoOpportunity | None,
+            rec_cand: CryptoOpportunity | None,
+        ) -> CryptoOpportunity | None:
+            if rec_cand is None:
+                return core_cand
+            if core_cand is None:
+                self._note(
+                    inst.id.symbol,
+                    "deduplication",
+                    "selected_recovery_no_core_candidate",
+                    kept=rec_cand.setup_label.value,
+                    recovery_score=rec_cand.score,
+                )
+                return rec_cand
+            core_missing_7d = (
+                core_cand.setup_label
+                in (
+                    SetupLabel.OI_ACCUMULATION_LONG,
+                    SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG,
+                    SetupLabel.FUNDING_SQUEEZE_SPRING_LONG,
+                )
+                and core_cand.oi_change_7d is None
+            )
+            core_reasons: tuple[str, ...] = ("missing_required_7d_oi",) if core_missing_7d else ()
+            core_coi = float(self._effective_coi) if self._coi_active else None
+            if self._enforce_quality_in_scan or min_score is None:
+                core_reasons = core_reasons + publication_rejection_reasons(
+                    core_cand,
+                    coi_score=core_coi,
+                    top_gainer_symbols=self._active_top10_gainers,
+                )
+            eff_core = core_cand.conviction if core_cand.conviction is not None else core_cand.score
+            if min_score is not None and eff_core < min_score:
+                core_reasons = core_reasons + ("requested_score_floor",)
+            if not core_reasons:
+                self._note(
+                    inst.id.symbol,
+                    "deduplication",
+                    "selected_core_over_recovery",
+                    kept=core_cand.setup_label.value,
+                    suppressed=rec_cand.setup_label.value,
+                    core_score=core_cand.score,
+                    recovery_score=rec_cand.score,
+                )
+                return core_cand
+            self._note(
+                inst.id.symbol,
+                "deduplication",
+                "selected_recovery_after_core_rejection",
+                kept=rec_cand.setup_label.value,
+                suppressed=core_cand.setup_label.value,
+                core_rejection_reasons=core_reasons,
+                recovery_score=rec_cand.score,
+            )
+            return rec_cand
+
+        rec_eligible_mode = (
+            self._settings.early_recovery_enabled
+            and (target_direction is None or target_direction is Direction.LONG)
+            and mode in (ScreenerMode.ACCUMULATION, ScreenerMode.BREAKOUT, ScreenerMode.ALL, None)
+        )
+        if rec_eligible_mode and derivatives is None and derivatives_port is None:
+            rec_s1_now = self._evaluated_at or datetime.now(UTC)
+            rec_s1_opp, rec_s1_eval = score_early_recovery(
+                inst,
+                quote,
+                closed_1h,
+                closed_4h,
+                btc_candles,
+                now=rec_s1_now,
+                derivatives=None,
+                is_btc_cascade=is_btc_cascade,
+                macro_multiplier=macro_context.multiplier_for(Direction.LONG),
+                macro_narrative=macro_context.narrative(),
+                beta=beta,
+                residual_24h=residual_24h,
+                is_discovery_tier=is_discovery_tier,
+                note=self._note,
+                policy=self._early_recovery_policy,
+            )
+            if rec_s1_eval.structurally_ready and rec_s1_opp is not None:
+                self._recovery_ready_scores[inst.id.symbol] = rec_s1_opp.score
+        elif (
+            rec_eligible_mode
+            and derivatives is not None
+            and not getattr(derivatives, "degraded_telemetry", False)
+        ):
+            rec_s2_now = (
+                self._recovery_decision_at.get(inst.id.symbol)
+                or self._evaluated_at
+                or datetime.now(UTC)
+            )
+            rec_s2_opp, _ = score_early_recovery(
+                inst,
+                quote,
+                closed_1h,
+                closed_4h,
+                btc_candles,
+                now=rec_s2_now,
+                derivatives=derivatives,
+                is_btc_cascade=is_btc_cascade,
+                macro_multiplier=macro_context.multiplier_for(Direction.LONG),
+                macro_narrative=macro_context.narrative(),
+                beta=beta,
+                residual_24h=residual_24h,
+                is_discovery_tier=is_discovery_tier,
+                note=self._note,
+                policy=self._early_recovery_policy,
+            )
+            accum_opp = _dedup_core_vs_recovery(accum_opp, rec_s2_opp)
+
         # Stage 2: Deep Derivatives Enrichment ONLY for Shortlisted Candidates
         # If neither accumulation nor distribution passed structural criteria, avoid expensive derivatives API calls
         viability_floor = Decimal("38.0") if self._feature_contract == "discovery_v2" and explicit_derivatives is None else Decimal("58.0")
@@ -1158,6 +1533,30 @@ class CryptoOpportunityScreener:
                     candles_1w=candles_1w,
                     is_discovery_tier=is_discovery_tier,
                 )
+            if rec_eligible_mode and not getattr(derivatives, "degraded_telemetry", False):
+                rec_brk_now = (
+                    self._recovery_decision_at.get(inst.id.symbol)
+                    or self._evaluated_at
+                    or datetime.now(UTC)
+                )
+                rec_brk_opp, _ = score_early_recovery(
+                    inst,
+                    quote,
+                    closed_1h,
+                    closed_4h,
+                    btc_candles,
+                    now=rec_brk_now,
+                    derivatives=derivatives,
+                    is_btc_cascade=is_btc_cascade,
+                    macro_multiplier=macro_context.multiplier_for(Direction.LONG),
+                    macro_narrative=macro_context.narrative(),
+                    beta=beta,
+                    residual_24h=residual_24h,
+                    is_discovery_tier=is_discovery_tier,
+                    note=self._note,
+                    policy=self._early_recovery_policy,
+                )
+                accum_opp = _dedup_core_vs_recovery(accum_opp, rec_brk_opp)
             if is_viable_short:
                 dist_opp = self._score_distribution_setup(
                     inst=inst,
@@ -1199,9 +1598,60 @@ class CryptoOpportunityScreener:
         if accum_opp is not None and dist_opp is not None:
             # If both directions qualify, assign the one with higher score and conviction
             if dist_opp.score > accum_opp.score:
+                if self._settings.early_recovery_enabled:
+                    self._note(
+                        inst.id.symbol,
+                        "deduplication",
+                        "selected_short_over_long",
+                        kept=dist_opp.setup_label.value,
+                        suppressed=accum_opp.setup_label.value,
+                    )
                 accum_opp = None
             else:
+                if self._settings.early_recovery_enabled:
+                    self._note(
+                        inst.id.symbol,
+                        "deduplication",
+                        "selected_long_over_short",
+                        kept=accum_opp.setup_label.value,
+                        suppressed=dist_opp.setup_label.value,
+                    )
                 dist_opp = None
+
+        if (
+            self._settings.kinetic_ignition_v33_enabled
+            and accum_opp is None
+            and (target_direction is None or target_direction is Direction.LONG)
+            and mode in (ScreenerMode.ACCUMULATION, ScreenerMode.ALL, None)
+        ):
+            accum_opp = evaluate_v33_local_base_or_flag(
+                inst=inst,
+                quote=quote,
+                snap_1h=snap_1h,
+                closed_1h=closed_1h,
+                closed_4h=closed_4h,
+                derivatives=derivatives,
+                macro_multiplier=macro_context.multiplier_for(Direction.LONG),
+                macro_narrative=macro_context.narrative(),
+                is_btc_cascade=is_btc_cascade,
+                beta=beta,
+                residual_24h=residual_24h,
+                is_discovery_tier=is_discovery_tier,
+                evaluated_at=self._evaluated_at or datetime.now(UTC),
+                on_stage1_ready=self._stage1_ready_symbols.add,
+            )
+
+        if (
+            self._settings.kinetic_ignition_v33_enabled
+            and accum_opp is not None
+            and derivatives is not None
+        ):
+            kin = assess_kinetic_readiness(accum_opp, closed_1h, derivatives)
+            accum_opp = replace(
+                accum_opp,
+                publication_lane=kin.target_lane,
+                kinetic_reason=kin.reason,
+            )
 
         if accum_opp is not None and accum_opp.setup_label is not SetupLabel.NO_SETUP:
             opps.append(accum_opp)
@@ -1377,14 +1827,21 @@ class CryptoOpportunityScreener:
 
         # Disqualify Active Bearish Divergences on accumulation only if price broke below structural support
         if len(closed_4h) >= 24 and (close < ema50_4h and close < poc_price):
-            rsi_divs_4h = confirmed_rsi_divergences(closed_4h[-24:], lookback=18, min_rsi_delta=Decimal("2.0"))
-            if any(d.kind == "bearish" for d in rsi_divs_4h):
-                self._note(inst.id.symbol, "accumulation_rejection", "bearish_rsi_divergence_below_support")
-                return None
-            macd_divs_4h = confirmed_macd_divergences(closed_4h[-24:], lookback=18)
-            if any(d.kind == "bearish" for d in macd_divs_4h):
-                self._note(inst.id.symbol, "accumulation_rejection", "bearish_macd_divergence_below_support")
-                return None
+            if self._settings.kinetic_ignition_v33_enabled:
+                if inst.id.symbol not in self._vvi_symbols and has_recent_bearish_divergence_below_support(
+                    closed_4h, max_bars_ago=3
+                ):
+                    self._note(inst.id.symbol, "accumulation_rejection", "bearish_rsi_divergence_below_support")
+                    return None
+            else:
+                rsi_divs_4h = confirmed_rsi_divergences(closed_4h[-24:], lookback=18, min_rsi_delta=Decimal("2.0"))
+                if any(d.kind == "bearish" for d in rsi_divs_4h):
+                    self._note(inst.id.symbol, "accumulation_rejection", "bearish_rsi_divergence_below_support")
+                    return None
+                macd_divs_4h = confirmed_macd_divergences(closed_4h[-24:], lookback=18)
+                if any(d.kind == "bearish" for d in macd_divs_4h):
+                    self._note(inst.id.symbol, "accumulation_rejection", "bearish_macd_divergence_below_support")
+                    return None
 
         # Swings & Indicators
         local_swing_high_4h = max(c.high for c in (closed_4h[-18:] if len(closed_4h) >= 18 else closed_4h))

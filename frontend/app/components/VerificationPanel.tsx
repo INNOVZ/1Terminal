@@ -221,11 +221,13 @@ function VerificationPanel({
   const isGradeAPlus = passCount === totalCount && !isHighRejection;
   const isShort = opportunity?.direction?.toLowerCase() === "short";
   const isContinuation = opportunity?.setup_label === "BREAKDOWN_RETEST_SHORT";
+  const isEarlyRecovery = opportunity?.setup_label === "RECOVERY_RECLAIM_LONG";
+  const isFrozenFamilyPlan = isContinuation || isEarlyRecovery;
 
   // Memoize bracket calculations with locked trigger references and dynamic tick precision
   const bracket = useMemo(() => {
     if (!opportunity) return null;
-    const effectiveLevels = isContinuation ? undefined : adaptedLevels;
+    const effectiveLevels = isFrozenFamilyPlan ? undefined : adaptedLevels;
     const currentPriceNum = livePrice ?? Number(opportunity.current_price || 0);
     const lockedStopNum = Number(opportunity.radar_trigger_stop || 0);
     const lockedEntryNum = Number(opportunity.radar_trigger_entry || 0);
@@ -277,7 +279,7 @@ function VerificationPanel({
       rawTarget1: targets[0] || currentPriceNum,
       rawTarget2: targets[1] || currentPriceNum,
     };
-  }, [opportunity, isShort, isContinuation, adaptedLevels, livePrice, decimals]);
+  }, [opportunity, isShort, isFrozenFamilyPlan, adaptedLevels, livePrice, decimals]);
 
   const handleAddToWatchlist = useCallback(async () => {
     if (!opportunity || !bracket || adding) return;
@@ -618,7 +620,9 @@ function VerificationPanel({
             <ShieldCheck size={13} />
             {isContinuation
               ? "EXPERIMENTAL SHORT — AWAIT DOWNSIDE TRIGGER"
-              : opportunity.breakout_readiness_status === "BREAKOUT_CONFIRMED"
+              : isEarlyRecovery
+                ? "EARLY RECOVERY — AWAIT PIVOT BREAKOUT TRIGGER (UNCALIBRATED)"
+                : opportunity.breakout_readiness_status === "BREAKOUT_CONFIRMED"
               ? "BREAKOUT CONFIRMED (ABSORPTION HIGH)"
               : opportunity.breakout_readiness_status === "HIGH_REJECTION_RISK"
                 ? "REJECTION RISK (BLEEDING OI / CVD)"
@@ -669,7 +673,9 @@ function VerificationPanel({
               <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
                 {isContinuation
                   ? "Conditional Breakdown Entry"
-                  : opportunity.execution_mode === "CEILING_BREAKOUT"
+                  : isEarlyRecovery
+                    ? "Conditional Recovery Entry"
+                    : opportunity.execution_mode === "CEILING_BREAKOUT"
                   ? "Breakout Entry"
                   : opportunity.execution_mode?.includes("EXPANSION")
                     ? (isShort ? "Breakdown Entry" : "Breakout Entry")
@@ -678,7 +684,9 @@ function VerificationPanel({
               <span style={{ fontSize: "9px", color: "var(--text-muted)" }}>
                 {isContinuation
                   ? "Below the failed support-retest rejection"
-                  : opportunity.execution_mode === "CEILING_BREAKOUT"
+                  : isEarlyRecovery
+                    ? "Above 3h pivot reclaim; invalidated below frozen local low"
+                    : opportunity.execution_mode === "CEILING_BREAKOUT"
                   ? "Conditional on breakout trigger"
                   : isShort ? "POC / EMA50 Resistance Ceiling" : "POC / EMA50 Support Shelf"}
               </span>
@@ -734,7 +742,7 @@ function VerificationPanel({
             }}
           >
             <span style={{ color: "var(--accent-emerald)" }}>
-              {isContinuation ? "Target 1 (Before Known Support)" : isShort ? "Target 1 (Floor / VAL)" : "Target 1 (Ceiling)"}
+              {isContinuation ? "Target 1 (Before Known Support)" : isEarlyRecovery ? "Target 1 (Before Overhead Resistance)" : isShort ? "Target 1 (Floor / VAL)" : "Target 1 (Ceiling)"}
             </span>
             <strong style={{ color: "var(--accent-emerald)" }}>
               ${bracket.target1}
@@ -818,6 +826,13 @@ function VerificationPanel({
                 Experimental conditional plan: trigger below the rejection structure,
                 invalidate above its frozen stop, and take the first target before
                 known support. A trigger observation is not an executed fill.
+              </>
+            ) : isEarlyRecovery ? (
+              <>
+                Opt-in early-recovery plan below 4H EMA50 / 30d POC: await conditional
+                trigger above the reclaimed 3h pivot, invalidate strictly below the frozen
+                local higher-low stop, and cap Target 1 at or before overhead structural
+                resistance. Heuristic ranking only; no calibrated win rate or live execution.
               </>
             ) : isShort ? (
               <>

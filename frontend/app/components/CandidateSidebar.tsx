@@ -130,6 +130,24 @@ export function computeCoilToGainerProbability(opp: Opportunity): CoilGainerInsi
       badgeBorder: "rgba(239, 68, 68, 0.3)", insights,
     };
   }
+  if (opp.setup_label === "RECOVERY_RECLAIM_LONG") {
+    const gates = opp.checklist || [];
+    const passed = gates.filter((gate) => gate.passed === true).length;
+    const insights = gates.map((gate) => `[${gate.passed ? "✓" : "✗"}] ${gate.title}: ${gate.detail}`);
+    const actionThesis = "Early-recovery pivot reclaim below 4H EMA50 / 30d POC with net-new OI & buyer taker confirmation. Await conditional breakout trigger; invalidate below frozen local higher-low. Heuristic score only (uncalibrated win-rate/EV).";
+    return {
+      score: Math.min(passed, 5),
+      archetype: "EARLY RECOVERY RECLAIM (OPT-IN)",
+      shortLabel: "RECOVERY",
+      telemetrySummary: `${passed}/${gates.length || 5} recovery gates verified`,
+      actionThesis,
+      tooltipText: ["EARLY RECOVERY — FAMILY GATE CHECKS (UNCALIBRATED)", actionThesis, ...insights].join("\n"),
+      badgeBg: "rgba(56, 189, 248, 0.14)",
+      badgeColor: "#38bdf8",
+      badgeBorder: "rgba(56, 189, 248, 0.34)",
+      insights,
+    };
+  }
   const fundBps = parseFloat(String(opp.funding_rate_bps || "0").replace("bps", ""));
   const oi7d = parseFloat(String(opp.oi_change_7d_pct || "0").replace("%", "").replace("+", ""));
   const oi1h = parseFloat(String(opp.oi_change_1h_pct || "0").replace("%", "").replace("+", ""));

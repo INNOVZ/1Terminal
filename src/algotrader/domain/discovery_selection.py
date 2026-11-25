@@ -56,17 +56,20 @@ def rotation_key(symbol: str, at: datetime) -> str:
 def activity_watch_selection(
     selected: list[Instrument], liquid: list[Instrument], quotes: Mapping[str, Quote],
     budget: int, at: datetime, *, rotation_at: datetime | None = None,
+    max_watch_slots: int = 20,
 ) -> list[Instrument]:
     rotation = rotation_at or at
     ids = {i.id for i in selected}
     pool = [i for i in liquid if i.id not in ids and i.id.symbol in quotes
             and liquid_quote(quotes[i.id.symbol], at, max_age_seconds=600)
             and quotes[i.id.symbol].quote_volume_24h < 1500000]
-    remaining = min(20, max(0, budget - len(selected)))
+    slot_cap = max(1, int(max_watch_slots))
+    remaining = min(slot_cap, max(0, budget - len(selected)))
     scores = activity_scores(pool, quotes, at, max_age_seconds=600)
     ranked = sorted((i for i in pool if i.id.symbol in scores),
                     key=lambda i: (-scores[i.id.symbol], rotation_key(i.id.symbol, rotation)))
-    chosen = ranked[:min(12, remaining)]
+    priority_cap = max(12, int(round(slot_cap * 0.6))) if slot_cap > 20 else 12
+    chosen = ranked[:min(priority_cap, remaining)]
     chosen_ids = {i.id for i in chosen}
     rest = sorted((i for i in pool if i.id not in chosen_ids), key=lambda i: rotation_key(i.id.symbol, rotation))
     return [*selected, *chosen, *rest[:remaining - len(chosen)]]

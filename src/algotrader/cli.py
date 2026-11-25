@@ -16,7 +16,10 @@ import uvicorn
 
 from algotrader.config import load_settings
 from algotrader.domain.crypto_screener_models import ScreenerMode
-from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
+from algotrader.domain.screener_policy import (
+    SCREENING_POLICY_VERSION as SCREENING_POLICY_VERSION,
+)
+from algotrader.domain.screener_policy import screening_policy_version_for
 from algotrader.infrastructure.runtime import build_runtime
 from algotrader.infrastructure.scan_archive import LocalScanArchive, validated_id
 
@@ -36,7 +39,7 @@ async def _screen(mode: str, min_score: float, max_symbols: int) -> int:
                     "mode": "screener",
                     "order_execution_enabled": False,
                     "validation_status": "uncalibrated_research",
-                    "screening_policy_version": SCREENING_POLICY_VERSION,
+                    "screening_policy_version": screening_policy_version_for(runtime.settings),
                     "screening_feature_contract": "discovery_v2",
                     "scan_counts": run.counts,
                     "scan_id": run.receipt.scan_id,

@@ -33,6 +33,12 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
 
+from algotrader.domain.early_recovery import (
+    FLOW_TITLE as RECOVERY_FLOW_TITLE,
+)
+from algotrader.domain.early_recovery import (
+    STRUCTURAL_TITLES as RECOVERY_STRUCTURAL_TITLES,
+)
 from algotrader.domain.models import Candle
 
 AUTO_WATCH_WINDOW_HOURS = 48
@@ -194,6 +200,7 @@ class AutoWatchEpisode:
     retest_touched: bool = False
     breakout_touched: bool = False
     was_promoted_to_watchlist: bool = False
+    graduation_count: int = 0
     has_observations: bool = False
     coverage_complete: bool = False
     coverage_gaps: int = 0
@@ -370,6 +377,7 @@ class AutoWatchEpisode:
             "retest_touched": self.retest_touched,
             "breakout_touched": self.breakout_touched,
             "was_promoted_to_watchlist": self.was_promoted_to_watchlist,
+            "graduation_count": self.graduation_count,
             "has_observations": self.has_observations,
             "coverage_complete": self.coverage_complete,
             "coverage_gaps": self.coverage_gaps,
@@ -573,8 +581,13 @@ def classify_radar_eviction(
     if unknown_items:
         return AutoWatchStatus.HARD_INVALIDATED, "unknown_telemetry_at_eviction", None, checklist
 
-    structural_failures = failed_titles & STRUCTURAL_GATE_TITLES
-    if structural_failures or failed_titles != {"Smart Money Absorption"}:
+    is_recovery_family = episode.setup_label == "RECOVERY_RECLAIM_LONG"
+    req_structural_titles = (
+        RECOVERY_STRUCTURAL_TITLES if is_recovery_family else STRUCTURAL_GATE_TITLES
+    )
+    soft_flow_title = RECOVERY_FLOW_TITLE if is_recovery_family else "Smart Money Absorption"
+    structural_failures = failed_titles & req_structural_titles
+    if structural_failures or failed_titles != {soft_flow_title}:
         fail_str = ",".join(sorted(failed_titles))
         return AutoWatchStatus.HARD_INVALIDATED, f"structural_gate_failed:{fail_str}", None, checklist
 
@@ -582,14 +595,18 @@ def classify_radar_eviction(
     metrics: Mapping[str, Any] = raw_metrics if isinstance(raw_metrics, Mapping) else {}
     taker = _to_dec(metrics.get("taker_buy_sell_ratio"))
     oi_1h = _to_dec(metrics.get("oi_change_1h_pct"))
+    oi_4h = _to_dec(metrics.get("oi_change_4h_pct"))
     oi_7d = _to_dec(metrics.get("oi_change_7d_pct"))
-    funding_bps = _to_dec(metrics.get("funding_rate_bps"))
+    funding_bps = _to_dec(metrics.get("funding_rate_bps")) or _to_dec(metrics.get("funding_bps"))
     vcr = _to_dec(metrics.get("volume_contraction_ratio"))
 
     if not is_short:
         if oi_1h is not None and oi_1h <= Decimal("-5.0"):
             return AutoWatchStatus.HARD_INVALIDATED, "acute_1h_oi_liquidation", None, checklist
-        if oi_7d is not None and oi_7d < Decimal("-8.0"):
+        if is_recovery_family:
+            if oi_4h is not None and oi_4h <= Decimal("-4.0"):
+                return AutoWatchStatus.HARD_INVALIDATED, "oi_4h_collapse", None, checklist
+        elif oi_7d is not None and oi_7d < Decimal("-8.0"):
             return AutoWatchStatus.HARD_INVALIDATED, "oi_7d_collapse", None, checklist
         if funding_bps is not None and funding_bps >= Decimal("15.0"):
             return AutoWatchStatus.HARD_INVALIDATED, "funding_crowded", None, checklist

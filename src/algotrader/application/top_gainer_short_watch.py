@@ -42,7 +42,9 @@ class TopGainerDistributionScreener(CryptoOpportunityScreener):
         pinned_symbols: Sequence[str] = (),
     ) -> None:
         # Keep this separate top-gainer reversal feed outside continuation composition.
-        isolated = settings.model_copy(update={"bearish_continuation_enabled": False})
+        isolated = settings.model_copy(
+            update={"bearish_continuation_enabled": False, "early_recovery_enabled": False}
+        )
         super().__init__(
             isolated,
             macro_provider=macro_provider,

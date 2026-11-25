@@ -181,8 +181,11 @@ class CryptoOpportunity:
     retest_stop: Decimal | None = None
     breakout_stop: Decimal | None = None
     continuation_evidence: dict[str, Any] | None = None
+    recovery_evidence: dict[str, Any] | None = None
     research_policy_version: str | None = None
     bracket_context: BracketContext | None = None
+    publication_lane: str = "ON_RADAR"
+    kinetic_reason: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         tick = self.instrument.price_tick
@@ -271,6 +274,9 @@ class CryptoOpportunity:
             "candles": list(self.candles),
             "is_discovery_tier": self.is_discovery_tier,
         }
+        if self.kinetic_reason is not None or self.publication_lane != "ON_RADAR":
+            result["publication_lane"] = self.publication_lane
+            result["kinetic_reason"] = self.kinetic_reason
         result["plan_diagnostics"] = describe_plan(
             direction=self.direction, execution_mode=self.execution_mode,
             entry=self.suggested_entry, stop=self.suggested_stop, targets=self.suggested_targets,
@@ -282,6 +288,11 @@ class CryptoOpportunity:
         )
         if self.continuation_evidence is not None:
             result["continuation_evidence"] = self.continuation_evidence
+        if self.recovery_evidence is not None:
+            result["recovery_evidence"] = self.recovery_evidence
+            result["score_semantics"] = (
+                "Heuristic ranking; early-recovery family carries no calibrated win-rate or EV claim."
+            )
         if self.research_policy_version is not None:
             result["research_policy_version"] = self.research_policy_version
         return result

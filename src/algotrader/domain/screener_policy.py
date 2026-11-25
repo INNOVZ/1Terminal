@@ -2,18 +2,35 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 from algotrader.domain.bearish_continuation import POLICY_VERSION as CONTINUATION_POLICY_VERSION
 from algotrader.domain.crypto_screener_models import CryptoOpportunity, SetupLabel
+from algotrader.domain.early_recovery import (
+    EARLY_RECOVERY_SCREENING_POLICY_VERSION,
+)
+from algotrader.domain.early_recovery import (
+    POLICY_VERSION as EARLY_RECOVERY_POLICY_VERSION,
+)
 from algotrader.domain.execution_brackets import valid_execution_prices
 from algotrader.domain.models import Direction
 from algotrader.domain.scoring import OpportunityGrade
 
 SCREENING_POLICY_VERSION = "atlas-v3.1-discovery-guards-1"
+ALFA_V33_SCREENING_POLICY_VERSION = "alfa-v3.3-kinetic-ignition-1"
 COI_OVEREXTENDED_THRESHOLD = 75.0
 COI_OVERSOLD_THRESHOLD = 25.0
 COI_TIGHTENED_CONVICTION_FLOOR = Decimal("70.0")
 COI_STANDARD_CONVICTION_FLOOR = Decimal("65.0")
+
+
+def screening_policy_version_for(settings: Any = None) -> str:
+    """Return exact baseline policy identity when upgrade flags are off."""
+    if settings is not None and getattr(settings, "kinetic_ignition_v33_enabled", False) is True:
+        return ALFA_V33_SCREENING_POLICY_VERSION
+    if settings is not None and getattr(settings, "early_recovery_enabled", False) is True:
+        return EARLY_RECOVERY_SCREENING_POLICY_VERSION
+    return SCREENING_POLICY_VERSION
 
 
 def publication_rejection_reasons(
@@ -36,10 +53,18 @@ def publication_rejection_reasons(
                 or len(opportunity.checklist) != 5
                 or not all(item[1] is True for item in opportunity.checklist)):
             reasons.append("continuation_requires_five_current_gates")
-    if opportunity.setup_label is SetupLabel.RECOVERY_RECLAIM_LONG and (
-        len(opportunity.checklist) != 5 or not all(item[1] is True for item in opportunity.checklist)
-    ):
-        return ("recovery_confirmation_unavailable",)
+    if opportunity.setup_label is SetupLabel.RECOVERY_RECLAIM_LONG:
+        rec_ev = opportunity.recovery_evidence
+        if rec_ev is not None:
+            if (
+                rec_ev.get("policy_version") != EARLY_RECOVERY_POLICY_VERSION
+                or rec_ev.get("derivatives_confirmed") is not True
+                or len(opportunity.checklist) != 5
+                or not all(item[1] is True for item in opportunity.checklist)
+            ):
+                return ("recovery_requires_five_current_gates",)
+        elif len(opportunity.checklist) != 5 or not all(item[1] is True for item in opportunity.checklist):
+            return ("recovery_confirmation_unavailable",)
     score_floor = Decimal("71.0") if opportunity.is_discovery_tier else Decimal("68.0")
     conviction_floor = Decimal("69.0") if opportunity.is_discovery_tier else COI_STANDARD_CONVICTION_FLOOR
     effective_score = opportunity.conviction if opportunity.conviction is not None else opportunity.score
@@ -57,13 +82,23 @@ def publication_rejection_reasons(
             reasons.append("already_in_top10_gainers_exhaustion_guard")
         if getattr(opportunity, "execution_mode", None) == "WAIT_FOR_RETEST_ONLY":
             reasons.append("wait_for_retest_only_non_actionable")
+        rec_ev = opportunity.recovery_evidence or {}
+        is_early_recovery_v1 = (
+            opportunity.setup_label is SetupLabel.RECOVERY_RECLAIM_LONG
+            and rec_ev.get("policy_version") == EARLY_RECOVERY_POLICY_VERSION
+            and rec_ev.get("derivatives_confirmed") is True
+            and rec_ev.get("family_policy_mode", "family_v1") == "family_v1"
+        )
         oi_7d = getattr(opportunity, "oi_change_7d", None)
         oi_1h = getattr(opportunity, "oi_change_1h", None)
         funding = getattr(opportunity, "funding_rate", None)
         if oi_7d is not None and Decimal(str(oi_7d)) < Decimal("-0.010"):
-            if (oi_1h is None or Decimal(str(oi_1h)) <= Decimal("0")) or (
-                funding is not None and Decimal(str(funding)) >= Decimal("0.00015")
-            ):
+            if not is_early_recovery_v1:
+                if (oi_1h is None or Decimal(str(oi_1h)) <= Decimal("0")) or (
+                    funding is not None and Decimal(str(funding)) >= Decimal("0.00015")
+                ):
+                    reasons.append("bleeding_7d_oi_without_fresh_inflow")
+            elif funding is not None and Decimal(str(funding)) >= Decimal("0.00015"):
                 reasons.append("bleeding_7d_oi_without_fresh_inflow")
         taker_4h = getattr(opportunity, "taker_ratio_4h", None)
         if taker_4h is None:
@@ -71,7 +106,10 @@ def publication_rejection_reasons(
         if taker_4h is not None:
             min_taker = (
                 Decimal("1.02")
-                if opportunity.setup_label is SetupLabel.MOMENTUM_EMERGING_LONG
+                if (
+                    opportunity.setup_label is SetupLabel.MOMENTUM_EMERGING_LONG
+                    or is_early_recovery_v1
+                )
                 else Decimal("1.05")
             )
             if Decimal(str(taker_4h)) < min_taker:

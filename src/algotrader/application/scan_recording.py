@@ -27,7 +27,10 @@ from algotrader.domain.scan_observations import (
     recorded_call_key,
     snapshot_recorded_value,
 )
-from algotrader.domain.screener_policy import SCREENING_POLICY_VERSION
+from algotrader.domain.screener_policy import (
+    SCREENING_POLICY_VERSION,
+    screening_policy_version_for,
+)
 from algotrader.infrastructure.scan_archive import canonical_bytes
 
 _DEFAULT_ENCODE_VALUE = encode_value
@@ -43,7 +46,7 @@ class MacroContextSource(Protocol):
     async def get_context(self) -> MacroSentimentContext: ...
 
 
-def screening_identity() -> dict[str, Any]:
+def screening_identity(settings: Settings | None = None) -> dict[str, Any]:
     source = Path(__file__).resolve().parents[1]
     hashes = {str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest()
               for path in sorted(source.rglob("*.py"))}
@@ -52,7 +55,8 @@ def screening_identity() -> dict[str, Any]:
         revision = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, timeout=2).decode().strip()
     except (OSError, subprocess.SubprocessError):
         revision = None
-    return {"policy": SCREENING_POLICY_VERSION, "source_hash": hashlib.sha256(canonical_bytes(hashes)).hexdigest(),
+    policy_ver = screening_policy_version_for(settings) if settings is not None else SCREENING_POLICY_VERSION
+    return {"policy": policy_ver, "source_hash": hashlib.sha256(canonical_bytes(hashes)).hexdigest(),
             "source_files": hashes, "python": platform.python_version(), "packages": versions, "git_revision": revision}
 
 
@@ -63,15 +67,29 @@ def screening_configuration(settings: Settings) -> dict[str, Any]:
                              "stage2_capacity_rollover_enabled": settings.stage2_capacity_rollover_enabled}
     if settings.bearish_continuation_enabled:
         config["bearish_continuation_enabled"] = True
+    if settings.early_recovery_enabled:
+        config["early_recovery_enabled"] = True
+    if settings.kinetic_ignition_v33_enabled:
+        config["kinetic_ignition_v33_enabled"] = True
     return config
 
 
-def supported_screening_configuration(config: dict[str, Any], *, allow_continuation: bool = False) -> bool:
+def supported_screening_configuration(
+    config: dict[str, Any],
+    *,
+    allow_continuation: bool = False,
+    allow_early_recovery: bool = False,
+    allow_kinetic_v33: bool = False,
+) -> bool:
     """Strict research allowlist including the recorded allocation rollback switch."""
     required = {"excluded_base_assets", "support_resistance_lookback_bars"}
     optional = {"stage2_capacity_rollover_enabled"}
     if allow_continuation:
         optional.add("bearish_continuation_enabled")
+    if allow_early_recovery:
+        optional.add("early_recovery_enabled")
+    if allow_kinetic_v33:
+        optional.add("kinetic_ignition_v33_enabled")
     return required <= config.keys() <= required | optional and all(
         type(config[key]) is bool for key in optional & config.keys()
     )
@@ -159,6 +177,8 @@ async def capture_scan(
     metadata_error = None
     try:
         identity = await asyncio.to_thread(screening_identity)
+        if "policy" in identity:
+            identity["policy"] = screening_policy_version_for(settings)
     except Exception as exc:
         metadata_error = type(exc).__name__
         identity = {"recording_error": metadata_error}
@@ -168,8 +188,27 @@ async def capture_scan(
     journal = ScanDecisionJournal()
     from algotrader.application.continuation_context import ContinuationContext
     context = ContinuationContext(market, tape) if settings.bearish_continuation_enabled else None
-    screener = CryptoOpportunityScreener(settings, RecordingMacroProvider(macro, tape), evaluated_at=started, journal=journal,
-                                        feature_contract=feature_contract, continuation_context=context)
+
+    async def _recovery_clock(instrument: Instrument | None) -> datetime:
+        async def _read_now() -> datetime:
+            return datetime.now(UTC)
+
+        if instrument is None:
+            return cast(datetime, await tape.capture("early_recovery_publication_time", {}, _read_now))
+        return cast(
+            datetime,
+            await tape.capture("early_recovery_decision_time", {"instrument": instrument}, _read_now),
+        )
+
+    screener = CryptoOpportunityScreener(
+        settings,
+        RecordingMacroProvider(macro, tape),
+        evaluated_at=started,
+        journal=journal,
+        feature_contract=feature_contract,
+        continuation_context=context,
+        recovery_clock=_recovery_clock if settings.early_recovery_enabled else None,
+    )
     result: list[CryptoOpportunity] = []
     failure: BaseException | None = None
     try:

@@ -117,13 +117,21 @@ class ShadowRunner:
 
         started = now()
         admission = admit_shadow(parent, policy, started)
-        current = await asyncio.to_thread(screening_identity)
+        settings = Settings(
+            **{
+                "bearish_continuation_canary_enabled": False,
+                "bearish_continuation_enabled": False,
+                "early_recovery_enabled": False,
+                **parent.identity["configuration"],
+                "_env_file": None,
+            }
+        )
+        current = await asyncio.to_thread(screening_identity, settings)
         for key in ("policy", "source_hash", "python", "packages"):
             if parent.identity.get(key) != current[key]:
                 raise ValueError("parent screening identity mismatch: " + key)
         if self.market.budget.policy != policy:
             raise ValueError("market budget and run policy differ")
-        settings = Settings(**{"bearish_continuation_canary_enabled": False, "bearish_continuation_enabled": False, **parent.identity["configuration"], "_env_file": None})
         tape, journal = CallTape(), ScanDecisionJournal()
         # The evaluator consumes preloaded bars/derivatives; it cannot start another universe scan.
         recorded = RecordingMarketData(cast(Any, self.market), cast(Any, self.market), tape)

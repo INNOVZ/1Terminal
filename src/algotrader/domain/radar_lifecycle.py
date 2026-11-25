@@ -98,6 +98,8 @@ def reverify_candidate_gates(
     recent_candles_1h: Sequence[Mapping[str, Any]] = (),
     ema50_4h: Decimal | None = None,
     continuation_gates: tuple[bool | None, ...] | None = None,
+    recovery_gates: tuple[bool | None, ...] | None = None,
+    recovery_details: tuple[str, ...] | None = None,
     is_triggered: bool = False,
     trigger_entry_price: Decimal | None = None,
 ) -> tuple[tuple[dict[str, Any], ...], int, int, tuple[str, ...]]:
@@ -117,6 +119,42 @@ def reverify_candidate_gates(
                       for title, passed in zip(TITLES, gates, strict=True))
         return items, sum(g is True for g in gates), 5, tuple(
             title for title, passed in zip(TITLES, gates, strict=True) if passed is not True)
+
+    if candidate.get("setup_label") == "RECOVERY_RECLAIM_LONG":
+        from algotrader.domain.early_recovery import TITLES as RECOVERY_TITLES
+
+        gates = (
+            recovery_gates
+            if recovery_gates is not None and len(recovery_gates) == 5
+            else (None,) * 5
+        )
+        details = (
+            recovery_details
+            if recovery_details is not None and len(recovery_details) == 5
+            else tuple(
+                "Current recovery gate verified" if g is not None else "Fresh recovery inputs required"
+                for g in gates
+            )
+        )
+        items = tuple(
+            {
+                "title": title,
+                "passed": passed is True,
+                "status": "passed" if passed is True else "unknown" if passed is None else "failed",
+                "detail": detail,
+            }
+            for title, passed, detail in zip(RECOVERY_TITLES, gates, details, strict=True)
+        )
+        return (
+            items,
+            sum(g is True for g in gates),
+            5,
+            tuple(
+                title
+                for title, passed in zip(RECOVERY_TITLES, gates, strict=True)
+                if passed is not True
+            ),
+        )
 
     direction = str(candidate.get("direction", "long")).lower()
     is_short = direction == "short"
@@ -394,6 +432,8 @@ def evaluate_radar_candidate_lifecycle(
     now: datetime | None = None,
     max_age_hours: float = 72.0,
     continuation_gates: tuple[bool | None, ...] | None = None,
+    recovery_gates: tuple[bool | None, ...] | None = None,
+    recovery_details: tuple[str, ...] | None = None,
 ) -> RadarLifecycleDecision:
     """Evaluate whether a previously discovered radar candidate remains an active trade setup
     and re-verify its 5/5 (L1–L6) institutional screening gates against live price action.
@@ -483,9 +523,11 @@ def evaluate_radar_candidate_lifecycle(
                 reason="long_stop_loss_breached",
                 current_price=current_price,
             )
-        # Also invalidate if a Long setup has neither triggered nor held structure and broke >3.5% below VAL & EMA50
+        # Also invalidate if a core Long setup has neither triggered nor held structure and broke >3.5% below VAL & EMA50
+        # (RECOVERY_RECLAIM_LONG originates below 4H EMA50 / 30d POC and enforces its own frozen stop & R1 pivot/EMA20 gate)
         if (
-            val is not None
+            candidate.get("setup_label") != "RECOVERY_RECLAIM_LONG"
+            and val is not None
             and val > Decimal("0")
             and current_price < val * Decimal("0.965")
             and (ema50_4h is not None and current_price < ema50_4h * Decimal("0.965"))
@@ -628,6 +670,8 @@ def evaluate_radar_candidate_lifecycle(
         recent_candles_1h=recent_candles_1h,
         ema50_4h=ema50_4h,
         continuation_gates=continuation_gates,
+        recovery_gates=recovery_gates,
+        recovery_details=recovery_details,
         is_triggered=triggered_at is not None,
         trigger_entry_price=trigger_entry_basis,
     )
@@ -757,5 +801,19 @@ def same_radar_episode(previous: Mapping[str, Any], fresh: Mapping[str, Any]) ->
         anchors = ("support", "support_known_at", "break_at", "rejection_at")
         if (left.get("policy_version") != right.get("policy_version")
                 or any(lp.get(k) != rp.get(k) for k in anchors)):
+            return False
+    if previous.get("setup_label") == "RECOVERY_RECLAIM_LONG":
+        left = previous.get("recovery_evidence") or {}
+        right = fresh.get("recovery_evidence") or {}
+        if not isinstance(left, dict) or not isinstance(right, dict):
+            return False
+        lp, rp = left.get("plan"), right.get("plan")
+        if not isinstance(lp, dict) or not isinstance(rp, dict):
+            return False
+        rec_anchors = ("pivot", "break_bar_at")
+        if (
+            left.get("policy_version") != right.get("policy_version")
+            or any(lp.get(k) != rp.get(k) for k in rec_anchors)
+        ):
             return False
     return all(previous.get(k) == fresh.get(k) for k in ("symbol", "direction", "setup_label"))

@@ -1344,8 +1344,12 @@ function RadarPageContent() {
     return activeOpportunity?.candles || [];
   }, [activeOpportunity?.candles]);
 
+  const isFrozenFamilySetup =
+    activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ||
+    activeOpportunity?.setup_label === "RECOVERY_RECLAIM_LONG";
+
   const memoizedTargets = useMemo(() => {
-    const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity?.symbol || ""];
+    const adapted = isFrozenFamilySetup ? undefined : adaptedLevelsMap[activeOpportunity?.symbol || ""];
     const rawList =
       adapted?.targets && adapted.targets.length > 0
         ? adapted.targets
@@ -1363,18 +1367,18 @@ function RadarPageContent() {
       if (ahead.length > 0) return ahead;
     }
     return rawList;
-  }, [activeOpportunity, adaptedLevelsMap]);
+  }, [activeOpportunity, isFrozenFamilySetup, adaptedLevelsMap]);
 
   const breakoutTriggerPrice = useMemo(() => {
     if (!activeOpportunity) return 0;
-    const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity.symbol];
+    const adapted = isFrozenFamilySetup ? undefined : adaptedLevelsMap[activeOpportunity.symbol];
     if (adapted?.breakoutTrigger) return adapted.breakoutTrigger;
     return Number(
       activeOpportunity.breakout_trigger ||
         Number(activeOpportunity.current_price || 0) *
           (activeOpportunity.direction === "short" ? 0.975 : 1.025),
     );
-  }, [activeOpportunity, adaptedLevelsMap]);
+  }, [activeOpportunity, isFrozenFamilySetup, adaptedLevelsMap]);
 
   const entryPriceVal = useMemo(() => {
     if (!activeOpportunity) return 0;
@@ -1387,14 +1391,14 @@ function RadarPageContent() {
     ) {
       return lockedEntry;
     }
-    const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity.symbol];
+    const adapted = isFrozenFamilySetup ? undefined : adaptedLevelsMap[activeOpportunity.symbol];
     if (adapted?.entryPrice) return adapted.entryPrice;
     return Number(
       activeOpportunity.suggested_entry ||
         activeOpportunity.pullback_entry ||
         0,
     );
-  }, [activeOpportunity, adaptedLevelsMap]);
+  }, [activeOpportunity, isFrozenFamilySetup, adaptedLevelsMap]);
 
   const pocPriceVal = useMemo(() => {
     const publishedPoc = Number(activeOpportunity?.poc_price || 0);
@@ -1441,15 +1445,15 @@ function RadarPageContent() {
     ) {
       return lockedStop;
     }
-    const adapted = activeOpportunity?.setup_label === "BREAKDOWN_RETEST_SHORT" ? undefined : adaptedLevelsMap[activeOpportunity?.symbol || ""];
+    const adapted = isFrozenFamilySetup ? undefined : adaptedLevelsMap[activeOpportunity?.symbol || ""];
     if (adapted?.stopPrice) return adapted.stopPrice;
     return Number(activeOpportunity?.suggested_stop || 0);
   }, [
     activeOpportunity?.symbol,
-    activeOpportunity?.setup_label,
     activeOpportunity?.suggested_stop,
     activeOpportunity?.radar_triggered_at,
     activeOpportunity?.radar_trigger_stop,
+    isFrozenFamilySetup,
     adaptedLevelsMap,
   ]);
 

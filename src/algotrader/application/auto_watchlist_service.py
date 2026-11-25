@@ -140,6 +140,7 @@ class AutoWatchlistService:
                 retest_touched INTEGER NOT NULL DEFAULT 0,
                 breakout_touched INTEGER NOT NULL DEFAULT 0,
                 was_promoted_to_watchlist INTEGER NOT NULL DEFAULT 0,
+                graduation_count INTEGER NOT NULL DEFAULT 0,
                 resolved_at TEXT,
                 resolved_price TEXT,
                 resolved_return_pct TEXT,
@@ -168,6 +169,10 @@ class AutoWatchlistService:
             if "was_promoted_to_watchlist" not in cols:
                 conn.execute(
                     "ALTER TABLE radar_auto_watchlist ADD COLUMN was_promoted_to_watchlist INTEGER NOT NULL DEFAULT 0"
+                )
+            if "graduation_count" not in cols:
+                conn.execute(
+                    "ALTER TABLE radar_auto_watchlist ADD COLUMN graduation_count INTEGER NOT NULL DEFAULT 0"
                 )
             conn.execute(
                 """
@@ -276,6 +281,9 @@ class AutoWatchlistService:
             was_promoted_to_watchlist=bool(
                 row["was_promoted_to_watchlist"] if "was_promoted_to_watchlist" in keys else 0
             ),
+            graduation_count=int(
+                row["graduation_count"] if "graduation_count" in keys and row["graduation_count"] is not None else 0
+            ),
             has_observations=has_obs,
             coverage_complete=cov_complete,
             coverage_gaps=cov_gaps,
@@ -300,7 +308,7 @@ class AutoWatchlistService:
                 soft_gate_summary, checklist_json, measurement_json,
                 last_price, last_checked_at, current_return_pct,
                 peak_mfe_pct, peak_mfe_at, worst_mae_pct, worst_mae_at,
-                retest_touched, breakout_touched, was_promoted_to_watchlist,
+                retest_touched, breakout_touched, was_promoted_to_watchlist, graduation_count,
                 resolved_at, resolved_price, resolved_return_pct, resolution_reason,
                 source_scan_id
             ) VALUES (
@@ -311,7 +319,7 @@ class AutoWatchlistService:
                 ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, ?, ?,
-                ?, ?, ?,
+                ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?
             )
@@ -333,6 +341,7 @@ class AutoWatchlistService:
                 retest_touched = excluded.retest_touched,
                 breakout_touched = excluded.breakout_touched,
                 was_promoted_to_watchlist = excluded.was_promoted_to_watchlist,
+                graduation_count = excluded.graduation_count,
                 resolved_at = excluded.resolved_at,
                 resolved_price = excluded.resolved_price,
                 resolved_return_pct = excluded.resolved_return_pct,
@@ -375,6 +384,7 @@ class AutoWatchlistService:
                 int(ep.retest_touched),
                 int(ep.breakout_touched),
                 int(ep.was_promoted_to_watchlist),
+                int(ep.graduation_count),
                 ep.resolved_at.isoformat() if ep.resolved_at else None,
                 str(ep.resolved_price) if ep.resolved_price is not None else None,
                 str(ep.resolved_return_pct) if ep.resolved_return_pct is not None else None,
@@ -383,6 +393,96 @@ class AutoWatchlistService:
             ),
         )
 
+    def blocked_from_radar_symbols(
+        self,
+        *,
+        now: datetime | None = None,
+        cooldown_hours: float = 12.0,
+    ) -> dict[tuple[str, str], str]:
+        """Return `(symbol, direction)` pairs locked out of re-entering ON_RADAR.
+
+        Prevents the 1h Radar <-> Watchlist ping-pong loop:
+        1. Any episode currently in `WATCHLIST` with `was_promoted_to_watchlist=True` (already
+           demoted from Radar) or `graduation_count >= 1` stays locked in Watchlist.
+        2. Any resolved episode (except `replaced_by_new_thesis`) within `cooldown_hours`
+           cannot statically recycle onto ON_RADAR.
+        Pre-ignition coils (`status == WATCHLIST`, `was_promoted_to_watchlist == False`,
+        `graduation_count == 0`) remain eligible for their 1-time kinetic graduation.
+        """
+        ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+        blocked: dict[tuple[str, str], str] = {}
+        with self._lock, self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM radar_auto_watchlist
+                ORDER BY published_at DESC
+                """
+            ).fetchall()
+        for row in rows:
+            ep = self._row_to_episode(row)
+            key = (ep.symbol.upper().strip(), ep.direction.lower().strip())
+            if key in blocked:
+                continue
+            if ep.status is AutoWatchStatus.WATCHLIST:
+                if ep.was_promoted_to_watchlist or ep.graduation_count >= 1:
+                    blocked[key] = "demoted_watchlist_locked"
+            elif ep.is_resolved and ep.eviction_reason not in (
+                "replaced_by_new_thesis",
+                "screening_policy_changed_requires_fresh_qualification",
+            ):
+                res_dt = ep.resolved_at or ep.last_checked_at
+                if res_dt is not None:
+                    age_sec = (ref_now - res_dt).total_seconds()
+                    if 0.0 <= age_sec < cooldown_hours * 3600.0:
+                        blocked[key] = f"resolved_cooldown:{ep.status.value}"
+        return blocked
+
+    def enroll_pre_ignition_coil(
+        self,
+        candidate: Mapping[str, Any],
+        *,
+        published_at: datetime | None = None,
+        scan_id: str | None = None,
+    ) -> AutoWatchEpisode | None:
+        """Stage a verified 5/5 pre-ignition coil directly in `WATCHLIST` (`graduation_count=0`)."""
+        base_ep = build_auto_watch_episode(
+            candidate,
+            published_at=published_at,
+            scan_id=scan_id,
+            window_hours=self._window_hours,
+        )
+        if base_ep is None:
+            return None
+        coil_ep = replace(
+            base_ep,
+            status=AutoWatchStatus.WATCHLIST,
+            radar_presence=RadarPresence.EVICTED_FROM_RADAR,
+            radar_status_label="PRE-IGNITION COIL",
+            eviction_reason="awaiting_kinetic_ignition",
+            soft_gate_summary=str(candidate.get("kinetic_reason") or "5/5 base coiled; awaiting kinetic trigger"),
+            was_promoted_to_watchlist=False,
+            graduation_count=0,
+        )
+        with self._lock, self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM radar_auto_watchlist WHERE episode_id = ?",
+                (coil_ep.episode_id,),
+            ).fetchone()
+            if row is not None:
+                return self._row_to_episode(row)
+            existing_live = conn.execute(
+                """
+                SELECT * FROM radar_auto_watchlist
+                WHERE symbol = ? AND direction = ? AND status IN ('ON_RADAR', 'WATCHLIST')
+                ORDER BY published_at DESC LIMIT 1
+                """,
+                (coil_ep.symbol, coil_ep.direction),
+            ).fetchone()
+            if existing_live is not None:
+                return self._row_to_episode(existing_live)
+            self._upsert_episode_locked(conn, coil_ep)
+            return coil_ep
+
     def enroll_candidate(
         self,
         candidate: Mapping[str, Any],
@@ -390,7 +490,7 @@ class AutoWatchlistService:
         published_at: datetime | None = None,
         scan_id: str | None = None,
     ) -> AutoWatchEpisode | None:
-        """Idempotently register a verified 5/5 Radar episode in ON_RADAR state (not in Watchlist)."""
+        """Idempotently register a verified 5/5 Radar episode in ON_RADAR state (or graduate a pre-ignition coil once)."""
         ep = build_auto_watch_episode(
             candidate,
             published_at=published_at,
@@ -399,26 +499,56 @@ class AutoWatchlistService:
         )
         if ep is None:
             return None
+        ref_now = (published_at or ep.published_at).astimezone(UTC)
         with self._lock, self._get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM radar_auto_watchlist WHERE episode_id = ?",
                 (ep.episode_id,),
             ).fetchone()
             if row is not None:
-                return self._row_to_episode(row)
-            dup = conn.execute(
+                existing_exact = self._row_to_episode(row)
+                if existing_exact.status is AutoWatchStatus.WATCHLIST and (
+                    existing_exact.was_promoted_to_watchlist or existing_exact.graduation_count >= 1
+                ):
+                    return None
+                return existing_exact
+
+            # Check for any live episode on the same (symbol, direction):
+            # - If already demoted to WATCHLIST (`was_promoted_to_watchlist=True`), block ping-pong re-entry!
+            # - If a pre-ignition WATCHLIST coil (`was_promoted_to_watchlist=False`, `graduation_count==0`),
+            #   graduate it IN-PLACE using the same `episode_id`!
+            live_sym_row = conn.execute(
                 """
                 SELECT * FROM radar_auto_watchlist
-                WHERE symbol = ? AND direction = ? AND setup_label = ?
-                  AND status IN ('ON_RADAR', 'WATCHLIST')
+                WHERE symbol = ? AND direction = ? AND status IN ('ON_RADAR', 'WATCHLIST')
                 ORDER BY published_at DESC LIMIT 1
                 """,
-                (ep.symbol, ep.direction, ep.setup_label),
+                (ep.symbol, ep.direction),
             ).fetchone()
-            if dup is not None:
-                existing = self._row_to_episode(dup)
-                if abs((ep.published_at - existing.published_at).total_seconds()) < 6 * 3600:
-                    return existing
+            if live_sym_row is not None:
+                live_ep = self._row_to_episode(live_sym_row)
+                if live_ep.status is AutoWatchStatus.WATCHLIST:
+                    if live_ep.was_promoted_to_watchlist or live_ep.graduation_count >= 1:
+                        return None
+                    graduated = replace(
+                        live_ep,
+                        status=AutoWatchStatus.ON_RADAR,
+                        radar_presence=RadarPresence.ON_RADAR,
+                        radar_status_label=str(candidate.get("radar_status_label") or "KINETIC BREAKOUT"),
+                        eviction_reason=None,
+                        soft_gate_summary=None,
+                        checklist=ep.checklist or live_ep.checklist,
+                        graduation_count=live_ep.graduation_count + 1,
+                        last_price=ep.signal_price,
+                        last_checked_at=ref_now,
+                    )
+                    self._upsert_episode_locked(conn, graduated)
+                    return graduated
+                if (
+                    live_ep.setup_label == ep.setup_label
+                    and abs((ep.published_at - live_ep.published_at).total_seconds()) < 6 * 3600
+                ):
+                    return live_ep
             self._upsert_episode_locked(conn, ep)
             return ep
 
@@ -581,6 +711,12 @@ class AutoWatchlistService:
                         ep, eviction_event=ev_for_ep, ref_now=ref_now
                     )
                     self._upsert_episode_locked(conn, updated)
+                    continue
+
+                # Monotonic lock: a demoted WATCHLIST episode NEVER flips back to ON_RADAR.
+                if ep.status is AutoWatchStatus.WATCHLIST and (
+                    ep.was_promoted_to_watchlist or ep.graduation_count >= 1
+                ):
                     continue
 
                 # Same episode is live on 5/5 Radar (or live opportunity matches this symbol without
@@ -823,6 +959,8 @@ class AutoWatchlistService:
                 promoted_syms: set[str] = set()
                 for row in rows:
                     ep = self._row_to_episode(row)
+                    if ep.was_promoted_to_watchlist or ep.graduation_count >= 1:
+                        continue
                     if ep.symbol in live_set and ep.symbol not in promoted_syms:
                         promoted_syms.add(ep.symbol)
                         self._upsert_episode_locked(
@@ -960,10 +1098,13 @@ class AutoWatchlistService:
         days: int = 14,
         live_radar_symbols: Sequence[str] = (),
         now: datetime | None = None,
+        early_recovery_enabled: bool = True,
     ) -> dict[str, Any]:
         """Serialize disjoint 48h Potential Watchlist, On-Radar cohort, Resolved Outcomes, and Summary."""
         ref_now = (now or datetime.now(UTC)).astimezone(UTC)
         episodes = self.list_episodes(days=days, now=ref_now)
+        if not early_recovery_enabled:
+            episodes = [e for e in episodes if e.setup_label != "RECOVERY_RECLAIM_LONG"]
         live_set = {s.upper().strip() for s in live_radar_symbols if s}
 
         # Strict disjointness guard: NEVER expose a currently live 5/5 Radar symbol inside `watchlist`

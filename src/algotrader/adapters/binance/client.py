@@ -5,6 +5,7 @@ import asyncio
 import math
 import random
 import time
+from collections import deque
 from collections.abc import Mapping
 from typing import Any
 
@@ -35,12 +36,16 @@ class BinanceHttpClient:
         max_rate_limit_backoff_seconds: float = 30.0,
         max_transport_retries: int = 3,
         transport_backoff_seconds: float = 0.4,
+        max_futures_data_requests_5m: int = 750,
     ) -> None:
         self._max_rate_limit_retries = max_rate_limit_retries
         self._rate_limit_backoff_seconds = rate_limit_backoff_seconds
         self._max_rate_limit_backoff_seconds = max_rate_limit_backoff_seconds
         self._max_transport_retries = max_transport_retries
         self._transport_backoff_seconds = transport_backoff_seconds
+        self._max_futures_data_requests_5m = max(1, int(max_futures_data_requests_5m))
+        self._futures_data_timestamps: deque[float] = deque()
+        self._futures_data_lock = asyncio.Lock()
         self._used_weight_1m = 0
         self._weight_updated_at = 0.0
         self._http = httpx.AsyncClient(
@@ -56,6 +61,26 @@ class BinanceHttpClient:
     def used_weight_1m(self) -> int:
         return self._used_weight_1m
 
+    @property
+    def futures_data_requests_5m(self) -> int:
+        cutoff = time.monotonic() - 300.0
+        while self._futures_data_timestamps and self._futures_data_timestamps[0] <= cutoff:
+            self._futures_data_timestamps.popleft()
+        return len(self._futures_data_timestamps)
+
+    async def _acquire_futures_data_slot(self) -> None:
+        async with self._futures_data_lock:
+            while True:
+                now_mono = time.monotonic()
+                cutoff = now_mono - 300.0
+                while self._futures_data_timestamps and self._futures_data_timestamps[0] <= cutoff:
+                    self._futures_data_timestamps.popleft()
+                if len(self._futures_data_timestamps) < self._max_futures_data_requests_5m:
+                    self._futures_data_timestamps.append(now_mono)
+                    return
+                wait_for = max(0.05, 300.0 - (now_mono - self._futures_data_timestamps[0]))
+                await asyncio.sleep(wait_for)
+
     async def close(self) -> None:
         await self._http.aclose()
 
@@ -70,11 +95,14 @@ class BinanceHttpClient:
         transport_attempt = 0
         while True:
             try:
-                # Wait for the observed weight window to expire near its ceiling.
-                if self._used_weight_1m >= 2150:
+                # Wait for the observed /fapi weight window to expire near its ceiling.
+                # (/futures/data/* endpoints use their own 5-minute request quota below and do not emit x-mbx-used-weight-1m.)
+                if path.startswith("/fapi/") and self._used_weight_1m >= 2150:
                     remaining = 60.0 - (time.monotonic() - self._weight_updated_at)
                     if remaining > 0:
                         await asyncio.sleep(remaining)
+                if path.startswith("/futures/data/"):
+                    await self._acquire_futures_data_slot()
                 response = await self._http.get(path, params=params)
                 return self._parse_response(response)
             except RateLimitError as exc:

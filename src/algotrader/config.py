@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     screener_cron_enabled: bool = True
     screener_interval_hours: int = Field(default=1, ge=1, le=24)
     stage2_capacity_rollover_enabled: bool = True
+    early_recovery_enabled: bool = False
+    kinetic_ignition_v33_enabled: bool = False
+    kinetic_scout_15m_enabled: bool = False
     bearish_continuation_enabled: bool = False
     bearish_continuation_canary_enabled: bool = False
     continuation_canary_max_symbols: int = Field(default=30, ge=1, le=100)
