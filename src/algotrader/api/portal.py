@@ -699,7 +699,15 @@ async def _do_crypto_screen_locked(
             )
             prev = prior_by_base.get(base)
             fresh["first_seen_at"] = fresh.get("evaluated_at")
-            if prev and same_radar_episode(prev, fresh):
+            same_active_direction = (
+                v33_kinetic_on
+                and prev is not None
+                and prev.get("symbol") == fresh.get("symbol")
+                and prev.get("direction") == fresh.get("direction")
+                and prev.get("setup_label") not in ("BREAKDOWN_RETEST_SHORT", "RECOVERY_RECLAIM_LONG")
+                and fresh.get("setup_label") not in ("BREAKDOWN_RETEST_SHORT", "RECOVERY_RECLAIM_LONG")
+            )
+            if prev and (same_radar_episode(prev, fresh) or same_active_direction):
                 fresh["first_seen_at"] = prev.get("first_seen_at") or prev.get("evaluated_at")
                 if prev.get("radar_triggered_at"):
                     fresh["radar_triggered_at"] = prev["radar_triggered_at"]

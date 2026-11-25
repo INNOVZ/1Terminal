@@ -619,7 +619,14 @@ def classify_radar_eviction(
             return AutoWatchStatus.HARD_INVALIDATED, "funding_crowded", None, checklist
         if taker is not None and taker < Decimal("0.78"):
             return AutoWatchStatus.HARD_INVALIDATED, f"severe_seller_dump_taker_{float(taker):.2f}", None, checklist
-        if vcr is not None and vcr > Decimal("1.75"):
+        is_constructive_prior_volume = (
+            cur_px is not None
+            and cur_px >= episode.signal_price * Decimal("0.985")
+            and (taker is None or taker >= Decimal("0.90"))
+            and vcr is not None
+            and vcr <= Decimal("2.60")
+        )
+        if vcr is not None and vcr > Decimal("1.75") and not is_constructive_prior_volume:
             return AutoWatchStatus.HARD_INVALIDATED, f"volume_blowoff_vcr_{float(vcr):.2f}", None, checklist
     else:
         if taker is not None and taker > Decimal("1.32"):

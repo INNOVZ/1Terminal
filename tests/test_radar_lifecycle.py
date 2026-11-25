@@ -978,3 +978,148 @@ def test_new_breakout_enforces_mode_stop_on_first_evaluation(direction, later_wi
     assert decision.reason == ("short_stop_loss_breached" if is_short else "long_stop_loss_breached")
     assert decision.trigger_basis == "breakout"
     assert decision.trigger_stop_price == Decimal(candidate["breakout_stop"])
+
+
+def test_v1_climax_exhaustion_short_above_vah_and_ema50_retains_five_gates() -> None:
+    """Regression V1 (TAUSDT / AVAAIUSDT): parabolic climax shorts above VAH/EMA50 must not fail 4/5 gates."""
+    now = datetime(2026, 11, 25, 8, 18, tzinfo=UTC)
+    cand = {
+        "symbol": "TAUSDT",
+        "direction": "short",
+        "setup_label": "EXHAUSTION_REVERSAL_SHORT",
+        "execution_mode": "RETEST_ACCUMULATION",
+        "current_price": "0.1180",
+        "discovery_price": "0.1180",
+        "suggested_entry": "0.1180",
+        "suggested_stop": "0.1260",
+        "suggested_targets": ["0.1050", "0.0960"],
+        "poc_price": "0.0880",
+        "vah_price": "0.1020",
+        "val_price": "0.0750",
+        "evaluated_at": (now - timedelta(minutes=17)).isoformat(),
+        "radar_metrics": {
+            "bb_bandwidth_4h": "0.38",
+            "oi_change_7d_pct": "+14.0%",
+            "oi_change_1h_pct": "-0.8%",
+            "funding_rate_bps": "+4.10 bps",
+            "taker_buy_sell_ratio": "0.89",
+            "volume_contraction_ratio": "1.65",
+        },
+    }
+    candles_1h = [
+        {
+            "time": int((now - timedelta(hours=72 - i)).timestamp()),
+            "open": 0.080 if i < 50 else 0.116,
+            "high": 0.085 if i < 50 else 0.119,
+            "low": 0.078 if i < 50 else 0.114,
+            "close": 0.082 if i < 50 else 0.118,
+            "volume": 1000,
+        }
+        for i in range(72)
+    ]
+    decision = evaluate_radar_candidate_lifecycle(
+        cand,
+        current_price=Decimal("0.1185"),
+        recent_candles_1h=candles_1h,
+        ema50_4h=Decimal("0.0910"),
+        now=now,
+    )
+    assert decision.retained is True
+    assert decision.gates_passed == 5
+    assert decision.failed_gates == ()
+
+
+def test_v2_and_v4_stale_untriggered_long_demotes_while_constructive_volume_retains() -> None:
+    """Regression V2 (STABLEUSDT taker=0.97 at 6h) and V4 (KERNELUSDT vcr=1.94 constructive breakout)."""
+    now = datetime(2026, 11, 25, 8, 30, tzinfo=UTC)
+    candles_1h = [
+        {
+            "time": int((now - timedelta(hours=72 - i)).timestamp()),
+            "open": 0.0238,
+            "high": 0.0241,
+            "low": 0.0235,
+            "close": 0.0239,
+            "volume": 1000,
+        }
+        for i in range(72)
+    ]
+    # V2: STABLEUSDT un-triggered after 6h with seller dominance (taker=0.97 < 1.00) fails Smart Money gate
+    stable_cand = {
+        "symbol": "STABLEUSDT",
+        "direction": "long",
+        "setup_label": "MOMENTUM_EMERGING_LONG",
+        "execution_mode": "RETEST_ACCUMULATION",
+        "current_price": "0.02390",
+        "discovery_price": "0.02390",
+        "suggested_entry": "0.02354",
+        "breakout_trigger": "0.02520",
+        "suggested_stop": "0.01932",
+        "suggested_targets": ["0.02989", "0.03409"],
+        "poc_price": "0.02720",
+        "val_price": "0.02380",
+        "vah_price": "0.02950",
+        "evaluated_at": (now - timedelta(hours=6)).isoformat(),
+        "radar_metrics": {
+            "bb_bandwidth_4h": "0.08",
+            "oi_change_7d_pct": "+22.4%",
+            "oi_change_1h_pct": "-0.4%",
+            "funding_rate_bps": "+0.50 bps",
+            "taker_buy_sell_ratio": "0.97",
+            "volume_contraction_ratio": "1.05",
+        },
+    }
+    dec_stable = evaluate_radar_candidate_lifecycle(
+        stable_cand,
+        current_price=Decimal("0.02390"),
+        recent_candles_1h=candles_1h,
+        ema50_4h=Decimal("0.02346"),
+        now=now,
+    )
+    assert dec_stable.gates_passed == 4
+    assert dec_stable.failed_gates == ("Smart Money Absorption",)
+
+    # V4: KERNELUSDT expanding constructively (+2.4%, taker=1.18, vcr=1.94) retains 5/5 gates
+    kernel_cand = {
+        **stable_cand,
+        "symbol": "KERNELUSDT",
+        "setup_label": "COIL_SPRING_LONG",
+        "current_price": "0.04248",
+        "discovery_price": "0.04248",
+        "suggested_entry": "0.04200",
+        "breakout_trigger": "0.04500",
+        "suggested_stop": "0.03950",
+        "suggested_targets": ["0.04800", "0.05200"],
+        "poc_price": "0.04220",
+        "val_price": "0.04050",
+        "vah_price": "0.04480",
+        "evaluated_at": (now - timedelta(hours=2)).isoformat(),
+        "radar_metrics": {
+            "bb_bandwidth_4h": "0.14",
+            "oi_change_7d_pct": "+16.0%",
+            "oi_change_1h_pct": "+1.2%",
+            "funding_rate_bps": "+0.50 bps",
+            "taker_buy_sell_ratio": "1.18",
+            "volume_contraction_ratio": "1.94",
+        },
+    }
+    kernel_candles_1h = [
+        {
+            "time": int((now - timedelta(hours=72 - i)).timestamp()),
+            "open": 0.0425,
+            "high": 0.0437,
+            "low": 0.0422,
+            "close": 0.0434,
+            "volume": 1000,
+        }
+        for i in range(72)
+    ]
+    dec_kernel = evaluate_radar_candidate_lifecycle(
+        kernel_cand,
+        current_price=Decimal("0.04349"),
+        recent_candles_1h=kernel_candles_1h,
+        ema50_4h=Decimal("0.04180"),
+        now=now,
+    )
+    assert dec_kernel.retained is True
+    assert dec_kernel.gates_passed == 5
+    assert dec_kernel.failed_gates == ()

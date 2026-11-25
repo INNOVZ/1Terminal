@@ -121,6 +121,14 @@ def assess_kinetic_readiness(
         if derivatives is not None and derivatives.taker_buy_sell_ratio is not None
         else opp.taker_ratio_1h
     )
+    if (
+        tkr_1h is None
+        and c_last.taker_buy_quote_volume > Decimal("0")
+        and c_last.quote_volume > c_last.taker_buy_quote_volume
+    ):
+        sell_qv = c_last.quote_volume - c_last.taker_buy_quote_volume
+        if sell_qv > Decimal("0"):
+            tkr_1h = (c_last.taker_buy_quote_volume / sell_qv).quantize(Decimal("0.0001"))
     abs_score = (
         opp.resistance_absorption_score
         if opp.resistance_absorption_score is not None
@@ -157,8 +165,14 @@ def assess_kinetic_readiness(
         and tkr_4h >= Decimal("1.08")
         and not seller_distributing_1h
     )
+    ceiling_active = (
+        pocket_pivot
+        or micro_break
+        or deriv_surge
+        or (opp.execution_mode == "CEILING_BREAKOUT" and va6 >= Decimal("0.80"))
+    )
     ceiling_or_pivot_ready = (
-        (opp.execution_mode == "CEILING_BREAKOUT" or pocket_pivot or micro_break or deriv_surge)
+        ceiling_active
         and not seller_distributing_1h
         and tkr_4h is not None
         and tkr_4h >= Decimal("1.10")

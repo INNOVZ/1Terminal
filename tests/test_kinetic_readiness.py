@@ -213,4 +213,25 @@ def test_wait_dip_with_va6_velocity_or_smart_money_absorption_routes_to_on_radar
     res_dump = assess_kinetic_readiness(opp_dump, bars_quiet, None)
     assert res_dump.target_lane == "WATCHLIST_COIL"
 
+    # 4. Regression V3 (1000LUNCUSDT): when /futures/data/ 1H taker lags (None at :01) and va6=0.53,
+    # closed_1h[-1] kline taker_buy_quote_volume fallback (0.9143) + va6<0.80 routes to WATCHLIST_COIL!
+    bars_lunc = _make_1h_series(recent_vol_mult=Decimal("0.53"), breakout_last=False)
+    bars_lunc[-1] = replace(
+        bars_lunc[-1],
+        quote_volume=Decimal("100000"),
+        taker_buy_quote_volume=Decimal("47760"),  # 47760 / 52240 = 0.9142 (< 1.02 seller dominance)
+    )
+    opp_lunc = replace(
+        _make_opp(wait_dip=True, taker_4h=Decimal("1.17")),
+        execution_mode="CEILING_BREAKOUT",
+        taker_ratio_1h=None,
+        oi_change_1h=Decimal("0.011"),
+        oi_change_7d=Decimal("0.182"),
+        resistance_absorption_score=Decimal("68.0"),
+        breakout_readiness_status="RETEST_ONLY_WAIT_FOR_DIP",
+    )
+    res_lunc = assess_kinetic_readiness(opp_lunc, bars_lunc, None)
+    assert res_lunc.target_lane == "WATCHLIST_COIL"
+
+
 

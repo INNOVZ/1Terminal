@@ -102,6 +102,7 @@ def reverify_candidate_gates(
     recovery_details: tuple[str, ...] | None = None,
     is_triggered: bool = False,
     trigger_entry_price: Decimal | None = None,
+    age_hours: float | None = None,
 ) -> tuple[tuple[dict[str, Any], ...], int, int, tuple[str, ...]]:
     """Re-evaluates the 5 institutional verification gates (L1–L6) on live market structure.
 
@@ -185,7 +186,15 @@ def reverify_candidate_gates(
         )
     )
 
-    # 1. Gate L1: Trend Baseline (4H EMA50)
+    # 1. Gate L1: Trend Baseline (4H EMA50, or Climax Ceiling for Exhaustion/UTAD Shorts)
+    setup_label = str(candidate.get("setup_label", "")).upper()
+    discovery_price = _to_dec(candidate.get("discovery_price")) or _to_dec(
+        candidate.get("current_price")
+    )
+    is_climax_or_utad_short = is_short and setup_label in {
+        "EXHAUSTION_REVERSAL_SHORT",
+        "UTAD_DIVERGENCE_SHORT",
+    }
     trend_passed = True
     trend_detail = (
         f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)})"
@@ -204,6 +213,33 @@ def reverify_candidate_gates(
             else:
                 trend_detail = (
                     f"Slipped {float(diff_ema_pct):.1f}% below 4H EMA50 (${_fmt_price(eff_ema50)})"
+                )
+        elif is_climax_or_utad_short:
+            climax_ref = max(
+                d
+                for d in (discovery_price, entry, current_price)
+                if d is not None and d > Decimal("0")
+            )
+            climax_cap = (
+                (discovery_price or climax_ref) * Decimal("1.030")
+                if (discovery_price is not None and discovery_price > Decimal("0"))
+                else climax_ref * Decimal("1.030")
+            )
+            trend_passed = (
+                current_price <= eff_ema50 * Decimal("1.008")
+                or current_price <= climax_cap
+            )
+            if current_price <= eff_ema50:
+                trend_detail = (
+                    f"Rolled below 4H EMA50 (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
+                )
+            elif trend_passed:
+                trend_detail = (
+                    f"Capped below climax ceiling (${_fmt_price(climax_cap)} | 4H EMA50 ${_fmt_price(eff_ema50)})"
+                )
+            else:
+                trend_detail = (
+                    f"Squeezed above climax ceiling (${_fmt_price(climax_cap)})"
                 )
         else:
             trend_passed = current_price <= eff_ema50 * Decimal("1.008")
@@ -240,22 +276,31 @@ def reverify_candidate_gates(
         h72 = max(highs_72h)
         l72 = min(lows_72h)
         rng_72_pct = (h72 - l72) / max(l72, Decimal("1e-8")) * Decimal("100")
-        anti_chase_passed = rng_72_pct <= Decimal("28.0") or in_profit_expansion
-        if anti_chase_passed:
-            state_word = (
-                "expanding in profit" if (in_profit_expansion and rng_72_pct > Decimal("20.0")) else "tight"
+        if is_climax_or_utad_short:
+            not_squeezed_above_top = current_price <= h72 * Decimal("1.015")
+            not_late_waterfall = (
+                effective_is_triggered
+                or in_profit_expansion
+                or current_price >= h72 * Decimal("0.82")
             )
-            anti_chase_detail = f"72h range {state_word} ({float(rng_72_pct):.1f}%){rsi_suffix}"
+            anti_chase_passed = bool(not_squeezed_above_top and not_late_waterfall)
+            if anti_chase_passed:
+                anti_chase_detail = f"Climax exhaustion intact (72h range {float(rng_72_pct):.1f}%){rsi_suffix}"
+            else:
+                anti_chase_detail = f"Climax short displaced from top (72h range {float(rng_72_pct):.1f}%){rsi_suffix}"
         else:
-            anti_chase_detail = f"72h excursion wide ({float(rng_72_pct):.1f}%){rsi_suffix}"
+            anti_chase_passed = rng_72_pct <= Decimal("28.0") or in_profit_expansion
+            if anti_chase_passed:
+                state_word = (
+                    "expanding in profit" if (in_profit_expansion and rng_72_pct > Decimal("20.0")) else "tight"
+                )
+                anti_chase_detail = f"72h range {state_word} ({float(rng_72_pct):.1f}%){rsi_suffix}"
+            else:
+                anti_chase_detail = f"72h excursion wide ({float(rng_72_pct):.1f}%){rsi_suffix}"
 
-    # 3. Gate L3: Value Acceptance (archetype- and state-aware: preserves below-POC emerging base reclaims)
+    # 3. Gate L3: Value Acceptance (archetype- and state-aware: preserves below-POC emerging base reclaims & climax shorts)
     value_passed = True
     value_detail = "Accepted above 30d POC"
-    setup_label = str(candidate.get("setup_label", "")).upper()
-    discovery_price = _to_dec(candidate.get("discovery_price")) or _to_dec(
-        candidate.get("current_price")
-    )
     is_below_poc_reclaim_long = (not is_short) and (
         setup_label
         in {
@@ -311,6 +356,19 @@ def reverify_candidate_gates(
                 value_detail = (
                     f"Below 30d POC (${_fmt_price(poc)}, {float(diff_poc):.1f}%){val_str}"
                 )
+        elif is_climax_or_utad_short:
+            climax_shelf = discovery_price * Decimal("1.025") if (discovery_price is not None and discovery_price > 0) else None
+            value_passed = bool(
+                current_price <= poc * Decimal("1.010")
+                or (vah is not None and vah > 0 and current_price <= vah * Decimal("1.020"))
+                or (climax_shelf is not None and current_price <= climax_shelf)
+            )
+            if current_price <= poc:
+                value_detail = f"Mean-reverted below 30d POC (${_fmt_price(poc)})"
+            elif value_passed:
+                value_detail = f"Rejecting climax excess toward 30d POC (${_fmt_price(poc)}){vah_str}"
+            else:
+                value_detail = f"Broke above climax resistance ({float(diff_poc):+.1f}% vs POC ${_fmt_price(poc)})"
         else:
             value_passed = current_price <= poc * Decimal("1.010")
             if current_price <= poc:
@@ -334,13 +392,18 @@ def reverify_candidate_gates(
         in_favorable_expansion = effective_is_triggered and (
             (not is_short and vah is not None and current_price >= vah) or in_profit_expansion
         )
-        vol_passed = bbw <= Decimal("0.24") or in_favorable_expansion
+        climax_band_rollover = is_climax_or_utad_short and (
+            discovery_price is None or current_price <= discovery_price * Decimal("1.025")
+        )
+        vol_passed = bbw <= Decimal("0.24") or in_favorable_expansion or climax_band_rollover
         if bbw <= Decimal("0.13") or kc_sq is True and bbw <= Decimal("0.15"):
             vol_detail = f"Bandwidth {float(bbw):.2f} (BB inside KC Squeeze)"
         elif bbw <= Decimal("0.20"):
             vol_detail = f"Bandwidth {float(bbw):.2f} (Controlled 4H Base Coil)"
         elif in_favorable_expansion:
             vol_detail = f"Bandwidth {float(bbw):.2f} (Expanding in Active Trade)"
+        elif climax_band_rollover:
+            vol_detail = f"Bandwidth {float(bbw):.2f} (Climax Exhaustion Rollover)"
         else:
             vol_detail = f"Bandwidth loosened ({float(bbw):.2f}) without upside breakout"
 
@@ -356,9 +419,17 @@ def reverify_candidate_gates(
             sm_passed = False
         if oi_1h is not None and oi_1h <= Decimal("-5.0"):
             sm_passed = False
+        stale_untriggered_seller_flow = (
+            not effective_is_triggered
+            and age_hours is not None
+            and age_hours >= 2.5
+            and taker_r is not None
+            and taker_r < Decimal("1.00")
+        )
         if taker_r is not None and (
             taker_r < Decimal("0.85")
             or (not in_profit_expansion and taker_r < Decimal("0.92"))
+            or stale_untriggered_seller_flow
         ):
             sm_passed = False
         if (
@@ -377,7 +448,30 @@ def reverify_candidate_gates(
             sm_passed = False
         if not in_profit_expansion and taker_r is not None and taker_r >= Decimal("1.25"):
             sm_passed = False
-    if vcr is not None and vcr > Decimal("1.45") and not in_profit_expansion:
+    constructive_volume_ignition = (
+        not is_short
+        and taker_r is not None
+        and taker_r >= Decimal("1.05")
+        and discovery_price is not None
+        and discovery_price > Decimal("0")
+        and current_price >= discovery_price * Decimal("0.995")
+        and vcr is not None
+        and vcr <= Decimal("2.50")
+    )
+    climax_short_volume_ok = (
+        is_climax_or_utad_short
+        and taker_r is not None
+        and taker_r <= Decimal("1.08")
+        and vcr is not None
+        and vcr <= Decimal("2.50")
+    )
+    if (
+        vcr is not None
+        and vcr > Decimal("1.45")
+        and not in_profit_expansion
+        and not constructive_volume_ignition
+        and not climax_short_volume_ok
+    ):
         sm_passed = False
     oi_str = f"7d OI {float(oi_7d):+.1f}%" if oi_7d is not None else "7d OI unavailable"
     oi1_str = f", 1h OI {float(oi_1h):+.1f}%" if oi_1h is not None else ""
@@ -553,8 +647,13 @@ def evaluate_radar_candidate_lifecycle(
                 reason="short_stop_loss_breached",
                 current_price=current_price,
             )
+        is_climax_short = str(candidate.get("setup_label", "")).upper() in {
+            "EXHAUSTION_REVERSAL_SHORT",
+            "UTAD_DIVERGENCE_SHORT",
+        }
         if (
-            vah is not None
+            not is_climax_short
+            and vah is not None
             and vah > Decimal("0")
             and current_price > vah * Decimal("1.035")
             and (ema50_4h is not None and current_price > ema50_4h * Decimal("1.035"))
@@ -664,6 +763,11 @@ def evaluate_radar_candidate_lifecycle(
             )
 
     # 4. Re-Verify Live System Gates (5/5 Checklist) using observed trigger state & locked entry basis
+    candidate_age_hours = (
+        (ref_now - evaluated_at).total_seconds() / 3600.0
+        if evaluated_at is not None and evaluated_at <= ref_now
+        else None
+    )
     updated_checklist, gates_passed, gates_total, failed_gates = reverify_candidate_gates(
         candidate,
         current_price=current_price,
@@ -674,6 +778,7 @@ def evaluate_radar_candidate_lifecycle(
         recovery_details=recovery_details,
         is_triggered=triggered_at is not None,
         trigger_entry_price=trigger_entry_basis,
+        age_hours=candidate_age_hours,
     )
 
     pnl_pct: Decimal | None = None
