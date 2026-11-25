@@ -145,7 +145,8 @@ class AutoWatchlistService:
                 resolved_price TEXT,
                 resolved_return_pct TEXT,
                 resolution_reason TEXT,
-                source_scan_id TEXT
+                source_scan_id TEXT,
+                policy_version TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_radar_auto_watchlist_status_pub
                 ON radar_auto_watchlist (status, published_at DESC);
@@ -174,6 +175,8 @@ class AutoWatchlistService:
                 conn.execute(
                     "ALTER TABLE radar_auto_watchlist ADD COLUMN graduation_count INTEGER NOT NULL DEFAULT 0"
                 )
+            if "policy_version" not in cols:
+                conn.execute("ALTER TABLE radar_auto_watchlist ADD COLUMN policy_version TEXT")
             conn.execute(
                 """
                 UPDATE radar_auto_watchlist
@@ -295,6 +298,11 @@ class AutoWatchlistService:
             resolved_return_pct=_opt_dec(row["resolved_return_pct"]),
             resolution_reason=row["resolution_reason"],
             source_scan_id=row["source_scan_id"],
+            policy_version=(
+                str(row["policy_version"])
+                if "policy_version" in keys and row["policy_version"] is not None
+                else None
+            ),
         )
 
     def _upsert_episode_locked(self, conn: sqlite3.Connection, ep: AutoWatchEpisode) -> None:
@@ -310,7 +318,7 @@ class AutoWatchlistService:
                 peak_mfe_pct, peak_mfe_at, worst_mae_pct, worst_mae_at,
                 retest_touched, breakout_touched, was_promoted_to_watchlist, graduation_count,
                 resolved_at, resolved_price, resolved_return_pct, resolution_reason,
-                source_scan_id
+                source_scan_id, policy_version
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?,
@@ -321,7 +329,7 @@ class AutoWatchlistService:
                 ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?,
-                ?
+                ?, ?
             )
             ON CONFLICT(episode_id) DO UPDATE SET
                 status = excluded.status,
@@ -345,7 +353,8 @@ class AutoWatchlistService:
                 resolved_at = excluded.resolved_at,
                 resolved_price = excluded.resolved_price,
                 resolved_return_pct = excluded.resolved_return_pct,
-                resolution_reason = excluded.resolution_reason
+                resolution_reason = excluded.resolution_reason,
+                policy_version = COALESCE(excluded.policy_version, radar_auto_watchlist.policy_version)
             """,
             (
                 ep.episode_id,
@@ -390,8 +399,90 @@ class AutoWatchlistService:
                 str(ep.resolved_return_pct) if ep.resolved_return_pct is not None else None,
                 ep.resolution_reason,
                 ep.source_scan_id,
+                ep.policy_version,
             ),
         )
+
+    def retire_prior_policy_episodes(
+        self,
+        active_policy_version: str,
+        *,
+        policy_activated_at: datetime | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        """Retire lingering ON_RADAR / WATCHLIST episodes created under an older screening policy.
+
+        Preserves every historical row in `resolved` (`screening_policy_changed_requires_fresh_qualification`)
+        without triggering the 12h market-failure cooldown, so the active Watchlist contains only
+        episodes qualified under `active_policy_version`.
+        """
+        clean_ver = active_policy_version.strip()
+        if not clean_ver:
+            return 0
+        ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+        retired = 0
+        with self._lock, self._get_connection() as conn:
+            if policy_activated_at is not None:
+                cut_iso = policy_activated_at.astimezone(UTC).isoformat()
+                conn.execute(
+                    """
+                    UPDATE radar_auto_watchlist
+                    SET policy_version = ?
+                    WHERE policy_version IS NULL AND published_at >= ?
+                    """,
+                    (clean_ver, cut_iso),
+                )
+            rows = conn.execute(
+                """
+                SELECT * FROM radar_auto_watchlist
+                WHERE status IN ('ON_RADAR', 'WATCHLIST')
+                """
+            ).fetchall()
+            for row in rows:
+                ep = self._row_to_episode(row)
+                if ep.policy_version == clean_ver:
+                    continue
+                updated = self._apply_eviction_to_episode(
+                    ep,
+                    eviction_event={
+                        "symbol": ep.symbol,
+                        "state": "POLICY_CHANGED",
+                        "retained": False,
+                        "reason": "screening_policy_changed_requires_fresh_qualification",
+                    },
+                    ref_now=ref_now,
+                )
+                self._upsert_episode_locked(conn, updated)
+                retired += 1
+        return retired
+
+    def _deduplicate_watchlist_locked(self, conn: sqlite3.Connection, ref_now: datetime) -> None:
+        """Keep at most one active WATCHLIST episode per `(symbol, direction)` (newest wins)."""
+        rows = conn.execute(
+            """
+            SELECT * FROM radar_auto_watchlist
+            WHERE status = 'WATCHLIST'
+            ORDER BY published_at DESC
+            """
+        ).fetchall()
+        seen_pairs: set[tuple[str, str]] = set()
+        for row in rows:
+            ep = self._row_to_episode(row)
+            key = (ep.symbol.upper().strip(), ep.direction.lower().strip())
+            if key not in seen_pairs:
+                seen_pairs.add(key)
+                continue
+            superseded = self._apply_eviction_to_episode(
+                ep,
+                eviction_event={
+                    "symbol": ep.symbol,
+                    "state": "SUPERSEDED",
+                    "retained": False,
+                    "reason": "replaced_by_new_thesis",
+                },
+                ref_now=ref_now,
+            )
+            self._upsert_episode_locked(conn, superseded)
 
     def blocked_from_radar_symbols(
         self,
@@ -778,6 +869,7 @@ class AutoWatchlistService:
                         ep, eviction_event=ev_obj, ref_now=ref_now
                     )
                     self._upsert_episode_locked(conn, updated)
+            self._deduplicate_watchlist_locked(conn, ref_now)
         return enrolled_count
 
     def _heal_premature_same_scan_superseded_locked(self, conn: sqlite3.Connection) -> int:
@@ -885,6 +977,30 @@ class AutoWatchlistService:
                             sym = str(ev.get("symbol", "")).upper().strip()
                             if sym:
                                 evictions_by_sym_fallback[sym] = ev
+
+                has_policy_reset = any(
+                    isinstance(ev, Mapping) and ev.get("state") == "POLICY_CHANGED"
+                    for ev in events
+                )
+                if has_policy_reset:
+                    with self._lock, self._get_connection() as conn:
+                        prior_rows = conn.execute(
+                            "SELECT * FROM radar_auto_watchlist WHERE status IN ('ON_RADAR', 'WATCHLIST')"
+                        ).fetchall()
+                        for prow in prior_rows:
+                            pep = self._row_to_episode(prow)
+                            if pep.published_at <= file_at + timedelta(seconds=60):
+                                retired_ep = self._apply_eviction_to_episode(
+                                    pep,
+                                    eviction_event={
+                                        "symbol": pep.symbol,
+                                        "state": "POLICY_CHANGED",
+                                        "retained": False,
+                                        "reason": "screening_policy_changed_requires_fresh_qualification",
+                                    },
+                                    ref_now=file_at,
+                                )
+                                self._upsert_episode_locked(conn, retired_ep)
 
                 if evictions_by_ep_id or evictions_by_sym_fallback:
                     with self._lock, self._get_connection() as conn:
@@ -1107,12 +1223,15 @@ class AutoWatchlistService:
             episodes = [e for e in episodes if e.setup_label != "RECOVERY_RECLAIM_LONG"]
         live_set = {s.upper().strip() for s in live_radar_symbols if s}
 
-        # Strict disjointness guard: NEVER expose a currently live 5/5 Radar symbol inside `watchlist`
-        watchlist = [
-            e
-            for e in episodes
-            if e.status is AutoWatchStatus.WATCHLIST and e.symbol not in live_set
-        ]
+        # Strict disjointness + 1-active-card-per-(symbol, direction) deduplication
+        watchlist: list[AutoWatchEpisode] = []
+        seen_watchlist_pairs: set[tuple[str, str]] = set()
+        for e in episodes:
+            if e.status is AutoWatchStatus.WATCHLIST and e.symbol not in live_set:
+                pair = (e.symbol.upper().strip(), e.direction.lower().strip())
+                if pair not in seen_watchlist_pairs:
+                    seen_watchlist_pairs.add(pair)
+                    watchlist.append(e)
         on_radar = [
             e
             for e in episodes

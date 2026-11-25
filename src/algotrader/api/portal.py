@@ -83,18 +83,37 @@ def _live_radar_symbols_from_cache() -> list[str]:
 
 def _get_auto_watchlist_service(runtime: Runtime | None = None) -> AutoWatchlistService:
     global _auto_watchlist_service, _auto_watchlist_backfilled
+    settings = runtime.settings if runtime is not None else load_settings()
     if _auto_watchlist_service is None:
-        settings = runtime.settings if runtime is not None else load_settings()
         raw_db_path = getattr(settings, "state_db_path", None)
         db_path = raw_db_path if isinstance(raw_db_path, (str, Path)) else load_settings().state_db_path
         _auto_watchlist_service = AutoWatchlistService(db_path)
     if not _auto_watchlist_backfilled:
         _auto_watchlist_backfilled = True
+        events_dir = Path("data/radar_events")
         with contextlib.suppress(Exception):
             _auto_watchlist_service.backfill_from_radar_events_dir(
-                Path("data/radar_events"),
+                events_dir,
                 live_radar_symbols=_live_radar_symbols_from_cache(),
             )
+        if getattr(settings, "kinetic_ignition_v33_enabled", False) is True:
+            with contextlib.suppress(Exception):
+                latest_policy_change_at: datetime | None = None
+                if events_dir.is_dir():
+                    for p in events_dir.glob("*.json"):
+                        with contextlib.suppress(Exception):
+                            doc = json.loads(p.read_text(encoding="utf-8"))
+                            evs = doc.get("events") or []
+                            if any(isinstance(ev, dict) and ev.get("state") == "POLICY_CHANGED" for ev in evs):
+                                at_raw = doc.get("at")
+                                if isinstance(at_raw, str):
+                                    dt = datetime.fromisoformat(at_raw).astimezone(UTC)
+                                    if latest_policy_change_at is None or dt > latest_policy_change_at:
+                                        latest_policy_change_at = dt
+                _auto_watchlist_service.retire_prior_policy_episodes(
+                    screening_policy_version_for(settings),
+                    policy_activated_at=latest_policy_change_at or datetime(2026, 11, 24, 17, 50, tzinfo=UTC),
+                )
     return _auto_watchlist_service
 
 
@@ -880,6 +899,8 @@ async def _do_crypto_screen_locked(
         # Automatically enroll verified 5/5 episodes into the 48h Auto-Watchlist & update outcomes
         with contextlib.suppress(Exception):
             auto_watch = _get_auto_watchlist_service(runtime)
+            for opp_item in final_opps:
+                opp_item.setdefault("screening_policy_version", active_policy_ver)
             await asyncio.to_thread(
                 auto_watch.sync_from_scan,
                 published_opportunities=final_opps,
@@ -889,6 +910,7 @@ async def _do_crypto_screen_locked(
             )
             if pre_ignition_coils:
                 for coil_cand in pre_ignition_coils:
+                    coil_cand.setdefault("screening_policy_version", active_policy_ver)
                     await asyncio.to_thread(
                         auto_watch.enroll_pre_ignition_coil,
                         coil_cand,

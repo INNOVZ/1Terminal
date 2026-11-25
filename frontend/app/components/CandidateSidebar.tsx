@@ -693,13 +693,16 @@ function CandidateSidebar({
   priceChanges24h,
 }: CandidateSidebarProps) {
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"ALL" | "LONGS" | "SHORTS" | "WATCHLIST">("ALL");
+  const [manualFilter, setManualFilter] = useState<"ALL" | "LONGS" | "SHORTS" | "WATCHLIST" | null>(null);
 
   // Strict client-side disjointness guard: never duplicate live 5/5 Radar symbols inside Watchlist
   const disjointWatchlist = useMemo(() => {
     const radarSymbols = new Set(opportunities.map((o) => o.symbol.toUpperCase()));
     return watchlistEpisodes.filter((ep) => !radarSymbols.has(ep.symbol.toUpperCase()));
   }, [opportunities, watchlistEpisodes]);
+
+  const filter: "ALL" | "LONGS" | "SHORTS" | "WATCHLIST" =
+    manualFilter ?? (opportunities.length === 0 && disjointWatchlist.length > 0 ? "WATCHLIST" : "ALL");
 
   // Memoize counts across tabs to avoid re-filtering on every keystroke
   const counts = useMemo(() => {
@@ -805,7 +808,7 @@ function CandidateSidebar({
               <button
                 key={tab}
                 type="button"
-                onClick={() => setFilter(tab)}
+                onClick={() => setManualFilter(tab)}
                 style={{
                   background: isTabActive
                     ? tab === "WATCHLIST"
@@ -859,14 +862,33 @@ function CandidateSidebar({
         {filter === "WATCHLIST" ? (
           filteredWatchlist.length === 0 ? (
             <div style={{ textAlign: "center", padding: "36px 14px", color: "var(--text-muted)", fontSize: "11.5px", lineHeight: 1.5 }}>
-              No soft-evicted setups in the 48h Watchlist right now.
+              No staged setups in the 48h Pre-Breakout Watchlist right now.
               <div style={{ marginTop: "6px", fontSize: "10.5px", opacity: 0.85 }}>
-                Setups evicted from 5/5 Radar on a mild flow dip while keeping 4/4 structure intact appear here automatically (never duplicating live Radar cards).
+                Pre-ignition 5/5 coils awaiting velocity trigger and 4/4 structural setups on soft flow dips appear here automatically.
               </div>
             </div>
           ) : (
-            filteredWatchlist.map((ep) => {
+            <>
+              {opportunities.length === 0 && (
+                <div
+                  style={{
+                    marginBottom: "8px",
+                    padding: "8px 10px",
+                    borderRadius: "8px",
+                    background: "rgba(250, 204, 21, 0.08)",
+                    border: "1px solid rgba(250, 204, 21, 0.28)",
+                    color: "#fde68a",
+                    fontSize: "10.5px",
+                    fontFamily: "var(--font-mono)",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  0 active 5/5 breakouts · Showing staged Pre-Breakout Watchlist coils
+                </div>
+              )}
+              {filteredWatchlist.map((ep) => {
               const isShort = ep.direction?.toLowerCase() === "short";
+              const isPreIgnition = ep.radar_status_label === "PRE-IGNITION COIL";
               const isSelected = ep.symbol.toUpperCase() === activeSymbol.toUpperCase();
               const livePx = livePrices?.[ep.symbol] ?? ep.last_price;
               const liveRet =
@@ -920,12 +942,14 @@ function CandidateSidebar({
                           fontWeight: 800,
                           padding: "1px 5px",
                           borderRadius: "4px",
-                          color: "#facc15",
-                          background: "rgba(250, 204, 21, 0.14)",
-                          border: "1px solid rgba(250, 204, 21, 0.35)",
+                          color: isPreIgnition ? "#38bdf8" : "#facc15",
+                          background: isPreIgnition
+                            ? "rgba(56, 189, 248, 0.14)"
+                            : "rgba(250, 204, 21, 0.14)",
+                          border: `1px solid ${isPreIgnition ? "rgba(56, 189, 248, 0.35)" : "rgba(250, 204, 21, 0.35)"}`,
                         }}
                       >
-                        {ep.gates_passed}/{ep.gates_total} WATCH
+                        {isPreIgnition ? "5/5 COIL" : `${ep.gates_passed}/${ep.gates_total} WATCH`}
                       </span>
                     </div>
                     <span
@@ -976,7 +1000,8 @@ function CandidateSidebar({
                   </div>
                 </div>
               );
-            })
+              })}
+            </>
           )
         ) : filteredOpps.length === 0 ? (
           <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-muted)", fontSize: "12px" }}>

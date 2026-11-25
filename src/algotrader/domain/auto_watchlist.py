@@ -212,6 +212,7 @@ class AutoWatchEpisode:
     resolved_return_pct: Decimal | None = None
     resolution_reason: str | None = None
     source_scan_id: str | None = None
+    policy_version: str | None = None
 
     @property
     def is_live_tracked(self) -> bool:
@@ -393,6 +394,7 @@ class AutoWatchEpisode:
             "resolved_return_pct": wire_resolved_ret,
             "resolution_reason": self.resolution_reason,
             "source_scan_id": self.source_scan_id,
+            "policy_version": self.policy_version,
         }
 
 
@@ -514,6 +516,11 @@ def build_auto_watch_episode(
         endpoint_observed_at=None,
         measurement_status="pending",
         source_scan_id=scan_id or str(sig_map.get("scan_id") or "") or None,
+        policy_version=(
+            str(candidate["screening_policy_version"]).strip()
+            if candidate.get("screening_policy_version")
+            else None
+        ),
     )
 
 

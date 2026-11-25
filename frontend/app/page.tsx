@@ -514,7 +514,10 @@ function RadarPageContent() {
       gates_total: ep.gates_total,
       failed_gates: checklist.filter((c) => !c.passed).map((c) => c.title),
       radar_status: "WATCHLIST_48H",
-      radar_status_label: `${ep.gates_passed}/${ep.gates_total} WATCHLIST · 48H`,
+      radar_status_label:
+        ep.radar_status_label === "PRE-IGNITION COIL"
+          ? "PRE-IGNITION COIL · WATCHLIST"
+          : `${ep.gates_passed}/${ep.gates_total} WATCHLIST · 48H`,
       first_seen_at: ep.published_at,
       evaluated_at: ep.published_at,
       radar_signal: {
@@ -524,10 +527,16 @@ function RadarPageContent() {
         price: String(ep.signal_price),
         quote_observed_at: ep.published_at,
       },
-      rationale: [
-        `Promoted to 48h Potential Watchlist after leaving live 5/5 Radar (${ep.soft_gate_summary || ep.eviction_reason || "soft flow dip"}).`,
-        "All 4 structural gates remained intact; removed automatically upon Target 1, Stop Breach, 48h expiry, or 5/5 Radar re-entry.",
-      ],
+      rationale:
+        ep.radar_status_label === "PRE-IGNITION COIL"
+          ? [
+              `Staged in ALFA v3.3 Pre-Ignition Watchlist (${ep.soft_gate_summary || "5/5 structural base coiled; awaiting kinetic trigger"}).`,
+              "Automatically graduates onto 5/5 Actionable Radar once 15m/1h velocity and buyer absorption ignite.",
+            ]
+          : [
+              `Promoted to 48h Potential Watchlist after leaving live 5/5 Radar (${ep.soft_gate_summary || ep.eviction_reason || "soft flow dip"}).`,
+              "All 4 structural gates remained intact; removed automatically upon Target 1, Stop Breach, 48h expiry, or 5/5 Radar re-entry.",
+            ],
       candles: [],
     };
 
@@ -811,8 +820,7 @@ function RadarPageContent() {
             await applyScreenerData(data, false);
           } else {
             setOpportunities([]);
-            setActiveOpportunity(null);
-            setActiveCandle(null);
+            setActiveOpportunity((prev) => (prev?.radar_status === "WATCHLIST_48H" ? prev : null));
           }
         }
         awaitingScanCompletionRef.current = true;
@@ -887,8 +895,7 @@ function RadarPageContent() {
         await applyScreenerData(data, notifyCompletion);
       } else {
         setOpportunities([]);
-        setActiveOpportunity(null);
-        setActiveCandle(null);
+        setActiveOpportunity((prev) => (prev?.radar_status === "WATCHLIST_48H" ? prev : null));
         if (notifyCompletion) {
           scheduleTransientNotification(
             "Scan complete: 0 tokens currently qualify for institutional gates",
@@ -970,6 +977,38 @@ function RadarPageContent() {
   useEffect(() => {
     fetchScreenerRef.current = fetchScreener;
   }, [fetchScreener]);
+
+  // When 0 live 5/5 Radar candidates exist, keep the Pre-Breakout Radar page alive
+  // using staged Pre-Breakout Watchlist coils instead of dead-ending on an empty screen.
+  useEffect(() => {
+    if (loading || isScanning || isWithheldStatus(dataStatus) || symbolParam || inspectedView) {
+      return;
+    }
+    if (opportunities.length > 0 || autoWatchlist.length === 0) {
+      return;
+    }
+    const stillValidWatchlistSelection =
+      activeOpportunity?.radar_status === "WATCHLIST_48H" &&
+      autoWatchlist.some(
+        (ep) => ep.symbol.toUpperCase() === activeOpportunity.symbol.toUpperCase(),
+      );
+    if (!stillValidWatchlistSelection) {
+      const t = setTimeout(() => {
+        handleSelectWatchlistEpisode(autoWatchlist[0]);
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [
+    loading,
+    isScanning,
+    dataStatus,
+    symbolParam,
+    inspectedView,
+    opportunities.length,
+    autoWatchlist,
+    activeOpportunity,
+    handleSelectWatchlistEpisode,
+  ]);
 
   useEffect(() => {
     const fetchAutoWatchlist = async () => {
@@ -1457,7 +1496,9 @@ function RadarPageContent() {
     adaptedLevelsMap,
   ]);
 
-  if (!activeOpportunity && !inspectedView) {
+  const hasWatchlistFallback = !isWithheldStatus(dataStatus) && autoWatchlist.length > 0 && !symbolParam;
+
+  if (!activeOpportunity && !inspectedView && !hasWatchlistFallback) {
     if ((loading || isScanning) && !isWithheldStatus(dataStatus)) {
       return (
         <div
@@ -1869,7 +1910,7 @@ function RadarPageContent() {
                 }}
               >
                 <Zap size={11} />
-                <span>ALFA v3.2</span>
+                <span>{policyVersion?.startsWith("alfa-v3.3") ? "ALFA v3.3" : "ALFA v3.2"}</span>
               </div>
             </div>
           )}

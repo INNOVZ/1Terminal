@@ -170,3 +170,54 @@ def test_policy_change_invalidation_allows_immediate_fresh_coil_enrollment(tmp_p
     assert enrolled.radar_status_label == "PRE-IGNITION COIL"
 
 
+def test_retire_prior_policy_episodes_removes_legacy_watchlist_and_deduplicates_symbol(tmp_path: Path) -> None:
+    svc = AutoWatchlistService(tmp_path / "state.sqlite3")
+    t_old_1 = datetime(2026, 11, 23, 20, 0, tzinfo=UTC)
+    t_old_2 = datetime(2026, 11, 24, 6, 0, tzinfo=UTC)
+
+    # Simulate two legacy v3.1 WATCHLIST rows on SENTUSDT (no policy_version)
+    c_old1 = _cand("SENTUSDT", first_seen=t_old_1, price="5.10")
+    c_old2 = {**_cand("SENTUSDT", first_seen=t_old_2, price="5.12"), "setup_label": "MOMENTUM_EMERGING_LONG"}
+    svc.enroll_pre_ignition_coil(c_old1, published_at=t_old_1, scan_id="legacy-1")
+    with svc._lock, svc._get_connection() as conn:
+        ep2 = svc._row_to_episode(
+            conn.execute("SELECT * FROM radar_auto_watchlist LIMIT 1").fetchone()
+        )
+        from dataclasses import replace
+
+        dup_ep = replace(
+            ep2,
+            episode_id="legacy-dup-sent-2",
+            setup_label="MOMENTUM_EMERGING_LONG",
+            published_at=t_old_2,
+            was_promoted_to_watchlist=True,
+        )
+        svc._upsert_episode_locked(conn, dup_ep)
+    _ = c_old2
+
+    # Even before retirement, build_response deduplicates active watchlist to 1 card per (symbol, direction)
+    resp_before = svc.build_response(live_radar_symbols=(), now=t_old_2)
+    assert len(resp_before["watchlist"]) == 1
+
+    # Enroll an ALFA v3.3 pre-ignition coil after policy cut
+    t_cut = datetime(2026, 11, 24, 17, 50, tzinfo=UTC)
+    t_v33 = datetime(2026, 11, 25, 1, 1, tzinfo=UTC)
+    c_v33 = {
+        **_cand("COLLECTUSDT", first_seen=t_v33, price="5.15", lane="WATCHLIST_COIL"),
+        "screening_policy_version": "alfa-v3.3-kinetic-ignition-1",
+    }
+    svc.enroll_pre_ignition_coil(c_v33, published_at=t_v33, scan_id="scan-v33")
+
+    retired = svc.retire_prior_policy_episodes(
+        "alfa-v3.3-kinetic-ignition-1",
+        policy_activated_at=t_cut,
+        now=t_v33,
+    )
+    assert retired == 2
+    resp_after = svc.build_response(live_radar_symbols=(), now=t_v33)
+    assert [w["symbol"] for w in resp_after["watchlist"]] == ["COLLECTUSDT"]
+    # Retired legacy rows must NOT trigger a 12h cooldown block on SENTUSDT
+    assert ("SENTUSDT", "long") not in svc.blocked_from_radar_symbols(now=t_v33 + timedelta(minutes=5))
+
+
+
