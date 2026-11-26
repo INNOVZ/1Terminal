@@ -16,6 +16,12 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
 
+from algotrader.domain.gate_contract import (
+    BELOW_POC_LONG_ARCHETYPES,
+    CLIMAX_SHORT_ARCHETYPES,
+    EMA50_ANCHORED_SHORT_ARCHETYPES,
+)
+
 
 class RadarLifecycleState(StrEnum):
     FRESH_COIL = "FRESH_COIL"
@@ -191,10 +197,8 @@ def reverify_candidate_gates(
     discovery_price = _to_dec(candidate.get("discovery_price")) or _to_dec(
         candidate.get("current_price")
     )
-    is_climax_or_utad_short = is_short and setup_label in {
-        "EXHAUSTION_REVERSAL_SHORT",
-        "UTAD_DIVERGENCE_SHORT",
-    }
+    is_climax_or_utad_short = is_short and setup_label in CLIMAX_SHORT_ARCHETYPES
+    is_ema50_anchored_short = is_short and setup_label in EMA50_ANCHORED_SHORT_ARCHETYPES
     trend_passed = True
     trend_detail = (
         f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)})"
@@ -302,12 +306,7 @@ def reverify_candidate_gates(
     value_passed = True
     value_detail = "Accepted above 30d POC"
     is_below_poc_reclaim_long = (not is_short) and (
-        setup_label
-        in {
-            "MOMENTUM_EMERGING_LONG",
-            "RECOVERY_RECLAIM_LONG",
-            "RANGE_BOTTOM_ACCUMULATION_LONG",
-        }
+        setup_label in BELOW_POC_LONG_ARCHETYPES
         or (
             poc is not None
             and poc > Decimal("0")
@@ -369,6 +368,30 @@ def reverify_candidate_gates(
                 value_detail = f"Rejecting climax excess toward 30d POC (${_fmt_price(poc)}){vah_str}"
             else:
                 value_detail = f"Broke above climax resistance ({float(diff_poc):+.1f}% vs POC ${_fmt_price(poc)})"
+        elif (
+            is_ema50_anchored_short
+            and discovery_price is not None
+            and discovery_price > poc * Decimal("1.010")
+        ):
+            capped_ema = (
+                eff_ema50 is not None
+                and eff_ema50 > Decimal("0")
+                and current_price <= eff_ema50 * Decimal("1.008")
+            )
+            capped_disc = current_price <= discovery_price * Decimal("1.020")
+            value_passed = bool(
+                current_price <= poc * Decimal("1.010") or (capped_ema and capped_disc)
+            )
+            if current_price <= poc:
+                value_detail = f"Rejected below 30d POC (${_fmt_price(poc)})"
+            elif value_passed and eff_ema50 is not None:
+                value_detail = (
+                    f"Capped below 4H EMA50 distribution shelf (${_fmt_price(eff_ema50)} | POC ${_fmt_price(poc)})"
+                )
+            else:
+                value_detail = (
+                    f"Reclaimed above distribution shelf ({float(diff_poc):+.1f}% vs POC ${_fmt_price(poc)})"
+                )
         else:
             value_passed = current_price <= poc * Decimal("1.010")
             if current_price <= poc:
@@ -400,6 +423,8 @@ def reverify_candidate_gates(
             vol_detail = f"Bandwidth {float(bbw):.2f} (BB inside KC Squeeze)"
         elif bbw <= Decimal("0.20"):
             vol_detail = f"Bandwidth {float(bbw):.2f} (Controlled 4H Base Coil)"
+        elif bbw <= Decimal("0.24"):
+            vol_detail = f"Bandwidth {float(bbw):.2f} (Controlled Base <= 0.24)"
         elif in_favorable_expansion:
             vol_detail = f"Bandwidth {float(bbw):.2f} (Expanding in Active Trade)"
         elif climax_band_rollover:
@@ -647,10 +672,7 @@ def evaluate_radar_candidate_lifecycle(
                 reason="short_stop_loss_breached",
                 current_price=current_price,
             )
-        is_climax_short = str(candidate.get("setup_label", "")).upper() in {
-            "EXHAUSTION_REVERSAL_SHORT",
-            "UTAD_DIVERGENCE_SHORT",
-        }
+        is_climax_short = str(candidate.get("setup_label", "")).upper() in CLIMAX_SHORT_ARCHETYPES
         if (
             not is_climax_short
             and vah is not None

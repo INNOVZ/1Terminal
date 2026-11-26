@@ -33,12 +33,7 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
 
-from algotrader.domain.early_recovery import (
-    FLOW_TITLE as RECOVERY_FLOW_TITLE,
-)
-from algotrader.domain.early_recovery import (
-    STRUCTURAL_TITLES as RECOVERY_STRUCTURAL_TITLES,
-)
+from algotrader.domain.gate_contract import is_soft_only_checklist_failure
 from algotrader.domain.models import Candle
 
 AUTO_WATCH_WINDOW_HOURS = 48
@@ -589,12 +584,7 @@ def classify_radar_eviction(
         return AutoWatchStatus.HARD_INVALIDATED, "unknown_telemetry_at_eviction", None, checklist
 
     is_recovery_family = episode.setup_label == "RECOVERY_RECLAIM_LONG"
-    req_structural_titles = (
-        RECOVERY_STRUCTURAL_TITLES if is_recovery_family else STRUCTURAL_GATE_TITLES
-    )
-    soft_flow_title = RECOVERY_FLOW_TITLE if is_recovery_family else "Smart Money Absorption"
-    structural_failures = failed_titles & req_structural_titles
-    if structural_failures or failed_titles != {soft_flow_title}:
+    if not is_soft_only_checklist_failure(failed_titles, setup_label=episode.setup_label):
         fail_str = ",".join(sorted(failed_titles))
         return AutoWatchStatus.HARD_INVALIDATED, f"structural_gate_failed:{fail_str}", None, checklist
 
