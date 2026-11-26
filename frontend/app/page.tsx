@@ -530,7 +530,7 @@ function RadarPageContent() {
       rationale:
         ep.radar_status_label === "PRE-IGNITION COIL"
           ? [
-              `Staged in ALFA v3.3 Pre-Ignition Watchlist (${ep.soft_gate_summary || "5/5 structural base coiled; awaiting kinetic trigger"}).`,
+              `Staged in ALFA v3.4 Pre-Ignition Watchlist (${ep.soft_gate_summary || "5/5 structural base coiled; awaiting kinetic trigger"}).`,
               "Automatically graduates onto 5/5 Actionable Radar once 15m/1h velocity and buyer absorption ignite.",
             ]
           : [
@@ -1910,7 +1910,7 @@ function RadarPageContent() {
                 }}
               >
                 <Zap size={11} />
-                <span>{policyVersion?.startsWith("alfa-v3.3") ? "ALFA v3.3" : "ALFA v3.2"}</span>
+                <span>{policyVersion?.startsWith("alfa-v3.3") ? "ALFA v3.4" : "ALFA v3.2"}</span>
               </div>
             </div>
           )}
