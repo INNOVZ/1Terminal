@@ -1315,16 +1315,27 @@ class CryptoOpportunityScreener:
         beta, correlation, residual_24h, residual_6h, residual_7d = self._calc_residual_alpha(
             closed_1h, btc_candles
         )
-        if self._feature_contract == "discovery_v2" and explicit_derivatives is None:
+        if self._feature_contract == "discovery_v2":
             closed_btc = sorted((c for c in btc_candles if c.closed), key=lambda c: c.closed_at)
             temporal = discovery_temporal_features(closed_1h, closed_btc)
-            if temporal.get("emerging") is True:
-                self._emerging_symbols.add(inst.id.symbol)
-            if temporal.get("vvi_ignition") is True:
+            if explicit_derivatives is None:
+                if temporal.get("emerging") is True:
+                    self._emerging_symbols.add(inst.id.symbol)
+                if temporal.get("vvi_ignition") is True:
+                    self._vvi_symbols.add(inst.id.symbol)
+                temporal_reason = str(temporal.get("reason", "computed"))
+                temporal_details = {k: v for k, v in temporal.items() if k != "reason"}
+                self._note(inst.id.symbol, "temporal_features", temporal_reason, **temporal_details)
+            elif temporal.get("vvi_ignition") is True:
                 self._vvi_symbols.add(inst.id.symbol)
-            temporal_reason = str(temporal.get("reason", "computed"))
-            temporal_details = {k: v for k, v in temporal.items() if k != "reason"}
-            self._note(inst.id.symbol, "temporal_features", temporal_reason, **temporal_details)
+            if (
+                self._settings.kinetic_ignition_v33_enabled
+                and temporal.get("available") is True
+                and Decimal(str(temporal.get("btc_relative_6h_pp", "0"))) >= Decimal("1.5")
+                and Decimal(str(temporal.get("turnover_acceleration_6h_vs_prior18h", "0"))) >= Decimal("1.35")
+                and Decimal("0") <= Decimal(str(temporal.get("return_24h_pct", "99"))) <= Decimal("12.5")
+            ):
+                self._vvi_symbols.add(inst.id.symbol)
 
         if inst.id.symbol in self._continuation_current:
             target_direction = Direction.SHORT
@@ -1495,17 +1506,46 @@ class CryptoOpportunityScreener:
             )
             accum_opp = _dedup_core_vs_recovery(accum_opp, rec_s2_opp)
 
+        v33_eligible_mode = (
+            self._settings.kinetic_ignition_v33_enabled
+            and (target_direction is None or target_direction is Direction.LONG)
+            and mode in (ScreenerMode.ACCUMULATION, ScreenerMode.ALL, None)
+        )
+        if v33_eligible_mode and accum_opp is None:
+            accum_opp = evaluate_v33_local_base_or_flag(
+                inst=inst,
+                quote=quote,
+                snap_1h=snap_1h,
+                closed_1h=closed_1h,
+                closed_4h=closed_4h,
+                derivatives=derivatives,
+                macro_multiplier=macro_context.multiplier_for(Direction.LONG),
+                macro_narrative=macro_context.narrative(),
+                is_btc_cascade=is_btc_cascade,
+                beta=beta,
+                residual_24h=residual_24h,
+                is_discovery_tier=is_discovery_tier,
+                evaluated_at=self._evaluated_at or datetime.now(UTC),
+                on_stage1_ready=self._stage1_ready_symbols.add,
+            )
+
         # Stage 2: Deep Derivatives Enrichment ONLY for Shortlisted Candidates
         # If neither accumulation nor distribution passed structural criteria, avoid expensive derivatives API calls
         viability_floor = Decimal("38.0") if self._feature_contract == "discovery_v2" and explicit_derivatives is None else Decimal("58.0")
         qual_threshold = min(viability_floor, min_score) if min_score is not None else viability_floor
         is_viable_long = accum_opp is not None and accum_opp.score >= qual_threshold
         is_viable_short = dist_opp is not None and dist_opp.score >= qual_threshold
+        is_v33_stage1_ready = v33_eligible_mode and inst.id.symbol in self._stage1_ready_symbols
 
-        if not is_viable_long and not is_viable_short and mode != ScreenerMode.BREAKOUT:
+        if (
+            not is_viable_long
+            and not is_viable_short
+            and not is_v33_stage1_ready
+            and mode != ScreenerMode.BREAKOUT
+        ):
             return []
 
-        if derivatives is None and derivatives_port is not None and (is_viable_long or is_viable_short or mode == ScreenerMode.BREAKOUT):
+        if derivatives is None and derivatives_port is not None and (is_viable_long or is_viable_short or is_v33_stage1_ready or mode == ScreenerMode.BREAKOUT):
             try:
                 deriv_res = await asyncio.wait_for(
                     derivatives_port.derivatives_snapshot(inst), timeout=4.0
@@ -1557,6 +1597,23 @@ class CryptoOpportunityScreener:
                     policy=self._early_recovery_policy,
                 )
                 accum_opp = _dedup_core_vs_recovery(accum_opp, rec_brk_opp)
+            if v33_eligible_mode and accum_opp is None:
+                accum_opp = evaluate_v33_local_base_or_flag(
+                    inst=inst,
+                    quote=quote,
+                    snap_1h=snap_1h,
+                    closed_1h=closed_1h,
+                    closed_4h=closed_4h,
+                    derivatives=derivatives,
+                    macro_multiplier=macro_context.multiplier_for(Direction.LONG),
+                    macro_narrative=macro_context.narrative(),
+                    is_btc_cascade=is_btc_cascade,
+                    beta=beta,
+                    residual_24h=residual_24h,
+                    is_discovery_tier=is_discovery_tier,
+                    evaluated_at=self._evaluated_at or datetime.now(UTC),
+                    on_stage1_ready=None,
+                )
             if is_viable_short:
                 dist_opp = self._score_distribution_setup(
                     inst=inst,
@@ -1617,29 +1674,6 @@ class CryptoOpportunityScreener:
                         suppressed=dist_opp.setup_label.value,
                     )
                 dist_opp = None
-
-        if (
-            self._settings.kinetic_ignition_v33_enabled
-            and accum_opp is None
-            and (target_direction is None or target_direction is Direction.LONG)
-            and mode in (ScreenerMode.ACCUMULATION, ScreenerMode.ALL, None)
-        ):
-            accum_opp = evaluate_v33_local_base_or_flag(
-                inst=inst,
-                quote=quote,
-                snap_1h=snap_1h,
-                closed_1h=closed_1h,
-                closed_4h=closed_4h,
-                derivatives=derivatives,
-                macro_multiplier=macro_context.multiplier_for(Direction.LONG),
-                macro_narrative=macro_context.narrative(),
-                is_btc_cascade=is_btc_cascade,
-                beta=beta,
-                residual_24h=residual_24h,
-                is_discovery_tier=is_discovery_tier,
-                evaluated_at=self._evaluated_at or datetime.now(UTC),
-                on_stage1_ready=self._stage1_ready_symbols.add,
-            )
 
         if (
             self._settings.kinetic_ignition_v33_enabled
@@ -1972,10 +2006,11 @@ class CryptoOpportunityScreener:
             low_48h=low_48h,
         )
         archetype = classify_long_archetype(long_features)
-        if (archetype is None and vvi_ignition_1h
-                and close >= ema50_4h and close >= poc_price
-                and pos_in_range <= Decimal("0.78")):
-            archetype = SetupLabel.MOMENTUM_EMERGING_LONG
+        if archetype is None and vvi_ignition_1h and close >= ema50_4h and close >= poc_price:
+            if pos_in_range <= Decimal("0.78"):
+                archetype = SetupLabel.MOMENTUM_EMERGING_LONG
+            elif self._settings.kinetic_ignition_v33_enabled and pos_in_range <= Decimal("0.96"):
+                archetype = SetupLabel.BREAKOUT_LONG
         if archetype is None:
             self._note(inst.id.symbol, "accumulation_rejection", "no_long_archetype",
                        enriched=derivatives is not None, features=asdict(long_features))
@@ -2228,7 +2263,15 @@ class CryptoOpportunityScreener:
             is_deriv_flow_ok = derivatives is not None and gate_details.get("L6") is True
         checklist_verification = ChecklistVerification(
             value_acceptance=va_accepted,
-            volatility_structure=(bb_inside_kc or bandwidth_current <= Decimal("0.24")),
+            volatility_structure=(
+                bb_inside_kc
+                or bandwidth_current <= Decimal("0.24")
+                or (
+                    self._feature_contract == "discovery_v2"
+                    and gate_details.get("L5") is True
+                    and bandwidth_current <= Decimal("0.30")
+                )
+            ),
             momentum_alignment=(ema20_4h >= ema50_4h and macd_hist_4h >= macd_hist_4h_prev),
             volume_microstructure=(
                 vol_contraction_ratio <= Decimal("1.0")

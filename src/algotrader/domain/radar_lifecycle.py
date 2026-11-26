@@ -17,6 +17,7 @@ from enum import StrEnum
 from typing import Any
 
 from algotrader.domain.gate_contract import (
+    BELOW_EMA50_BASE_LONG_ARCHETYPES,
     BELOW_POC_LONG_ARCHETYPES,
     CLIMAX_SHORT_ARCHETYPES,
     EMA50_ANCHORED_SHORT_ARCHETYPES,
@@ -187,18 +188,28 @@ def reverify_candidate_gates(
         and profit_entry.is_finite()
         and profit_entry > Decimal("0")
         and (
-            (not is_short and current_price > profit_entry * Decimal("1.02"))
-            or (is_short and current_price < profit_entry * Decimal("0.98"))
+            (not is_short and current_price > profit_entry * Decimal("1.005"))
+            or (is_short and current_price < profit_entry * Decimal("0.995"))
         )
     )
 
-    # 1. Gate L1: Trend Baseline (4H EMA50, or Climax Ceiling for Exhaustion/UTAD Shorts)
+    # 1. Gate L1: Trend Baseline (4H EMA50, Sub-EMA50 Emerging Base Shelf, or Climax Ceiling for Shorts)
     setup_label = str(candidate.get("setup_label", "")).upper()
     discovery_price = _to_dec(candidate.get("discovery_price")) or _to_dec(
         candidate.get("current_price")
     )
+    stop_ref = _to_dec(candidate.get("suggested_stop"))
     is_climax_or_utad_short = is_short and setup_label in CLIMAX_SHORT_ARCHETYPES
     is_ema50_anchored_short = is_short and setup_label in EMA50_ANCHORED_SHORT_ARCHETYPES
+    is_sub_ema50_base_long = (
+        not is_short
+        and setup_label in BELOW_EMA50_BASE_LONG_ARCHETYPES
+        and eff_ema50 is not None
+        and eff_ema50 > Decimal("0")
+        and discovery_price is not None
+        and discovery_price > Decimal("0")
+        and discovery_price < eff_ema50 * Decimal("0.992")
+    )
     trend_passed = True
     trend_detail = (
         f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)})"
@@ -208,16 +219,30 @@ def reverify_candidate_gates(
     if eff_ema50 is not None and eff_ema50 > Decimal("0"):
         diff_ema_pct = (current_price - eff_ema50) / eff_ema50 * Decimal("100")
         if not is_short:
-            # Allow 0.8% wick tolerance on EMA50 shelf
-            trend_passed = current_price >= eff_ema50 * Decimal("0.992")
-            if current_price >= eff_ema50:
-                trend_detail = f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
-            elif trend_passed:
-                trend_detail = f"Testing 4H EMA50 support (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
+            if is_sub_ema50_base_long and discovery_price is not None:
+                base_floor = discovery_price * Decimal("0.975")
+                if stop_ref is not None and stop_ref > Decimal("0"):
+                    base_floor = max(base_floor, stop_ref * Decimal("1.005"))
+                trend_passed = current_price >= eff_ema50 * Decimal("0.992") or current_price >= base_floor
+                if current_price >= eff_ema50:
+                    trend_detail = f"Reclaimed 4H EMA50 (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
+                elif trend_passed:
+                    trend_detail = (
+                        f"Holding emerging base shelf (${_fmt_price(base_floor)} | 4H EMA50 ${_fmt_price(eff_ema50)})"
+                    )
+                else:
+                    trend_detail = f"Lost emerging base shelf (${_fmt_price(base_floor)})"
             else:
-                trend_detail = (
-                    f"Slipped {float(diff_ema_pct):.1f}% below 4H EMA50 (${_fmt_price(eff_ema50)})"
-                )
+                # Allow 0.8% wick tolerance on EMA50 shelf
+                trend_passed = current_price >= eff_ema50 * Decimal("0.992")
+                if current_price >= eff_ema50:
+                    trend_detail = f"Holding above 4H EMA50 (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
+                elif trend_passed:
+                    trend_detail = f"Testing 4H EMA50 support (${_fmt_price(eff_ema50)}, {float(diff_ema_pct):+.1f}%)"
+                else:
+                    trend_detail = (
+                        f"Slipped {float(diff_ema_pct):.1f}% below 4H EMA50 (${_fmt_price(eff_ema50)})"
+                    )
         elif is_climax_or_utad_short:
             climax_ref = max(
                 d
@@ -415,18 +440,30 @@ def reverify_candidate_gates(
         in_favorable_expansion = effective_is_triggered and (
             (not is_short and vah is not None and current_price >= vah) or in_profit_expansion
         )
+        constructive_breakout_release = (
+            not is_short
+            and bbw <= Decimal("0.32")
+            and discovery_price is not None
+            and discovery_price > Decimal("0")
+            and current_price >= discovery_price * Decimal("1.005")
+        )
         climax_band_rollover = is_climax_or_utad_short and (
             discovery_price is None or current_price <= discovery_price * Decimal("1.025")
         )
-        vol_passed = bbw <= Decimal("0.24") or in_favorable_expansion or climax_band_rollover
+        vol_passed = (
+            bbw <= Decimal("0.24")
+            or in_favorable_expansion
+            or constructive_breakout_release
+            or climax_band_rollover
+        )
         if bbw <= Decimal("0.13") or kc_sq is True and bbw <= Decimal("0.15"):
             vol_detail = f"Bandwidth {float(bbw):.2f} (BB inside KC Squeeze)"
         elif bbw <= Decimal("0.20"):
             vol_detail = f"Bandwidth {float(bbw):.2f} (Controlled 4H Base Coil)"
         elif bbw <= Decimal("0.24"):
             vol_detail = f"Bandwidth {float(bbw):.2f} (Controlled Base <= 0.24)"
-        elif in_favorable_expansion:
-            vol_detail = f"Bandwidth {float(bbw):.2f} (Expanding in Active Trade)"
+        elif in_favorable_expansion or constructive_breakout_release:
+            vol_detail = f"Bandwidth {float(bbw):.2f} (Expanding in Upside Breakout)"
         elif climax_band_rollover:
             vol_detail = f"Bandwidth {float(bbw):.2f} (Climax Exhaustion Rollover)"
         else:
@@ -440,7 +477,16 @@ def reverify_candidate_gates(
     vcr = _to_dec(metrics.get("volume_contraction_ratio"))
     sm_passed = True
     if not is_short:
-        if oi_7d is not None and oi_7d < Decimal("-8.0"):
+        oi_7d_floor = (
+            Decimal("-12.0")
+            if (
+                setup_label == "MOMENTUM_EMERGING_LONG"
+                and taker_r is not None
+                and taker_r >= Decimal("1.15")
+            )
+            else Decimal("-8.0")
+        )
+        if oi_7d is not None and oi_7d < oi_7d_floor:
             sm_passed = False
         if oi_1h is not None and oi_1h <= Decimal("-5.0"):
             sm_passed = False
@@ -451,9 +497,19 @@ def reverify_candidate_gates(
             and taker_r is not None
             and taker_r < Decimal("1.00")
         )
+        triggered_non_negative = bool(
+            effective_is_triggered
+            and profit_entry is not None
+            and profit_entry > Decimal("0")
+            and current_price >= profit_entry
+        )
+        min_active_taker = (
+            Decimal("0.85")
+            if in_profit_expansion
+            else (Decimal("0.88") if triggered_non_negative else Decimal("0.92"))
+        )
         if taker_r is not None and (
-            taker_r < Decimal("0.85")
-            or (not in_profit_expansion and taker_r < Decimal("0.92"))
+            taker_r < min_active_taker
             or stale_untriggered_seller_flow
         ):
             sm_passed = False

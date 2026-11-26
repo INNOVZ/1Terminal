@@ -40,6 +40,26 @@ BELOW_POC_LONG_ARCHETYPES: frozenset[str] = frozenset(
         "MOMENTUM_EMERGING_LONG",
         "RECOVERY_RECLAIM_LONG",
         "RANGE_BOTTOM_ACCUMULATION_LONG",
+        "SHORT_SQUEEZE_ABSORPTION_LONG",
+    }
+)
+
+# Long archetypes permitted at T=0 (`screening_gates.py:224` & `kinetic_readiness.py`) to
+# originate below 4H EMA50 when reclaiming local base / 4H EMA20 above invalidation stop:
+EMERGING_SUB_EMA50_LONG_ARCHETYPES: frozenset[str] = frozenset(
+    {
+        "MOMENTUM_EMERGING_LONG",
+        "SHORT_SQUEEZE_ABSORPTION_LONG",
+    }
+)
+
+# Long archetypes permitted at T=0 (`screening_gates.py` / `kinetic_readiness.py`) to originate
+# from a compressed base below 4H EMA50 while holding 4H/1H EMA20 & base stop shelf:
+BELOW_EMA50_BASE_LONG_ARCHETYPES: frozenset[str] = frozenset(
+    {
+        "MOMENTUM_EMERGING_LONG",
+        "SHORT_SQUEEZE_ABSORPTION_LONG",
+        "FUNDING_SQUEEZE_SPRING_LONG",
     }
 )
 

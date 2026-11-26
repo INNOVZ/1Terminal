@@ -484,6 +484,35 @@ class AutoWatchlistService:
             )
             self._upsert_episode_locked(conn, superseded)
 
+    def trigger_graduation_thresholds(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> dict[tuple[str, str], Decimal]:
+        """Return `(symbol, direction) -> trigger_price` for demoted WATCHLIST coils with `graduation_count == 0`.
+
+        Passive re-entry below `trigger_price` stays locked (zero ping-pong), while a genuine
+        breakout crossing `trigger_price * 0.992` is eligible for its single (`0 -> 1`) graduation.
+        """
+        ref_now = (now or datetime.now(UTC)).astimezone(UTC)
+        out: dict[tuple[str, str], Decimal] = {}
+        with self._lock, self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM radar_auto_watchlist
+                WHERE status = 'WATCHLIST'
+                ORDER BY published_at DESC
+                """
+            ).fetchall()
+        for row in rows:
+            ep = self._row_to_episode(row)
+            if ep.expires_at <= ref_now or ep.graduation_count >= 1:
+                continue
+            if ep.was_promoted_to_watchlist and ep.trigger_price is not None and ep.trigger_price > Decimal("0"):
+                key = (ep.symbol.upper().strip(), ep.direction.lower().strip())
+                out.setdefault(key, ep.trigger_price)
+        return out
+
     def blocked_from_radar_symbols(
         self,
         *,
@@ -619,8 +648,18 @@ class AutoWatchlistService:
             if live_sym_row is not None:
                 live_ep = self._row_to_episode(live_sym_row)
                 if live_ep.status is AutoWatchStatus.WATCHLIST:
-                    if live_ep.was_promoted_to_watchlist or live_ep.graduation_count >= 1:
+                    if live_ep.graduation_count >= 1:
                         return None
+                    if live_ep.was_promoted_to_watchlist:
+                        # Block passive ping-pong re-entry, EXCEPT allow a single (graduation_count 0 -> 1)
+                        # confirmed trigger-breakout graduation when price crosses trigger_price!
+                        crossing_trigger = (
+                            live_ep.trigger_price is not None
+                            and live_ep.trigger_price > Decimal("0")
+                            and ep.signal_price >= live_ep.trigger_price * Decimal("0.992")
+                        )
+                        if not crossing_trigger:
+                            return None
                     graduated = replace(
                         live_ep,
                         status=AutoWatchStatus.ON_RADAR,

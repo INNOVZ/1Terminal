@@ -349,3 +349,60 @@ def test_special_families_recovery_and_continuation_watchlist_contract_parity() 
     )
     assert st_cont is AutoWatchStatus.WATCHLIST
 
+
+def test_sub_ema50_emerging_and_short_squeeze_hold_t1h_retention_parity() -> None:
+    """SSVUSDT / MANTRAUSDT / SEIUSDT regression: sub-EMA50 local base reclaims must not fail Trend Baseline at T+1h when holding discovery base."""
+    now = datetime(2026, 11, 25, 12, 0, tzinfo=UTC)
+    for lbl in (
+        SetupLabel.MOMENTUM_EMERGING_LONG.value,
+        SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG.value,
+    ):
+        cand = {
+            "symbol": "SSVUSDT",
+            "direction": "long",
+            "setup_label": lbl,
+            "execution_mode": "EXECUTABLE",
+            "score": "84.0",
+            "current_price": "1.6100",
+            "discovery_price": "1.5950",
+            "suggested_entry": "1.5950",
+            "breakout_trigger": "1.6100",
+            "suggested_stop": "1.5220",
+            "suggested_targets": ["1.7410", "1.8140", "1.9016"],
+            "poc_price": "2.0910",
+            "val_price": "1.5400",
+            "vah_price": "2.5220",
+            "evaluated_at": (now - timedelta(hours=1)).isoformat(),
+            "radar_metrics": {
+                "bb_bandwidth_4h": "0.078",
+                "oi_change_7d_pct": "-10.8%" if lbl == SetupLabel.MOMENTUM_EMERGING_LONG.value else "+14.0%",
+                "oi_change_1h_pct": "+0.4%",
+                "funding_rate_bps": "-1.20 bps",
+                "taker_buy_sell_ratio": "1.24",
+                "volume_contraction_ratio": "1.45",
+            },
+        }
+        candles_1h = [
+            {
+                "time": int((now - timedelta(hours=72 - i)).timestamp()),
+                "open": 1.58,
+                "high": 1.62,
+                "low": 1.56,
+                "close": 1.61,
+                "volume": 1000,
+            }
+            for i in range(72)
+        ]
+        # Notice 4H EMA50 is 1.6782 (> current_price 1.6100), yet price is in profit above discovery_price 1.5950!
+        dec = evaluate_radar_candidate_lifecycle(
+            cand,
+            current_price=Decimal("1.6100"),
+            recent_candles_1h=candles_1h,
+            ema50_4h=Decimal("1.6782"),
+            now=now,
+        )
+        assert dec.retained is True, f"{lbl} falsely failed sub-EMA50 retention: {dec}"
+        assert dec.gates_passed == 5
+        assert dec.failed_gates == ()
+
+

@@ -92,20 +92,41 @@ def publication_rejection_reasons(
         oi_7d = getattr(opportunity, "oi_change_7d", None)
         oi_1h = getattr(opportunity, "oi_change_1h", None)
         funding = getattr(opportunity, "funding_rate", None)
+        taker_4h = getattr(opportunity, "taker_ratio_4h", None)
+        if taker_4h is None:
+            taker_4h = getattr(opportunity, "taker_buy_ratio_4h", None)
+        is_aggressive_spot_led_emergence = (
+            opportunity.setup_label is SetupLabel.MOMENTUM_EMERGING_LONG
+            and taker_4h is not None
+            and Decimal(str(taker_4h)) >= Decimal("1.20")
+            and oi_1h is not None
+            and Decimal(str(oi_1h)) >= Decimal("-0.010")
+            and (funding is None or Decimal(str(funding)) < Decimal("0.00015"))
+        )
         if oi_7d is not None and Decimal(str(oi_7d)) < Decimal("-0.010"):
-            if not is_early_recovery_v1:
+            if not is_early_recovery_v1 and not is_aggressive_spot_led_emergence:
                 if (oi_1h is None or Decimal(str(oi_1h)) <= Decimal("0")) or (
                     funding is not None and Decimal(str(funding)) >= Decimal("0.00015")
                 ):
                     reasons.append("bleeding_7d_oi_without_fresh_inflow")
             elif funding is not None and Decimal(str(funding)) >= Decimal("0.00015"):
                 reasons.append("bleeding_7d_oi_without_fresh_inflow")
-        taker_4h = getattr(opportunity, "taker_ratio_4h", None)
-        if taker_4h is None:
-            taker_4h = getattr(opportunity, "taker_buy_ratio_4h", None)
         if taker_4h is not None:
+            is_verified_squeeze_absorption = (
+                opportunity.setup_label is SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG
+                and oi_7d is not None
+                and Decimal(str(oi_7d)) >= Decimal("0.10")
+                and oi_1h is not None
+                and Decimal(str(oi_1h)) > Decimal("0")
+                and funding is not None
+                and Decimal(str(funding)) <= Decimal("-0.00005")
+                and opportunity.poc_price is not None
+                and opportunity.current_price >= opportunity.poc_price
+            )
             min_taker = (
-                Decimal("1.02")
+                Decimal("1.00")
+                if is_verified_squeeze_absorption
+                else Decimal("1.02")
                 if (
                     opportunity.setup_label is SetupLabel.MOMENTUM_EMERGING_LONG
                     or is_early_recovery_v1

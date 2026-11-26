@@ -220,15 +220,27 @@ def classify_long_archetype(features: LongArchetypeFeatures) -> SetupLabel | Non
     ):
         return SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG
 
-    # 5. BREAKOUT_LONG (Volume & OI Expansion)
+    # 5. BREAKOUT_LONG (Volume & OI Expansion — Stage-1 / Stage-2 Parity per AGENTS.md Invariant #2)
     oi_4h = features.oi_delta_4h or Decimal("0")
     at_or_above_resistance = (features.close >= features.local_swing_high_4h) or (
         features.close >= features.vah_30d
     )
-    has_breakout_volume = (
-        (features.rvol_4h >= Decimal("1.25") and features.oi_delta_4h is not None and oi_4h >= Decimal("0.0"))
-        or (features.rvol_4h >= Decimal("2.0"))
-    )
+    if features.oi_delta_4h is not None:
+        has_breakout_volume = (
+            (features.rvol_4h >= Decimal("1.25") and oi_4h >= Decimal("-0.005"))
+            or (features.rvol_4h >= Decimal("2.0"))
+            or (
+                features.rvol_1h is not None
+                and features.rvol_1h >= Decimal("1.60")
+                and oi_4h >= Decimal("0.0")
+                and (taker_4h is None or taker_4h >= Decimal("1.05"))
+            )
+        )
+    else:
+        has_breakout_volume = (
+            features.rvol_4h >= Decimal("1.25")
+            or (features.rvol_1h is not None and features.rvol_1h >= Decimal("1.50"))
+        ) and (taker_4h is None or taker_4h >= Decimal("1.02"))
     if (
         at_or_above_resistance
         and has_breakout_volume

@@ -137,21 +137,34 @@ class KineticScoutService:
                     "promoted_count": 0,
                 }
 
-            btc_15m = await asyncio.wait_for(self._market.candles(btc_inst, "15m", 96), timeout=6.0)
+            btc_raw = await asyncio.wait_for(self._market.candles(btc_inst, "15m", 97), timeout=6.0)
+            btc_15m = [c for c in btc_raw if c.closed and c.closed_at <= ref_now][-96:]
             est_weight += 1
 
-            # 1. Prioritize eligible pre-ignition WATCHLIST coils (not locked/demoted), then scout movers
+            # 1. Prioritize eligible WATCHLIST coils (`graduation_count == 0`: fresh pre-ignition coils
+            #    plus demoted coils actively challenging/crossing their breakout `trigger_price`), then scout movers
             blocked = self._auto_watchlist.blocked_from_radar_symbols(now=ref_now, cooldown_hours=12.0)
             episodes = self._auto_watchlist.list_episodes(days=3, now=ref_now)
-            coil_symbols = [
-                ep.symbol
-                for ep in episodes
-                if ep.status is AutoWatchStatus.WATCHLIST
-                and not ep.was_promoted_to_watchlist
-                and ep.graduation_count == 0
-                and (ep.symbol, ep.direction) not in blocked
-                and ep.symbol in inst_by_sym
-            ]
+            coil_symbols: list[str] = []
+            for ep in episodes:
+                if (
+                    ep.status is not AutoWatchStatus.WATCHLIST
+                    or ep.graduation_count >= 1
+                    or ep.symbol not in inst_by_sym
+                ):
+                    continue
+                q_sym = quotes_by_sym.get(ep.symbol)
+                near_or_above_trigger = (
+                    ep.trigger_price is not None
+                    and ep.trigger_price > Decimal("0")
+                    and q_sym is not None
+                    and q_sym.last >= ep.trigger_price * Decimal("0.990")
+                )
+                if not ep.was_promoted_to_watchlist:
+                    if (ep.symbol, ep.direction) not in blocked:
+                        coil_symbols.append(ep.symbol)
+                elif near_or_above_trigger:
+                    coil_symbols.append(ep.symbol)
             chosen_insts: list[Instrument] = []
             seen_ids: set[str] = {"BTCUSDT"}
             for sym in coil_symbols[:SCOUT_MAX_SYMBOLS]:
@@ -172,7 +185,7 @@ class KineticScoutService:
                     seen_ids.add(inst.id.symbol)
                     chosen_insts.append(inst)
 
-            # 2. Fetch 96 x 15m candles (weight = 1 per symbol since limit < 100)
+            # 2. Fetch 97 x 15m candles (weight = 1 per symbol since limit < 100) and slice 96 closed bars
             sem_15m = asyncio.Semaphore(10)
             ignited_candidates: list[tuple[Decimal, Decimal, Instrument]] = []
 
@@ -180,9 +193,10 @@ class KineticScoutService:
                 nonlocal est_weight
                 async with sem_15m:
                     with contextlib.suppress(Exception):
-                        bars = await asyncio.wait_for(
-                            self._market.candles(inst, "15m", 96), timeout=5.0
+                        raw_bars = await asyncio.wait_for(
+                            self._market.candles(inst, "15m", 97), timeout=5.0
                         )
+                        bars = [c for c in raw_bars if c.closed and c.closed_at <= ref_now][-96:]
                         est_weight += 1
                         self._seen_at[inst.id.symbol] = ref_now
                         feats = scout_features(bars, btc_15m, ref_now)

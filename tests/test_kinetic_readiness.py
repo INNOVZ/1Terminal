@@ -234,4 +234,120 @@ def test_wait_dip_with_va6_velocity_or_smart_money_absorption_routes_to_on_radar
     assert res_lunc.target_lane == "WATCHLIST_COIL"
 
 
+def test_heavy_1h_seller_dumping_blocks_on_radar_and_watchlist_even_with_high_va6() -> None:
+    """USUALUSDT pre-crash regression: `va6=1.59, taker_4h=1.15, taker_1h=0.79` must NEVER enter ON_RADAR or WATCHLIST."""
+    from dataclasses import replace
+
+    from algotrader.domain.kinetic_readiness import is_actionable_watchlist_coil
+
+    bars_usual = _make_1h_series(recent_vol_mult=Decimal("1.59"), breakout_last=False)
+    opp_usual = replace(
+        _make_opp(wait_dip=True, taker_4h=Decimal("1.155")),
+        taker_ratio_1h=Decimal("0.7916"),
+        oi_change_1h=Decimal("0.006"),
+        oi_change_7d=Decimal("0.185"),
+        poc_price=Decimal("0.92"),
+        breakout_trigger=Decimal("1.001"),
+        volume_contraction_ratio=Decimal("1.34"),
+        breakout_readiness_status="RETEST_ONLY_WAIT_FOR_DIP",
+    )
+    res = assess_kinetic_readiness(opp_usual, bars_usual, None)
+    assert res.is_radar_ignited is False
+    assert res.target_lane == "WATCHLIST_COIL"
+    cand_dict = {
+        **opp_usual.as_dict(),
+        "publication_lane": res.target_lane,
+        "kinetic_reason": res.reason,
+    }
+    assert is_actionable_watchlist_coil(cand_dict) is False
+
+
+def test_unreachable_trigger_and_high_vcr_churn_filtered_while_tight_coil_passes() -> None:
+    from dataclasses import replace
+
+    from algotrader.domain.kinetic_readiness import is_actionable_watchlist_coil
+
+    # ANIMEUSDT-style +34.1% unreachable breakout trigger must not enter ON_RADAR or WATCHLIST
+    bars_surge = _make_1h_series(recent_vol_mult=Decimal("3.0"), breakout_last=True)
+    opp_anime = replace(
+        _make_opp(wait_dip=True, taker_4h=Decimal("1.12")),
+        setup_label=SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG,
+        taker_ratio_1h=Decimal("1.14"),
+        funding_rate=Decimal("-0.0011"),
+        oi_change_1h=Decimal("0.05"),
+        oi_change_7d=Decimal("0.18"),
+        current_price=Decimal("1.00"),
+        breakout_trigger=Decimal("1.341"),
+        breakout_readiness_status="RETEST_ONLY_WAIT_FOR_DIP",
+    )
+    res_anime = assess_kinetic_readiness(opp_anime, bars_surge, None)
+    assert res_anime.target_lane == "WATCHLIST_COIL"
+    assert is_actionable_watchlist_coil(opp_anime.as_dict()) is False
+
+    # Tight coil (+4.5% trigger, VCR=0.82, healthy 1H taker) is actionable for WATCHLIST staging
+    opp_good = replace(
+        _make_opp(wait_dip=True, taker_4h=Decimal("1.07")),
+        taker_ratio_1h=Decimal("1.04"),
+        current_price=Decimal("1.00"),
+        breakout_trigger=Decimal("1.045"),
+        volume_contraction_ratio=Decimal("0.82"),
+    )
+    assert is_actionable_watchlist_coil(opp_good.as_dict()) is True
+
+
+def test_breakout_long_stage1_and_stage2_parity_when_oi_4h_unknown() -> None:
+    """AGENTS.md Invariant #2: Stage-1 (`oi_delta_4h=None`) and Stage-2 (`oi_delta_4h=+2%`) must both classify BREAKOUT_LONG."""
+    from dataclasses import replace
+
+    from algotrader.domain.archetypes import LongArchetypeFeatures, classify_long_archetype
+
+    f_stage1 = LongArchetypeFeatures(
+        close=Decimal("1.05"),
+        ema50_4h=Decimal("0.98"),
+        poc_30d=Decimal("0.96"),
+        val_30d=Decimal("0.90"),
+        vah_30d=Decimal("1.04"),
+        low_30d=Decimal("0.85"),
+        low_24h=Decimal("0.99"),
+        low_4h=Decimal("1.02"),
+        local_swing_high_4h=Decimal("1.04"),
+        atr14_4h=Decimal("0.025"),
+        bb_bandwidth_4h=Decimal("0.11"),
+        bb_inside_kc_4h=True,
+        vcr_4h=Decimal("1.15"),
+        rvol_4h=Decimal("1.80"),
+        pos_in_range_30d=Decimal("0.88"),
+        range_height_30d=Decimal("0.30"),
+        dist_to_ceiling=Decimal("0.20"),
+        ret_24h=Decimal("0.06"),
+        ret_7d=Decimal("0.12"),
+        btc_residual_alpha_24h=Decimal("0.04"),
+        macd_hist_4h=Decimal("0.005"),
+        macd_hist_4h_prev=Decimal("0.002"),
+        macd_hist_1h=Decimal("0.004"),
+        norm_momentum_1h=Decimal("1.20"),
+        cvd_24h=Decimal("500000"),
+        oi_delta_7d=None,
+        oi_delta_24h=None,
+        oi_delta_4h=None,
+        funding_rate_8h=Decimal("0.00005"),
+        taker_buy_ratio_4h=None,
+        taker_buy_ratio_1h=None,
+        ema20_4h=Decimal("1.01"),
+        ema20_1h=Decimal("1.03"),
+        rvol_1h=Decimal("1.90"),
+        low_48h=Decimal("0.97"),
+    )
+    f_stage2 = replace(
+        f_stage1,
+        oi_delta_7d=Decimal("0.06"),
+        oi_delta_24h=Decimal("0.05"),
+        oi_delta_4h=Decimal("0.02"),
+        taker_buy_ratio_4h=Decimal("1.16"),
+    )
+    assert classify_long_archetype(f_stage1) is SetupLabel.BREAKOUT_LONG
+    assert classify_long_archetype(f_stage2) is SetupLabel.BREAKOUT_LONG
+
+
+
 

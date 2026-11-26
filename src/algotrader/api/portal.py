@@ -31,6 +31,7 @@ from algotrader.domain.crypto_screener_models import (
     calculate_opportunity_win_rate_and_ev,
 )
 from algotrader.domain.errors import ConfigurationError
+from algotrader.domain.kinetic_readiness import is_actionable_watchlist_coil
 from algotrader.domain.models import Quote
 from algotrader.domain.radar_insights import record_radar_publication
 from algotrader.domain.radar_lifecycle import (
@@ -653,9 +654,32 @@ async def _do_crypto_screen_locked(
             sym = str(o.get("symbol", ""))
             direction_key = str(o.get("direction", "long")).lower().strip()
             if v33_kinetic_on and (sym.upper().strip(), direction_key) in blocked_radar_pairs:
-                continue
+                # Allow a single trigger-breakout graduation (`graduation_count == 0`) if a 4/5 WATCHLIST
+                # episode genuinely breaks its trigger_price with ON_RADAR kinetic ignition; block all passive re-entry!
+                allow_breakout_grad = False
+                if (
+                    blocked_radar_pairs.get((sym.upper().strip(), direction_key)) == "demoted_watchlist_locked"
+                    and o.get("publication_lane") != "WATCHLIST_COIL"
+                ):
+                    with contextlib.suppress(Exception):
+                        cur_px = Decimal(str(o.get("current_price") or "0"))
+                        for wl_ep in _get_auto_watchlist_service(runtime).list_episodes(days=3, now=datetime.now(UTC)):
+                            if (
+                                wl_ep.symbol.upper().strip() == sym.upper().strip()
+                                and wl_ep.direction.lower().strip() == direction_key
+                                and wl_ep.status.value == "WATCHLIST"
+                                and wl_ep.graduation_count == 0
+                                and wl_ep.trigger_price is not None
+                                and wl_ep.trigger_price > Decimal("0")
+                                and cur_px >= wl_ep.trigger_price * Decimal("0.992")
+                            ):
+                                allow_breakout_grad = True
+                                break
+                if not allow_breakout_grad:
+                    continue
             if v33_kinetic_on and o.get("publication_lane") == "WATCHLIST_COIL":
-                pre_ignition_coils.append(o)
+                if is_actionable_watchlist_coil(o):
+                    pre_ignition_coils.append(o)
                 continue
             base = o.get("base_asset") or sym.removesuffix("USDT").removesuffix("USDC")
             if base and base not in seen_bases:

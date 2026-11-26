@@ -229,10 +229,20 @@ def evaluate_long_gates(
         and (inputs.bb_inside_kc_4h or inputs.bb_bandwidth_4h <= Decimal("0.28"))
         and (inputs.taker_buy_ratio_4h is None or inputs.taker_buy_ratio_4h >= Decimal("1.15"))
     )
+    is_confirmed_short_squeeze_reclaim = (
+        inputs.discovery_v2
+        and arch_val == "SHORT_SQUEEZE_ABSORPTION_LONG"
+        and inputs.close >= inputs.ema50_4h
+        and inputs.close >= inputs.poc_30d
+        and (inputs.bb_inside_kc_4h or inputs.bb_bandwidth_4h <= Decimal("0.14"))
+        and (inputs.funding_rate_8h is None or inputs.funding_rate_8h <= Decimal("-0.00005"))
+        and (inputs.oi_delta_4h is None or inputs.oi_delta_4h >= Decimal("0.03"))
+    )
     has_macro_death_cross = (
         (inputs.ema50_4h < inputs.ema200_4h * Decimal("0.95"))
         and (inputs.close < inputs.ema200_4h * Decimal("0.96"))
         and not is_emerging_base_reclaim
+        and not is_confirmed_short_squeeze_reclaim
     )
 
     # Post-Crash Markdown Filter: Exclude tokens that dumped severely over 7 days while bleeding OI or deeply below EMA200
@@ -355,7 +365,15 @@ def evaluate_long_gates(
     flag_l3 = flag_l2 and (range_height_30d <= Decimal("1.50")) and (
         Decimal("-0.05") <= dist_to_ceiling <= Decimal("0.38")
     )
-    l3 = standard_l3 or flag_l3
+    local_reclaim_l3 = (
+        inputs.discovery_v2
+        and inputs.close >= inputs.ema50_4h
+        and inputs.close >= inputs.poc_30d
+        and inputs.excursion_72h <= Decimal("0.28")
+        and inputs.has_kinetic_ignition
+        and Decimal("-0.05") <= dist_to_ceiling <= Decimal("1.25")
+    )
+    l3 = standard_l3 or flag_l3 or local_reclaim_l3
 
     # Gate L4: 30-Day VPVR Value Area Acceptance (Auction Market Theory)
     # Principle: Candidate must be accepted within or above the institutional Value Profile,
@@ -408,7 +426,13 @@ def evaluate_long_gates(
 
     if inputs.discovery_v2:
         quiet_coil = inputs.bb_bandwidth_4h <= Decimal("0.14") and inputs.vcr_4h <= Decimal("0.95")
-        l5 = l5 or quiet_coil or inputs.vvi_ignition
+        squeeze_breakout_release = (
+            in_recent_squeeze_expansion
+            and inputs.close >= inputs.ema50_4h
+            and inputs.close >= inputs.poc_30d
+            and inputs.bb_bandwidth_4h <= Decimal("0.32")
+        )
+        l5 = l5 or quiet_coil or inputs.vvi_ignition or squeeze_breakout_release
 
     # Gate L6: Universal Order-Flow & Mandatory Kinetic Ignition Gate
     coil_maturity = compute_coil_maturity_score(inputs)
