@@ -3,7 +3,6 @@
 import { useEffect, useState, useMemo, memo, useCallback } from "react";
 import {
   Globe2,
-  TrendingUp,
   DollarSign,
   Activity,
   ShieldCheck,
@@ -15,8 +14,6 @@ import {
   Zap,
   BarChart3,
   Layers,
-  ArrowUpRight,
-  ArrowDownRight,
 } from "lucide-react";
 
 interface BenchmarkExcursion {
@@ -147,10 +144,8 @@ function getRegimeStyle(regime: string) {
 // ----------------------------------------------------------------------------
 const OverextensionRadarHero = memo(function OverextensionRadarHero({
   report,
-  loading,
 }: {
   report: MacroOverextensionReport;
-  loading: boolean;
 }) {
   const regimeStyle = useMemo(() => getRegimeStyle(report.regime), [report.regime]);
   const score = report.composite_score;
@@ -203,12 +198,12 @@ const OverextensionRadarHero = memo(function OverextensionRadarHero({
         </div>
 
         {/* Right side metrics callout */}
-        <div style={{ display: "flex", gap: "20px", alignItems: "center", background: "rgba(0,0,0,0.3)", padding: "14px 20px", borderRadius: "12px", border: "1px solid var(--border-subtle)" }}>
+        <div className="macro-hero-metrics">
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
               Composite Heat
             </div>
-            <div style={{ fontSize: "42px", fontWeight: 900, color: regimeStyle.color, lineHeight: "1.1", marginTop: "2px" }}>
+            <div style={{ fontSize: "38px", fontWeight: 900, color: regimeStyle.color, lineHeight: "1.1", marginTop: "2px" }}>
               {score.toFixed(1)}
               <span style={{ fontSize: "14px", color: "var(--text-muted)", fontWeight: 600 }}>/100</span>
             </div>
@@ -220,7 +215,7 @@ const OverextensionRadarHero = memo(function OverextensionRadarHero({
             <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
               Cool-Off Probability
             </div>
-            <div style={{ fontSize: "42px", fontWeight: 900, color: report.cool_off_probability_pct > 60 ? "#ef4444" : "#f49d0d", lineHeight: "1.1", marginTop: "2px" }}>
+            <div style={{ fontSize: "38px", fontWeight: 900, color: report.cool_off_probability_pct > 60 ? "#ef4444" : "#f49d0d", lineHeight: "1.1", marginTop: "2px" }}>
               {report.cool_off_probability_pct}%
             </div>
           </div>
@@ -229,7 +224,7 @@ const OverextensionRadarHero = memo(function OverextensionRadarHero({
 
       {/* 5-Zone Quantitative Overextension Speedometer Bar */}
       <div style={{ marginTop: "10px", marginBottom: "14px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", fontWeight: 700, color: "var(--text-muted)", marginBottom: "6px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "4px 10px", fontSize: "11px", fontWeight: 700, color: "var(--text-muted)", marginBottom: "6px" }}>
           <span>0 (Oversold Base)</span>
           <span>30 (Healthy Trend)</span>
           <span>55 (Neutral Excursion)</span>
@@ -295,7 +290,7 @@ const BenchmarkExcursionCard = memo(function BenchmarkExcursionCard({
 }) {
   return (
     <div className="glass-panel" style={{ padding: "22px", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "14px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <Gauge size={18} style={{ color: "#f49d0d" }} />
           <h3 style={{ fontSize: "14px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>
@@ -327,7 +322,7 @@ const BenchmarkExcursionCard = memo(function BenchmarkExcursionCard({
           <span style={{ fontFamily: "var(--font-mono)", fontSize: "13px", fontWeight: 800 }}>${btc.current_price.toLocaleString()}</span>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "6px", fontFamily: "var(--font-mono)", fontSize: "10.5px" }}>
+        <div className="macro-bench-metrics" style={{ fontFamily: "var(--font-mono)", fontSize: "10.5px" }}>
           <div>
             <div style={{ color: "var(--text-muted)", fontSize: "9.5px" }}>20D SMA</div>
             <div style={{ fontWeight: 700 }}>${btc.sma_20.toLocaleString()}</div>
@@ -366,7 +361,7 @@ const BenchmarkExcursionCard = memo(function BenchmarkExcursionCard({
           <span style={{ fontFamily: "var(--font-mono)", fontSize: "13px", fontWeight: 800 }}>${eth.current_price.toLocaleString()}</span>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "6px", fontFamily: "var(--font-mono)", fontSize: "10.5px" }}>
+        <div className="macro-bench-metrics" style={{ fontFamily: "var(--font-mono)", fontSize: "10.5px" }}>
           <div>
             <div style={{ color: "var(--text-muted)", fontSize: "9.5px" }}>20D SMA</div>
             <div style={{ fontWeight: 700 }}>${eth.sma_20.toLocaleString()}</div>
@@ -412,7 +407,7 @@ const DerivativesHeatCard = memo(function DerivativesHeatCard({
   const isHeated = heat.annualized_apr > 25.0;
   return (
     <div className="glass-panel" style={{ padding: "22px", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "14px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <Flame size={18} style={{ color: isHeated ? "#ef4444" : "#f49d0d" }} />
           <h3 style={{ fontSize: "14px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>
@@ -433,7 +428,7 @@ const DerivativesHeatCard = memo(function DerivativesHeatCard({
         </span>
       </div>
 
-      <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "6px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "10px", marginBottom: "6px" }}>
         <span style={{ fontSize: "36px", fontWeight: 900, color: isHeated ? "#ef4444" : "#ffffff", fontFamily: "var(--font-mono)" }}>
           {heat.annualized_apr > 0 ? "+" : ""}{heat.annualized_apr.toFixed(1)}%
         </span>
@@ -477,7 +472,7 @@ const MarketBreadthCard = memo(function MarketBreadthCard({
 }) {
   return (
     <div className="glass-panel" style={{ padding: "22px", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "14px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <BarChart3 size={18} style={{ color: "var(--accent-emerald)" }} />
           <h3 style={{ fontSize: "14px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>
@@ -498,7 +493,7 @@ const MarketBreadthCard = memo(function MarketBreadthCard({
         </span>
       </div>
 
-      <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "6px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "10px", marginBottom: "6px" }}>
         <span style={{ fontSize: "36px", fontWeight: 900, color: "var(--accent-emerald)", fontFamily: "var(--font-mono)" }}>
           {breadth.pct_above_20_sma.toFixed(1)}%
         </span>
@@ -546,11 +541,24 @@ const LiquidityDivergenceCard = memo(function LiquidityDivergenceCard({
   liq: LiquidityDivergence;
 }) {
   const isSynthetic = liq.is_synthetic_leverage_divergence;
+  const isPositiveFlow = liq.stablecoin_net_flow_7d >= 0.05;
+  const flowBadgeLabel = isSynthetic
+    ? "Synthetic Leverage Divergence"
+    : isPositiveFlow
+      ? "Organic Capital Inflow"
+      : liq.stablecoin_net_flow_7d < 0
+        ? "Modest Liquidity Outflow"
+        : "Neutral Capital Rotation";
+  const flowBadgeColor = isSynthetic
+    ? "#f49d0d"
+    : liq.stablecoin_net_flow_7d < 0
+      ? "#ef4444"
+      : "var(--accent-emerald)";
   return (
     <div className="glass-panel" style={{ padding: "22px", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "14px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <DollarSign size={18} style={{ color: isSynthetic ? "#f49d0d" : "var(--accent-emerald)" }} />
+          <DollarSign size={18} style={{ color: flowBadgeColor }} />
           <h3 style={{ fontSize: "14px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.5px" }}>
             4. Macro Fuel vs Leverage Divergence
           </h3>
@@ -559,17 +567,17 @@ const LiquidityDivergenceCard = memo(function LiquidityDivergenceCard({
           style={{
             fontSize: "11px",
             fontWeight: 700,
-            color: isSynthetic ? "#f49d0d" : "var(--accent-emerald)",
+            color: flowBadgeColor,
             background: "rgba(255,255,255,0.04)",
             padding: "2px 8px",
             borderRadius: "6px",
           }}
         >
-          {isSynthetic ? "Synthetic Leverage Divergence" : "Organic Capital Inflow"}
+          {flowBadgeLabel}
         </span>
       </div>
 
-      <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "6px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "10px", marginBottom: "6px" }}>
         <span style={{ fontSize: "36px", fontWeight: 900, color: "#ffffff", fontFamily: "var(--font-mono)" }}>
           ${(liq.stablecoin_total_usd / 1e9).toFixed(1)}B
         </span>
@@ -581,11 +589,13 @@ const LiquidityDivergenceCard = memo(function LiquidityDivergenceCard({
       <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "14px", lineHeight: "1.45" }}>
         {isSynthetic
           ? "Warning: Crypto market prices have stretched upward while 7D fiat stablecoin supply remains stagnant or negative. This divergence signals the rally is driven by synthetic leveraged perps rather than new spot capital, leaving it prone to abrupt flushes."
-          : "DeFiLlama stablecoin minting is positive. Organic fiat capital is entering the ecosystem, providing real liquidity backing for price discovery."}
+          : isPositiveFlow
+            ? "DeFiLlama stablecoin minting is positive. Organic fiat capital is entering the ecosystem, providing real liquidity backing for price discovery."
+            : "DeFiLlama 7D stablecoin supply is flat to slightly contracting. Liquidity is rotating defensively rather than expanding via fresh spot inflows."}
       </p>
 
       {/* Secondary metrics row */}
-      <div style={{ marginTop: "auto", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", background: "rgba(255,255,255,0.02)", padding: "8px 12px", borderRadius: "6px", fontSize: "11px" }}>
+      <div style={{ marginTop: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "8px", background: "rgba(255,255,255,0.02)", padding: "8px 12px", borderRadius: "6px", fontSize: "11px" }}>
         <div>
           <span style={{ color: "var(--text-muted)" }}>Fear & Greed: </span>
           <strong style={{ color: liq.fear_greed_score > 70 ? "#f49d0d" : "#ffffff" }}>
@@ -602,90 +612,57 @@ const LiquidityDivergenceCard = memo(function LiquidityDivergenceCard({
 });
 
 // ----------------------------------------------------------------------------
-// Institutional Support Defense Shelves & Playbook
+// Institutional Support Defense Shelves
 // ----------------------------------------------------------------------------
-const DefenseShelvesAndPlaybook = memo(function DefenseShelvesAndPlaybook({
+const DefenseShelvesSection = memo(function DefenseShelvesSection({
   shelves,
-  recommendations,
 }: {
   shelves: SupportDefenseShelf[];
-  recommendations: string[];
 }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(440px, 1fr))", gap: "20px" }}>
-      {/* Key Support Defense Shelves */}
-      <div className="glass-panel" style={{ padding: "24px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" }}>
-          <Layers size={18} style={{ color: "#f49d0d" }} />
-          <h3 style={{ fontSize: "15px", fontWeight: 800 }}>Institutional Mean-Reversion Defense Shelves</h3>
-        </div>
-        <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "16px", lineHeight: "1.45" }}>
-          If a market cool-off or liquidation cascade initiates, these are the primary high-liquidity moving average shelves where institutional bids historically absorb supply:
-        </p>
+    <div className="glass-panel" style={{ padding: "24px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+        <Layers size={18} style={{ color: "#f49d0d" }} />
+        <h3 style={{ fontSize: "15px", fontWeight: 800 }}>Institutional Mean-Reversion Defense Shelves</h3>
+      </div>
+      <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "16px", lineHeight: "1.45" }}>
+        If a market cool-off or liquidation cascade initiates, these are the primary high-liquidity moving average shelves where institutional bids historically absorb supply:
+      </p>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          {shelves.map((s, idx) => (
-            <div
-              key={idx}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "10px 14px",
-                background: "rgba(255, 255, 255, 0.02)",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: "8px",
-              }}
-            >
-              <div>
-                <div style={{ fontSize: "12.5px", fontWeight: 800, color: "var(--text-primary)" }}>
-                  {s.asset} — {s.level_name}
-                </div>
-                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-                  Institutional Floor Target
-                </div>
+      <div className="macro-shelves-grid">
+        {shelves.map((s, idx) => (
+          <div
+            key={idx}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "12px",
+              padding: "12px 14px",
+              background: "rgba(255, 255, 255, 0.02)",
+              border: "1px solid var(--border-subtle)",
+              borderRadius: "8px",
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: "12.5px", fontWeight: 800, color: "var(--text-primary)" }}>
+                {s.asset} — {s.level_name}
               </div>
-
-              <div style={{ textAlign: "right", fontFamily: "var(--font-mono)" }}>
-                <div style={{ fontSize: "14px", fontWeight: 800, color: "#ffffff" }}>
-                  ${s.price.toLocaleString()}
-                </div>
-                <div style={{ fontSize: "11px", color: s.distance_pct >= 0 ? "var(--accent-emerald)" : "#ef4444", fontWeight: 700 }}>
-                  {s.distance_pct >= 0 ? "+" : ""}{s.distance_pct.toFixed(2)}% from price
-                </div>
+              <div style={{ fontSize: "11px", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                Institutional Floor Target
               </div>
             </div>
-          ))}
-        </div>
-      </div>
 
-      {/* Institutional Actionable Playbook */}
-      <div className="glass-panel" style={{ padding: "24px", border: "1px solid rgba(244, 157, 13, 0.3)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" }}>
-          <ShieldCheck size={18} style={{ color: "#f49d0d" }} />
-          <h3 style={{ fontSize: "15px", fontWeight: 800 }}>Actionable Playbook for Current Regime</h3>
-        </div>
-        <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "16px", lineHeight: "1.45" }}>
-          Prescriptive tactical rules generated dynamically based on active leverage crowding and technical saturation:
-        </p>
-
-        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "10px" }}>
-          {recommendations.map((rec, idx) => (
-            <li
-              key={idx}
-              style={{
-                display: "flex",
-                gap: "10px",
-                fontSize: "12.5px",
-                color: "var(--text-secondary)",
-                lineHeight: "1.5",
-              }}
-            >
-              <span style={{ color: "#f49d0d", fontWeight: 800 }}>●</span>
-              <span>{rec}</span>
-            </li>
-          ))}
-        </ul>
+            <div style={{ textAlign: "right", fontFamily: "var(--font-mono)", flexShrink: 0 }}>
+              <div style={{ fontSize: "14px", fontWeight: 800, color: "#ffffff" }}>
+                ${s.price.toLocaleString()}
+              </div>
+              <div style={{ fontSize: "11px", color: s.distance_pct >= 0 ? "var(--accent-emerald)" : "#ef4444", fontWeight: 700 }}>
+                {s.distance_pct >= 0 ? "+" : ""}{s.distance_pct.toFixed(2)}% from price
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -697,7 +674,6 @@ const DefenseShelvesAndPlaybook = memo(function DefenseShelvesAndPlaybook({
 export default function MacroPage() {
   const [data, setData] = useState<MacroOverextensionReport | null>(null);
   const [loading, setLoading] = useState(false);
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   const fetchMacroReport = useCallback(async (forceRefresh: boolean = false) => {
     setLoading(true);
@@ -707,7 +683,6 @@ export default function MacroPage() {
       if (res.ok) {
         const report = await res.json();
         setData(report);
-        setLastRefreshed(new Date());
       }
     } catch (err) {
       console.error("Failed to load macro overextension report:", err);
@@ -732,7 +707,7 @@ export default function MacroPage() {
   const report = useMemo(() => data, [data]);
 
   return (
-    <div style={{ minHeight: "100vh", padding: "32px 36px 100px", maxWidth: "1600px", margin: "0 auto" }}>
+    <div className="page-shell">
       {/* Header */}
       <div
         style={{
@@ -810,21 +785,18 @@ export default function MacroPage() {
       {report ? (
         <>
           {/* Hero Risk Radar Gauge */}
-          <OverextensionRadarHero report={report} loading={loading} />
+          <OverextensionRadarHero report={report} />
 
-          {/* 4 Quantitative Intelligence Pillars */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))", gap: "20px", marginBottom: "28px" }}>
+          {/* 4 Quantitative Intelligence Pillars (2x2 desktop, 1x4 mobile) */}
+          <div className="macro-pillars-grid">
             <BenchmarkExcursionCard btc={report.benchmark_btc} eth={report.benchmark_eth} />
             <DerivativesHeatCard heat={report.derivatives_heat} />
             <MarketBreadthCard breadth={report.market_breadth} />
             <LiquidityDivergenceCard liq={report.liquidity_divergence} />
           </div>
 
-          {/* Defense Shelves & Playbook */}
-          <DefenseShelvesAndPlaybook
-            shelves={report.support_shelves}
-            recommendations={report.recommendations}
-          />
+          {/* Institutional Mean-Reversion Defense Shelves */}
+          <DefenseShelvesSection shelves={report.support_shelves} />
         </>
       ) : (
         <div style={{ padding: "60px", textAlign: "center", color: "var(--text-secondary)" }}>

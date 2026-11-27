@@ -742,7 +742,7 @@ export default function WatchlistPage() {
 
   if (workspaceTab === "auto") {
     return (
-      <div style={{ minHeight: "100vh", padding: "28px 36px 100px", maxWidth: "1600px", margin: "0 auto" }}>
+      <div className="page-shell">
         {workspaceSwitcher}
         <AutoWatchlistSection
           key={user?.id ?? "anonymous"}
@@ -755,7 +755,7 @@ export default function WatchlistPage() {
 
   if (!authChecked) {
     return (
-      <div style={{ minHeight: "100vh", padding: "28px 36px 100px", maxWidth: "1600px", margin: "0 auto" }}>
+      <div className="page-shell">
         {workspaceSwitcher}
         <div
           style={{
@@ -779,7 +779,7 @@ export default function WatchlistPage() {
   // Strict login requirement for personal watchlist only
   if (!user) {
     return (
-      <div style={{ minHeight: "100vh", padding: "28px 36px 100px", maxWidth: "1600px", margin: "0 auto" }}>
+      <div className="page-shell">
         {workspaceSwitcher}
         <SupabaseAuthPanel />
       </div>
@@ -787,7 +787,7 @@ export default function WatchlistPage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", padding: "28px 36px 100px", maxWidth: "1600px", margin: "0 auto" }}>
+    <div className="page-shell">
       {workspaceSwitcher}
       {/* Page Header */}
       <div
@@ -953,7 +953,7 @@ export default function WatchlistPage() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
           gap: "16px",
           marginBottom: "28px",
         }}
@@ -1098,7 +1098,7 @@ export default function WatchlistPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(480px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 440px), 1fr))",
             gap: "18px",
           }}
         >

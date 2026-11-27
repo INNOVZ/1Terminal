@@ -283,9 +283,81 @@ body {
 }
 
 /* ==============================================================================
+   Responsive Page Shell & Grid Primitives (/macro & /watchlist)
+   ============================================================================== */
+.page-shell {
+  min-height: 100vh;
+  padding: 28px 36px 100px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.macro-pillars-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.macro-shelves-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.macro-bench-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.macro-hero-metrics {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 14px 20px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+}
+
+.watchlist-levels-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.watchlist-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+@media (max-width: 900px) {
+  .macro-pillars-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ==============================================================================
    Mobile Responsiveness: Left Pane / Candidate Screener View Only
    ============================================================================== */
 @media (max-width: 768px) {
+  .page-shell {
+    padding: 16px 14px 104px;
+  }
+
+  .macro-shelves-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .macro-hero-metrics {
+    width: 100%;
+    justify-content: space-around;
+    padding: 12px 14px;
+    gap: 12px;
+  }
+
   .portal-header-desktop-metrics {
     display: none !important;
   }
@@ -314,6 +386,14 @@ body {
   .portal-chart-column,
   .portal-verification-column {
     display: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .macro-bench-metrics,
+  .watchlist-levels-grid,
+  .watchlist-metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

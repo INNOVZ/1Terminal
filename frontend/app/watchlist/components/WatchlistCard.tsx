@@ -254,10 +254,8 @@ function WatchlistCard({
 
       {/* Price & Execution Levels Grid */}
       <div
+        className="watchlist-levels-grid"
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: "8px",
           background: "rgba(255, 255, 255, 0.02)",
           border: "1px solid var(--border-subtle)",
           borderRadius: "8px",
@@ -414,10 +412,8 @@ function WatchlistCard({
 
         {/* Quantitative Real-Time Metrics Strip */}
         <div
+          className="watchlist-metrics-grid"
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: "6px",
             background: "rgba(255, 255, 255, 0.03)",
             borderRadius: "6px",
             padding: "6px 8px",

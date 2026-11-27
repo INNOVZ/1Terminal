@@ -422,7 +422,7 @@ export default function AutoWatchlistSection({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(195px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 195px), 1fr))",
             gap: "12px",
             fontFamily: "var(--font-mono)",
           }}
@@ -619,7 +619,7 @@ export default function AutoWatchlistSection({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 340px), 1fr))",
               gap: "16px",
             }}
           >
@@ -1038,7 +1038,7 @@ export default function AutoWatchlistSection({
 
       {/* VIEW 3: DAILY & ARCHETYPE PERFORMANCE */}
       {subTab === "analytics" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(440px, 1fr))", gap: "16px", fontFamily: "var(--font-mono)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 400px), 1fr))", gap: "16px", fontFamily: "var(--font-mono)" }}>
           <div className="glass-panel" style={{ padding: "16px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
               <BarChart3 size={15} style={{ color: C.amber }} />
