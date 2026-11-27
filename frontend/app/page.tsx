@@ -1685,7 +1685,7 @@ function RadarPageContent() {
     const emptyMessage = isDegradedState
       ? statusDetail ||
         "Prior qualifications are withheld until a fresh live scan verifies current market structure."
-      : "All evaluated contracts are either in active expansion or failed strict risk-reward bounds. The screener runs automatically every hour on UTC candle closes.";
+      : null;
 
     return (
       <div
@@ -1705,44 +1705,48 @@ function RadarPageContent() {
           color={isDegradedState ? "#ef4444" : "#f49d0d"}
           style={{ marginBottom: "16px" }}
         />
-        <h2 style={{ fontSize: "18px", fontWeight: 800, margin: "0 0 8px 0" }}>
+        <h2 style={{ fontSize: "18px", fontWeight: 800, margin: isDegradedState ? "0 0 8px 0" : "0" }}>
           {emptyHeading}
         </h2>
-        <p
-          style={{
-            color: "var(--text-muted)",
-            fontSize: "13px",
-            fontFamily: "var(--font-mono)",
-            maxWidth: "480px",
-            textAlign: "center",
-            marginBottom: "20px",
-          }}
-        >
-          {emptyMessage}
-        </p>
-        <button
-          onClick={() => fetchScreener(true)}
-          disabled={isScanning}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "8px",
-            background: "#f49d0d",
-            color: "#000",
-            fontWeight: 700,
-            fontSize: "13px",
-            padding: "8px 18px",
-            borderRadius: "6px",
-            border: "none",
-            cursor: isScanning ? "wait" : "pointer",
-            opacity: isScanning ? 0.7 : 1,
-          }}
-        >
-          <RefreshCw size={14} className={isScanning ? "animate-spin" : ""} />
-          {isScanning
-            ? "Deep Scanning Futures Universe..."
-            : "Refresh Screener Now"}
-        </button>
+        {emptyMessage && (
+          <p
+            style={{
+              color: "var(--text-muted)",
+              fontSize: "13px",
+              fontFamily: "var(--font-mono)",
+              maxWidth: "480px",
+              textAlign: "center",
+              marginBottom: "20px",
+            }}
+          >
+            {emptyMessage}
+          </p>
+        )}
+        {isDegradedState && (
+          <button
+            onClick={() => fetchScreener(true)}
+            disabled={isScanning}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
+              background: "#f49d0d",
+              color: "#000",
+              fontWeight: 700,
+              fontSize: "13px",
+              padding: "8px 18px",
+              borderRadius: "6px",
+              border: "none",
+              cursor: isScanning ? "wait" : "pointer",
+              opacity: isScanning ? 0.7 : 1,
+            }}
+          >
+            <RefreshCw size={14} className={isScanning ? "animate-spin" : ""} />
+            {isScanning
+              ? "Deep Scanning Futures Universe..."
+              : "Refresh Screener Now"}
+          </button>
+        )}
         <OperatorAuthModal
           open={operatorAuthOpen}
           actionLabel={operatorAuthActionLabel}
