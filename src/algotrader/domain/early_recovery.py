@@ -524,18 +524,27 @@ def evaluate_early_recovery(
 
     # R4 Plan Construction first so R2 can also verify quote overrun vs planned entry
     entry = ceil_to_increment(max(close, pivot) + policy.entry_buffer_atr4h * atr_4h, tick)
+    stop_buf = policy.stop_buffer_atr4h * atr_4h
+    max_allowed_risk = min(policy.max_risk_atr4h * atr_4h, policy.max_risk_pct * entry)
+    twelve_bar_low = min(c.low for c in h[-12:])
     six_bar_low = min(c.low for c in h[-6:])
-    candidate_low = (
-        six_bar_low
-        if (entry - six_bar_low) <= policy.max_risk_pct * entry
-        else recent_low
+    if (entry - (twelve_bar_low - stop_buf)) <= max_allowed_risk:
+        candidate_low = twelve_bar_low
+    elif (entry - (six_bar_low - stop_buf)) <= max_allowed_risk:
+        candidate_low = six_bar_low
+    else:
+        candidate_low = recent_low
+    min_structural_dist = min(
+        max_allowed_risk * D("0.92"),
+        max(policy.min_stop_atr4h * atr_4h, D("0.95") * atr_4h, entry * D("0.042")),
     )
     stop = floor_to_increment(
-        min(candidate_low - policy.stop_buffer_atr4h * atr_4h, entry - policy.min_stop_atr4h * atr_4h),
+        min(candidate_low - stop_buf, entry - min_structural_dist),
         tick,
     )
+    if entry - stop > max_allowed_risk and (entry - max_allowed_risk) < entry - tick:
+        stop = ceil_to_increment(entry - max_allowed_risk, tick)
     risk = entry - stop
-    max_allowed_risk = min(policy.max_risk_atr4h * atr_4h, policy.max_risk_pct * entry)
 
     overhead_levels = sorted(
         lvl for lvl in (ema50_4h, poc_30d, vah_30d, high_30d) if lvl > entry

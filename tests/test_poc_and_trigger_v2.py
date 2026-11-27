@@ -139,12 +139,65 @@ def test_solvusdt_style_spaced_targets_anchor_intermediate_shelf_and_never_stack
         use_confluence_trigger_v2=True,
         overhead_shelves=(Decimal("0.004686"), Decimal("0.005331"), Decimal("0.006141")),
     )
-    # T1 locks directly onto the $0.004686 intermediate shelf, T2 onto POC $0.005331, T3 onto $0.006141!
+    # T1 locks directly onto the $0.004686 intermediate shelf, T2 onto POC $0.005331, T3 cleanly spaced >= 3.8R!
     assert brk.t1 == Decimal("0.004686")
     assert brk.t2 == Decimal("0.005331")
-    assert brk.t3 == Decimal("0.006141")
+    assert brk.t3 >= Decimal("0.005600")
+    assert brk.retest_stop >= Decimal("0.003700")  # Bounded <= 9.5% structural stop (was -13.8% at $0.003567)
     assert brk.t2 - brk.t1 >= Decimal("0.70") * brk.risk_unit
     assert brk.t3 - brk.t2 >= Decimal("0.70") * brk.risk_unit
     assert brk.asymmetric_rr >= Decimal("2.00")
+
+
+def test_retest_accumulation_breakout_stop_anchors_to_handle_low_not_hair_trigger() -> None:
+    """Regression (REZUSDT screenshot): breakout_stop in RETEST_ACCUMULATION must anchor to handle_low_4h, not sit 0.9% below entry."""
+    brk = build_long_bracket(
+        close=Decimal("0.002418"),
+        ema50_4h=Decimal("0.002425"),
+        poc_30d=Decimal("0.002368"),
+        atr14_4h=Decimal("0.000070"),
+        local_compression_high_4h=Decimal("0.002450"),
+        swing_low_4h=Decimal("0.002050"),
+        handle_low_4h=Decimal("0.002260"),
+        high_30d=Decimal("0.003800"),
+        vah_30d=Decimal("0.003494"),
+        val_30d=Decimal("0.002065"),
+        tick_size=Decimal("0.000001"),
+        resistance_absorption_score=Decimal("55.0"),  # RETEST_ACCUMULATION
+        use_confluence_trigger_v2=True,
+        overhead_shelves=(Decimal("0.002750"), Decimal("0.003100"), Decimal("0.003494")),
+    )
+    assert brk.execution_mode == "RETEST_ACCUMULATION"
+    # Breakout stop must anchor near handle_low_4h (~$0.00224), giving >= 5% clearance below breakout_trigger
+    breakout_risk_pct = (brk.breakout_trigger - brk.breakout_stop) / brk.breakout_trigger
+    assert Decimal("0.05") <= breakout_risk_pct <= Decimal("0.095")
+    # And breakout_stop must sit meaningfully below suggested_entry (not 0.88% away in noise)
+    assert (brk.suggested_entry - brk.breakout_stop) / brk.suggested_entry >= Decimal("0.03")
+
+
+def test_retest_entry_and_stop_bounded_to_active_base_when_ema_and_val_lag() -> None:
+    """Regression (TAUSDT/GPSUSDT): lagging EMA50/VAL must not drag retest_entry to -7% or retest_stop to -20%."""
+    brk = build_long_bracket(
+        close=Decimal("0.1206"),
+        ema50_4h=Decimal("0.1112"),
+        poc_30d=Decimal("0.0966"),
+        atr14_4h=Decimal("0.0040"),
+        local_compression_high_4h=Decimal("0.1265"),
+        swing_low_4h=Decimal("0.0920"),
+        handle_low_4h=Decimal("0.1135"),
+        high_30d=Decimal("0.1600"),
+        vah_30d=Decimal("0.1175"),
+        val_30d=Decimal("0.0938"),
+        tick_size=Decimal("0.0001"),
+        resistance_absorption_score=Decimal("55.0"),
+        use_confluence_trigger_v2=True,
+    )
+    # Suggested entry stays actionable (-1% to -4% below close, not -7.2% in dead air)
+    pullback_pct = (Decimal("0.1206") - brk.suggested_entry) / Decimal("0.1206")
+    assert Decimal("0.010") <= pullback_pct <= Decimal("0.042")
+    # Retest stop is anchored to handle_low_4h and bounded <= 9.5% risk (not -20% below VAL)
+    retest_risk_pct = (brk.suggested_entry - brk.retest_stop) / brk.suggested_entry
+    assert Decimal("0.035") <= retest_risk_pct <= Decimal("0.098")
+
 
 

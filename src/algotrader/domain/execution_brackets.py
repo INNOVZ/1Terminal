@@ -114,6 +114,42 @@ def _build_spaced_long_targets(
     return t1, t2, t3
 
 
+def _compute_structural_long_stop(
+    *,
+    anchor_entry: Decimal,
+    handle_low: Decimal,
+    atr: Decimal,
+    buffer_atr: Decimal,
+    min_atr: Decimal,
+    min_pct: Decimal,
+    max_atr: Decimal,
+    max_pct: Decimal,
+    tick_size: Decimal,
+) -> tuple[Decimal, Decimal, str]:
+    """Compute handle-anchored, volatility- and percentage-bounded long stop loss."""
+    min_risk = max(min_atr * atr, anchor_entry * min_pct)
+    max_risk = max(max_atr * atr, anchor_entry * max_pct)
+    if max_risk < min_risk:
+        max_risk = min_risk
+    handle_stop = handle_low - buffer_atr * atr
+    bounded_upper = min(handle_stop, anchor_entry - min_risk)
+    floor_bound = anchor_entry - max_risk
+    raw_stop = max(bounded_upper, floor_bound)
+    stop = floor_to_increment(raw_stop, tick_size)
+    if stop >= anchor_entry:
+        stop = floor_to_increment(anchor_entry - min_risk, tick_size)
+    if stop >= anchor_entry:
+        stop = floor_to_increment(anchor_entry - tick_size, tick_size)
+    anchor_label = (
+        "distance_bound"
+        if floor_bound >= bounded_upper
+        else "handle_low_48h"
+        if handle_stop <= anchor_entry - min_risk
+        else "minimum_distance"
+    )
+    return stop, min_risk, anchor_label
+
+
 class InvalidExecutionBracket(ValueError):
     """The structural plan cannot produce positive, ordered execution prices."""
 
@@ -187,6 +223,16 @@ def build_long_bracket(
         else:
             anchor_shelf = poc_30d
         raw_retest_entry = min(anchor_shelf + Decimal("0.15") * atr, close * Decimal("0.990"))
+
+    if use_confluence_trigger_v2:
+        base_low = handle_low_4h if (handle_low_4h is not None and handle_low_4h > Decimal("0")) else swing_low_4h
+        max_pullback_floor = max(
+            close * Decimal("0.960"),
+            close - Decimal("1.25") * atr,
+            base_low + Decimal("0.25") * atr,
+        )
+        pullback_cap = close * Decimal("0.990")
+        raw_retest_entry = min(max(raw_retest_entry, min(max_pullback_floor, pullback_cap)), pullback_cap)
 
     # Invariant 3: Post-rounding normalization using floor_to_increment with hard guard
     retest_entry = floor_to_increment(raw_retest_entry, tick_size)
@@ -283,43 +329,76 @@ def build_long_bracket(
         execution_mode = "RETEST_ACCUMULATION"
 
     # Invariant 2: Minimum Structural Stop Distance & Clearance below VAL / Swing Low
-    min_retest_risk = max(Decimal("1.20") * atr, retest_entry * Decimal("0.035"))
-    raw_stop = min(
-        swing_low_4h - Decimal("0.80") * atr,
-        effective_val - Decimal("0.60") * atr,
-        retest_entry - min_retest_risk,
-    )
+    handle_anchor = handle_low_4h if (handle_low_4h is not None and handle_low_4h > Decimal("0")) else swing_low_4h
+    if use_confluence_trigger_v2:
+        retest_stop, min_retest_risk, retest_stop_anchor = _compute_structural_long_stop(
+            anchor_entry=retest_entry,
+            handle_low=handle_anchor,
+            atr=atr,
+            buffer_atr=Decimal("0.35"),
+            min_atr=Decimal("1.25"),
+            min_pct=Decimal("0.035"),
+            max_atr=Decimal("2.75"),
+            max_pct=Decimal("0.095"),
+            tick_size=tick_size,
+        )
+        unified_breakout_stop, min_v2_breakout_risk, v2_breakout_anchor = _compute_structural_long_stop(
+            anchor_entry=breakout_trigger,
+            handle_low=handle_anchor,
+            atr=atr,
+            buffer_atr=Decimal("0.25"),
+            min_atr=Decimal("1.25"),
+            min_pct=Decimal("0.035"),
+            max_atr=Decimal("2.75"),
+            max_pct=Decimal("0.090"),
+            tick_size=tick_size,
+        )
+    else:
+        min_retest_risk = max(Decimal("1.20") * atr, retest_entry * Decimal("0.035"))
+        raw_stop = min(
+            swing_low_4h - Decimal("0.80") * atr,
+            effective_val - Decimal("0.60") * atr,
+            retest_entry - min_retest_risk,
+        )
 
-    retest_stop = floor_to_increment(raw_stop, tick_size)
-    if retest_stop >= retest_entry:
-        retest_stop = floor_to_increment(retest_entry - min_retest_risk, tick_size)
-    if retest_stop >= retest_entry:
-        retest_stop = floor_to_increment(retest_entry - tick_size, tick_size)
+        retest_stop = floor_to_increment(raw_stop, tick_size)
+        if retest_stop >= retest_entry:
+            retest_stop = floor_to_increment(retest_entry - min_retest_risk, tick_size)
+        if retest_stop >= retest_entry:
+            retest_stop = floor_to_increment(retest_entry - tick_size, tick_size)
+        retest_stop_anchor = ""
+        unified_breakout_stop = Decimal("0")
+        min_v2_breakout_risk = Decimal("0")
+        v2_breakout_anchor = ""
 
     # Invariant 1: Unified Entry/Stop Anchor for R:R and EV_R
     if execution_mode == "CEILING_BREAKOUT":
         effective_entry = breakout_trigger
-        min_breakout_risk = max(Decimal("1.0") * atr, effective_entry * Decimal("0.025"))
-        max_breakout_risk = max(Decimal("3.0") * atr, effective_entry * Decimal("0.080"))
+        if use_confluence_trigger_v2:
+            breakout_stop = unified_breakout_stop
+            min_breakout_risk = min_v2_breakout_risk
+            stop_anchor = f"breakout_{v2_breakout_anchor}"
+        else:
+            min_breakout_risk = max(Decimal("1.0") * atr, effective_entry * Decimal("0.025"))
+            max_breakout_risk = max(Decimal("3.0") * atr, effective_entry * Decimal("0.080"))
 
-        # Minervini Pivot Handle Stop: anchor to local consolidation handle swing low
-        handle_anchor = handle_low_4h if handle_low_4h is not None else swing_low_4h
-        handle_stop = handle_anchor - Decimal("0.20") * atr
-        raw_breakout_stop = max(
-            min(handle_stop, effective_entry - min_breakout_risk),
-            effective_entry - max_breakout_risk,
-        )
-        breakout_stop = floor_to_increment(raw_breakout_stop, tick_size)
-        if breakout_stop >= effective_entry:
-            breakout_stop = floor_to_increment(effective_entry - min_breakout_risk, tick_size)
-        if breakout_stop >= effective_entry:
-            breakout_stop = floor_to_increment(effective_entry - tick_size, tick_size)
+            # Minervini Pivot Handle Stop: anchor to local consolidation handle swing low
+            handle_stop = handle_anchor - Decimal("0.20") * atr
+            raw_breakout_stop = max(
+                min(handle_stop, effective_entry - min_breakout_risk),
+                effective_entry - max_breakout_risk,
+            )
+            breakout_stop = floor_to_increment(raw_breakout_stop, tick_size)
+            if breakout_stop >= effective_entry:
+                breakout_stop = floor_to_increment(effective_entry - min_breakout_risk, tick_size)
+            if breakout_stop >= effective_entry:
+                breakout_stop = floor_to_increment(effective_entry - tick_size, tick_size)
 
-        stop_anchor = (
-            "breakout_distance_bound" if effective_entry - max_breakout_risk >= min(handle_stop, effective_entry - min_breakout_risk)
-            else "breakout_handle" if handle_stop <= effective_entry - min_breakout_risk
-            else "minimum_distance"
-        )
+            stop_anchor = (
+                "breakout_distance_bound" if effective_entry - max_breakout_risk >= min(handle_stop, effective_entry - min_breakout_risk)
+                else "breakout_handle" if handle_stop <= effective_entry - min_breakout_risk
+                else "minimum_distance"
+            )
         effective_stop = breakout_stop
         risk_unit = max(effective_entry - effective_stop, min_breakout_risk)
         risk_unit = max(risk_unit, EPSILON)
@@ -385,15 +464,22 @@ def build_long_bracket(
         invalidation_stop = effective_stop
     else:
         effective_entry = retest_entry
-        stop_options = (
-            (swing_low_4h - Decimal("0.80") * atr, "swing_low_7d"),
-            (effective_val - Decimal("0.60") * atr, "value_area_low_30d"),
-            (retest_entry - min_retest_risk, "minimum_distance"),
-        )
-        stop_anchor = min(stop_options, key=lambda item: item[0])[1]
+        if use_confluence_trigger_v2:
+            stop_anchor = f"retest_{retest_stop_anchor}"
+            breakout_stop = unified_breakout_stop
+        else:
+            stop_options = (
+                (swing_low_4h - Decimal("0.80") * atr, "swing_low_7d"),
+                (effective_val - Decimal("0.60") * atr, "value_area_low_30d"),
+                (retest_entry - min_retest_risk, "minimum_distance"),
+            )
+            stop_anchor = min(stop_options, key=lambda item: item[0])[1]
+            breakout_stop = floor_to_increment(
+                breakout_trigger - max(Decimal("1.0") * atr, breakout_trigger * Decimal("0.025")),
+                tick_size,
+            )
         effective_stop = retest_stop
         invalidation_stop = retest_stop
-        breakout_stop = floor_to_increment(breakout_trigger - max(Decimal("1.0") * atr, breakout_trigger * Decimal("0.025")), tick_size)
         risk_unit = max(effective_entry - effective_stop, min_retest_risk)
         risk_unit = max(risk_unit, EPSILON)
 
