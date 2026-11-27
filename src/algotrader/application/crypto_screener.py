@@ -55,6 +55,7 @@ from algotrader.domain.execution_brackets import (
     InvalidExecutionBracket,
     build_long_bracket,
     build_short_bracket,
+    compute_structural_shelf_high_72h,
     valid_execution_prices,
 )
 from algotrader.domain.indicators import (
@@ -66,6 +67,7 @@ from algotrader.domain.indicators import (
     confirmed_rsi_divergences,
     cumulative_volume_delta_metrics,
     ema,
+    hybrid_volume_profile,
     keltner_channels,
     macd,
     resample_candles,
@@ -1809,7 +1811,11 @@ class CryptoOpportunityScreener:
         low_24h = min(c.low for c in (closed_1h[-24:] if len(closed_1h) >= 24 else closed_1h))
         low_48h = min(c.low for c in (closed_1h[-48:] if len(closed_1h) >= 48 else closed_1h))
 
-        vp = volume_profile(base_window, bins=50, tick_size=inst.price_tick)
+        vp = (
+            hybrid_volume_profile(closed_1h, closed_4h, tick_size=inst.price_tick)
+            if self._settings.kinetic_ignition_v33_enabled
+            else volume_profile(base_window, bins=50, tick_size=inst.price_tick)
+        )
         poc_price = vp.poc_price
         vah_price = vp.vah_price
         val_price = vp.val_price
@@ -2154,13 +2160,18 @@ class CryptoOpportunityScreener:
             return None
 
         # 5-Level Execution Bracket (Normalized with tick_size and Execution Mode Split)
+        effective_compression_high = (
+            compute_structural_shelf_high_72h(closed_1h[-72:], snap_1h.atr14)
+            if self._settings.kinetic_ignition_v33_enabled
+            else local_swing_high_4h
+        )
         try:
             bracket = build_long_bracket(
                 close=close,
                 ema50_4h=ema50_4h,
                 poc_30d=poc_price,
                 atr14_4h=atr14_4h,
-                local_compression_high_4h=local_swing_high_4h,
+                local_compression_high_4h=effective_compression_high,
                 swing_low_4h=swing_low_4h,
                 high_30d=high_30d,
                 vah_30d=vah_price,
@@ -2168,6 +2179,7 @@ class CryptoOpportunityScreener:
                 tick_size=inst.price_tick,
                 resistance_absorption_score=Decimal(str(absorption_score)),
                 handle_low_4h=handle_low_4h,
+                use_confluence_trigger_v2=self._settings.kinetic_ignition_v33_enabled,
             )
         except InvalidExecutionBracket as exc:
             self._note(inst.id.symbol, "accumulation_rejection", "invalid_execution_bracket", detail=str(exc))
@@ -3301,7 +3313,11 @@ class CryptoOpportunityScreener:
             # Tokens trading below POC (e.g. NILUSDT) have trapped overhead supply -> reject!
             if closed_4h:
                 base_window = closed_4h[-180:] if len(closed_4h) >= 180 else closed_4h
-                vp = volume_profile(base_window, bins=50, tick_size=inst.price_tick)
+                vp = (
+            hybrid_volume_profile(closed_1h, closed_4h, tick_size=inst.price_tick)
+            if self._settings.kinetic_ignition_v33_enabled
+            else volume_profile(base_window, bins=50, tick_size=inst.price_tick)
+        )
                 if close < (vp.poc_price * Decimal("0.985")):
                     return None
         else:

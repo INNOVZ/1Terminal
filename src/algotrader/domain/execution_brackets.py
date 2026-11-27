@@ -4,11 +4,30 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
-from algotrader.domain.models import Direction
+from algotrader.domain.models import Candle, Direction
 from algotrader.domain.plan_diagnostics import BracketContext
 from algotrader.domain.precision import ceil_to_increment, floor_to_increment, normalize_price
 
 EPSILON = Decimal("1e-8")
+
+
+def compute_structural_shelf_high_72h(
+    closed_1h: Sequence[Candle],
+    atr_1h: Decimal,
+) -> Decimal:
+    """Compute wick-resistant 72h structural resistance shelf from closed 1H bars.
+
+    Caps single-bar stop-hunt upper wicks at `max(P96_high, max_body + 0.35 * atr_1h)` so
+    one outlier spike does not push breakout triggers 5-10% above the true consolidation box.
+    """
+    window = closed_1h[-72:] if len(closed_1h) >= 72 else closed_1h
+    if not window:
+        return Decimal("0")
+    highs = sorted(c.high for c in window)
+    max_body = max(max(c.open, c.close) for c in window)
+    p96_high = highs[min(len(highs) - 1, int(len(highs) * 0.96))]
+    atr_cap = max_body + Decimal("0.35") * max(atr_1h, EPSILON)
+    return min(highs[-1], max(p96_high, atr_cap))
 
 
 class InvalidExecutionBracket(ValueError):
@@ -60,6 +79,7 @@ def build_long_bracket(
     val_30d: Decimal | None = None,
     resistance_absorption_score: Decimal | None = None,
     handle_low_4h: Decimal | None = None,
+    use_confluence_trigger_v2: bool = False,
 ) -> ExecutionBracket:
     """Build 5-Level Execution Bracket for LONG candidate enforcing Universal Invariants 1, 2, and 3."""
     atr = max(atr14_4h, EPSILON)
@@ -97,19 +117,43 @@ def build_long_bracket(
 
     if close < poc_30d:
         # Case 0 — Below POC Accumulation (between VAL and POC): Immediate overhead resistance is POC, not VAH!
-        raw_breakout_trigger = max(local_compression_high_4h, poc_30d, close) + Decimal("0.05") * atr
+        if use_confluence_trigger_v2:
+            raw_shelf = max(local_compression_high_4h, close)
+            if poc_30d > raw_shelf and (poc_30d - raw_shelf) <= min(
+                Decimal("1.5") * atr, close * Decimal("0.05")
+            ):
+                raw_shelf = poc_30d
+            raw_breakout_trigger = raw_shelf + Decimal("0.05") * atr
+        else:
+            raw_breakout_trigger = max(local_compression_high_4h, poc_30d, close) + Decimal("0.05") * atr
         raw_t1 = poc_30d
         raw_t2 = vah_30d
         raw_t3 = max(high_30d, vah_30d + Decimal("1.5") * atr)
     elif (close <= vah_30d * Decimal("1.005")) and (room_vah_to_ceiling >= Decimal("1.5")):
         # Case A — VAH Breakout Into 30d Ceiling (respect immediate 72h compression high)
-        raw_breakout_trigger = max(vah_30d, local_compression_high_4h) + Decimal("0.08") * atr
+        if use_confluence_trigger_v2:
+            raw_shelf = max(local_compression_high_4h, close)
+            if vah_30d > raw_shelf and (vah_30d - raw_shelf) <= min(
+                Decimal("1.5") * atr, close * Decimal("0.06")
+            ):
+                raw_shelf = vah_30d
+            raw_breakout_trigger = raw_shelf + Decimal("0.05") * atr
+        else:
+            raw_breakout_trigger = max(vah_30d, local_compression_high_4h) + Decimal("0.08") * atr
         raw_t1 = high_30d
         raw_t2 = swing_low_4h + Decimal("1.272") * swing_range
         raw_t3 = swing_low_4h + Decimal("1.618") * swing_range
     else:
         # Case B — 30d Ceiling Breakout
-        raw_breakout_trigger = max(local_compression_high_4h, vah_30d) + Decimal("0.05") * atr
+        if use_confluence_trigger_v2:
+            raw_shelf = max(local_compression_high_4h, close)
+            if vah_30d > raw_shelf and (vah_30d - raw_shelf) <= min(
+                Decimal("1.5") * atr, close * Decimal("0.06")
+            ):
+                raw_shelf = vah_30d
+            raw_breakout_trigger = raw_shelf + Decimal("0.05") * atr
+        else:
+            raw_breakout_trigger = max(local_compression_high_4h, vah_30d) + Decimal("0.05") * atr
         if (high_30d - raw_breakout_trigger) < Decimal("1.5") * atr:
             raw_t1 = max(high_30d + Decimal("1.5") * atr, swing_low_4h + Decimal("1.272") * swing_range)
             raw_t2 = swing_low_4h + Decimal("1.618") * swing_range

@@ -956,6 +956,159 @@ def volume_profile(
     )
 
 
+def hybrid_volume_profile(
+    closed_1h: Sequence[Candle],
+    closed_4h: Sequence[Candle],
+    *,
+    bins: int = 80,
+    half_life_days: float = 10.0,
+    use_base_volume: bool = True,
+    value_area_pct: Decimal = Decimal("0.70"),
+    tick_size: Decimal | None = None,
+) -> VolumeProfile:
+    """Compute Hybrid 1H(15d)+4H(15d) Log-Price Recency-Weighted Volume Profile (ALFA v3.5).
+
+    Eliminates three crypto-perp distortions in linear unweighted 4H profiles:
+    1. Log-price uniform binning + P01..P99 wick guard -> constant ~0.8% bin resolution across 2x-5x ranges.
+    2. Exponential recency decay (half-life 10d) + base token volume -> eliminates 25-day-old Ghost POCs.
+    3. Uses 1H candles for the active last 15 days + 4H candles for Days 16-30 (zero extra API weight),
+       and maps VAH/VAL to outer bin edges.
+    """
+    if not closed_1h and not closed_4h:
+        return VolumeProfile(ZERO, ZERO, ZERO, ZERO, ZERO)
+
+    ref_now = (
+        closed_1h[-1].closed_at
+        if closed_1h
+        else closed_4h[-1].closed_at
+    )
+    cut_15d = ref_now - timedelta(days=15)
+    cut_30d = ref_now - timedelta(days=30)
+    bars: list[Candle] = [
+        c for c in closed_4h if cut_30d <= c.closed_at < cut_15d
+    ] + [
+        c for c in closed_1h if c.closed_at >= cut_15d
+    ]
+    if not bars:
+        return volume_profile(closed_4h[-180:] if closed_4h else closed_1h, bins=50, value_area_pct=value_area_pct, tick_size=tick_size)
+
+    lows = [float(c.low) for c in bars if float(c.low) > 0.0]
+    highs = [float(c.high) for c in bars if float(c.high) > 0.0]
+    if not lows or not highs or bins <= 0:
+        return volume_profile(closed_4h[-180:] if closed_4h else closed_1h, bins=50, value_area_pct=value_area_pct, tick_size=tick_size)
+
+    s_lows = sorted(lows)
+    s_highs = sorted(highs)
+    p_lo = s_lows[max(0, int(len(s_lows) * 0.01))]
+    p_hi = s_highs[min(len(s_highs) - 1, int(len(s_highs) * 0.99))]
+    if p_hi <= p_lo:
+        p_lo, p_hi = min(lows), max(highs)
+    if p_hi <= p_lo or p_lo <= 0.0:
+        return volume_profile(bars, bins=50, value_area_pct=value_area_pct, tick_size=tick_size)
+
+    log_lo = math.log(p_lo)
+    log_hi = math.log(p_hi)
+    bw = (log_hi - log_lo) / float(bins)
+    inv_bw = 1.0 / bw
+    bvols = [0.0] * bins
+    total_wvol = 0.0
+    eps = 1e-12
+
+    for c in bars:
+        lo, hi, cl = float(c.low), float(c.high), float(c.close)
+        if lo <= 0.0 or hi <= 0.0:
+            continue
+        raw_v = float(c.volume) if use_base_volume else float(c.quote_volume if c.quote_volume > ZERO else c.volume)
+        if raw_v <= 0.0:
+            continue
+        age_days = max(0.0, (ref_now - c.closed_at).total_seconds() / 86400.0)
+        decay = 0.5 ** (age_days / half_life_days) if half_life_days > 0.0 else 1.0
+        v = raw_v * decay
+        total_wvol += v
+
+        l_lo = max(log_lo, min(log_hi, math.log(lo)))
+        l_hi = max(log_lo, min(log_hi, math.log(hi)))
+        tp_px = (lo + hi + cl) / 3.0
+        l_tp = max(l_lo, min(l_hi, math.log(max(tp_px, p_lo))))
+        if l_hi <= l_lo:
+            idx = min(bins - 1, max(0, int((l_lo - log_lo) * inv_bw)))
+            bvols[idx] += v
+            continue
+        i0 = min(bins - 1, max(0, int((l_lo - log_lo) * inv_bw)))
+        i1 = min(bins - 1, max(0, int((l_hi - log_lo) * inv_bw)))
+        span = max(l_hi - l_lo, eps)
+        inv_l = 1.0 / (span * max(l_tp - l_lo, eps))
+        inv_r = 1.0 / (span * max(l_hi - l_tp, eps))
+        for i in range(i0, i1 + 1):
+            x1 = max(l_lo, log_lo + float(i) * bw)
+            x2 = min(l_hi, log_lo + float(i + 1) * bw)
+            if x2 > x1:
+                cdf1 = ((x1 - l_lo) ** 2) * inv_l if x1 <= l_tp else 1.0 - ((l_hi - x1) ** 2) * inv_r
+                cdf2 = ((x2 - l_lo) ** 2) * inv_l if x2 <= l_tp else 1.0 - ((l_hi - x2) ** 2) * inv_r
+                w = cdf2 - cdf1
+                if w > 0.0:
+                    bvols[i] += v * w
+
+    if total_wvol <= 0.0:
+        return volume_profile(bars, bins=50, value_area_pct=value_area_pct, tick_size=tick_size)
+
+    poc_idx = max(range(bins), key=lambda i: bvols[i])
+    target_vol = total_wvol * float(value_area_pct)
+    va_indices = {poc_idx}
+    cur_vol = bvols[poc_idx]
+    up = poc_idx + 1
+    down = poc_idx - 1
+    while cur_vol < target_vol and (up < bins or down >= 0):
+        up_pair = (bvols[up] if up < bins else -1.0) + (bvols[up + 1] if up + 1 < bins else 0.0)
+        down_pair = (bvols[down] if down >= 0 else -1.0) + (bvols[down - 1] if down - 1 >= 0 else 0.0)
+        if up_pair >= down_pair and up < bins:
+            for _ in range(2):
+                if up >= bins or cur_vol >= target_vol:
+                    break
+                va_indices.add(up)
+                cur_vol += bvols[up]
+                up += 1
+        elif down >= 0:
+            for _ in range(2):
+                if down < 0 or cur_vol >= target_vol:
+                    break
+                va_indices.add(down)
+                cur_vol += bvols[down]
+                down -= 1
+        else:
+            break
+
+    bin_mids = [math.exp(log_lo + (float(i) + 0.5) * bw) for i in range(bins)]
+    poc_price = Decimal(f"{bin_mids[poc_idx]:.12g}")
+    vah_price = Decimal(f"{math.exp(log_lo + float(max(va_indices) + 1) * bw):.12g}")
+    val_price = Decimal(f"{math.exp(log_lo + float(min(va_indices)) * bw):.12g}")
+    if tick_size is not None and tick_size > ZERO:
+        poc_price = normalize_price(poc_price, tick_size)
+        vah_price = max(poc_price, normalize_price(vah_price, tick_size))
+        val_price = min(poc_price, normalize_price(val_price, tick_size))
+
+    vp_bins = tuple(
+        VolumeProfileBin(
+            price=(
+                normalize_price(Decimal(f"{bin_mids[i]:.12g}"), tick_size)
+                if (tick_size is not None and tick_size > ZERO)
+                else Decimal(f"{bin_mids[i]:.12g}")
+            ),
+            volume=Decimal(str(round(bvols[i], 2))),
+        )
+        for i in range(bins)
+    )
+    return VolumeProfile(
+        poc_price=poc_price,
+        vah_price=vah_price,
+        val_price=val_price,
+        total_volume=Decimal(str(round(total_wvol, 2))),
+        value_area_volume=Decimal(str(round(cur_vol, 2))),
+        poc_volume=Decimal(str(round(bvols[poc_idx], 2))),
+        bins=vp_bins,
+    )
+
+
 def volume_contraction_metrics(
     candles_1h: Sequence[Candle],
     days_short: int = 7,

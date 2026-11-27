@@ -25,9 +25,9 @@ from algotrader.domain.indicators import (
     confirmed_macd_divergences,
     confirmed_rsi_divergences,
     ema,
+    hybrid_volume_profile,
     keltner_channels,
     rsi,
-    volume_profile,
 )
 from algotrader.domain.models import (
     Candle,
@@ -36,6 +36,7 @@ from algotrader.domain.models import (
     Instrument,
     Quote,
 )
+from algotrader.domain.precision import ceil_to_increment
 from algotrader.domain.scoring import (
     OpportunityGrade,
     compute_3tier_ev_r,
@@ -372,7 +373,7 @@ def evaluate_v33_local_base_or_flag(
     ema20_4h = ema(closes_4h, 20)[-1]
     ema50_4h = ema(closes_4h, 50)[-1]
     rsi_4h = rsi(closes_4h, 14)[-1]
-    vp = volume_profile(c4h[-180:] if len(c4h) >= 180 else c4h, bins=50, tick_size=inst.price_tick)
+    vp = hybrid_volume_profile(c1h, c4h, tick_size=inst.price_tick)
     va6 = compute_va6_ratio(c1h)
     ret_24h = (
         (close - c1h[-25].close) / c1h[-25].close
@@ -466,7 +467,7 @@ def evaluate_v33_local_base_or_flag(
         return None
     ceilings = [
         lvl
-        for lvl in (ema50_4h, vp.poc_price)
+        for lvl in (ema50_4h,)
         if lvl >= close + Decimal("1.0") * snap_1h.atr14
     ]
     if ceilings and va6 < Decimal("1.80") and (min(ceilings) - close) / risk < Decimal("1.35"):
@@ -575,6 +576,7 @@ def evaluate_v33_local_base_or_flag(
         current_price=close,
         atr14=snap_1h.atr14,
         suggested_entry=close,
+        breakout_trigger=ceil_to_increment(max(prior_12h_high, close), inst.price_tick),
         suggested_stop=stop,
         suggested_targets=(t1, t2, t3),
         risk_reward_ratio=Decimal("2.5"),
