@@ -280,6 +280,7 @@ class KineticScoutService:
                     radar_events=[],
                     now=ref_now,
                     scan_id=scan_id,
+                    incremental=True,
                 )
                 if self._on_promoted is not None:
                     await self._on_promoted(promoted_dicts, ref_now, scan_id)

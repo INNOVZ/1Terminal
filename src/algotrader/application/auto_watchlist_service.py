@@ -771,6 +771,7 @@ class AutoWatchlistService:
         radar_events: Sequence[Mapping[str, Any]],
         now: datetime | None = None,
         scan_id: str | None = None,
+        incremental: bool = False,
     ) -> int:
         """Maintain strict disjointness between live 5/5 Radar and 48h Potential Watchlist."""
         ref_now = (now or datetime.now(UTC)).astimezone(UTC)
@@ -890,7 +891,7 @@ class AutoWatchlistService:
                     )
                     if updated != ep:
                         self._upsert_episode_locked(conn, updated)
-                elif ep.status is AutoWatchStatus.ON_RADAR:
+                elif ep.status is AutoWatchStatus.ON_RADAR and not incremental:
                     ev_obj: Mapping[str, Any] | None = evictions_by_episode_id.get(ep.episode_id)
                     if ev_obj is None:
                         if live_for_sym is not None and live_sym_ep_id != ep.episode_id:

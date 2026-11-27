@@ -339,3 +339,55 @@ async def test_scout_slices_96_closed_bars_when_live_wire_includes_trailing_open
     assert res["ignited_count"] == 1
 
 
+def test_incremental_scout_sync_never_evicts_existing_on_radar_winners(tmp_path: Path) -> None:
+    """Regression (COLLECTUSDT 19:31 UTC): 15m scout promoting a new symbol must NOT evict unrelated ON_RADAR winners."""
+    t0 = datetime(2026, 11, 26, 17, 1, tzinfo=UTC)
+    t1 = datetime(2026, 11, 26, 19, 31, tzinfo=UTC)
+    watch_svc = AutoWatchlistService(tmp_path / "collect_regression.sqlite3")
+
+    def _cand(symbol: str, at: datetime, px: str, trig: str, stop: str, t1_px: str) -> dict[str, Any]:
+        return {
+            "symbol": symbol,
+            "direction": "long",
+            "setup_label": "VCP_COMPRESSION_LONG",
+            "execution_mode": "CEILING_BREAKOUT",
+            "score": "92.0",
+            "tick_size": "0.0001",
+            "first_seen_at": at.isoformat(),
+            "evaluated_at": at.isoformat(),
+            "current_price": px,
+            "suggested_entry": px,
+            "breakout_trigger": trig,
+            "suggested_stop": stop,
+            "suggested_targets": [t1_px],
+            "checklist": [
+                {"title": "Trend Baseline", "passed": True, "status": "passed", "detail": "ok"},
+                {"title": "Anti-Chasing Validated", "passed": True, "status": "passed", "detail": "ok"},
+                {"title": "Value Acceptance", "passed": True, "status": "passed", "detail": "ok"},
+                {"title": "Volatility Compression", "passed": True, "status": "passed", "detail": "ok"},
+                {"title": "Smart Money Absorption", "passed": True, "status": "passed", "detail": "ok"},
+            ],
+        }
+
+    # 17:01 UTC full hourly scan enrolls COLLECTUSDT onto ON_RADAR
+    watch_svc.sync_from_scan(
+        published_opportunities=[_cand("COLLECTUSDT", t0, "0.0278", "0.0285", "0.0260", "0.0327")],
+        radar_events=[],
+        now=t0,
+        scan_id="hourly-1701",
+    )
+    # 19:31 UTC 15m scout promotes a new symbol incrementally
+    watch_svc.sync_from_scan(
+        published_opportunities=[_cand("VVVUSDT", t1, "26.60", "27.20", "25.00", "31.00")],
+        radar_events=[],
+        now=t1,
+        scan_id="scout-1931",
+        incremental=True,
+    )
+    eps = {e.symbol: e for e in watch_svc.list_episodes(now=t1)}
+    assert eps["COLLECTUSDT"].status is AutoWatchStatus.ON_RADAR
+    assert eps["COLLECTUSDT"].eviction_reason is None
+    assert eps["VVVUSDT"].status is AutoWatchStatus.ON_RADAR
+
+
+
