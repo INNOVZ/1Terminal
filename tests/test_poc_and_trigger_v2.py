@@ -97,10 +97,13 @@ def test_confluence_trigger_v2_does_not_hijack_sub_poc_trigger_to_distant_ghost_
         tick_size=Decimal("0.001"),
         use_confluence_trigger_v2=True,
     )
-    # Legacy hijacks trigger to > $1.40 (+40%); v2 keeps trigger tight at ~$1.022 and preserves $1.40 as Target 1!
+    # Legacy hijacks trigger to > $1.40 (+40%); v2 keeps trigger tight at ~$1.022 and spaces T1/T2/T3 cleanly!
     assert brk_legacy.breakout_trigger > Decimal("1.40")
     assert Decimal("1.020") <= brk_v2.breakout_trigger <= Decimal("1.025")
-    assert brk_v2.t1 >= Decimal("1.40")
+    assert brk_v2.t1 < Decimal("1.40")
+    assert brk_v2.t2 >= brk_v2.t1 + Decimal("0.70") * brk_v2.risk_unit
+    assert brk_v2.t3 >= brk_v2.t2 + Decimal("0.70") * brk_v2.risk_unit
+    assert brk_v2.asymmetric_rr >= Decimal("2.00")
 
     # When POC IS in tight confluence ($1.04, within 1.5*ATR and <= 5%), v2 cleanly snaps trigger to POC!
     brk_v2_conf = build_long_bracket(
@@ -118,4 +121,30 @@ def test_confluence_trigger_v2_does_not_hijack_sub_poc_trigger_to_distant_ghost_
     )
     assert brk_v2_conf.breakout_trigger >= Decimal("1.040")
     assert brk_v2_conf.breakout_trigger <= Decimal("1.045")
+
+
+def test_solvusdt_style_spaced_targets_anchor_intermediate_shelf_and_never_stack_t1_t2() -> None:
+    """Regression (SOLVUSDT screenshot): T1 must anchor to the $0.00468 intermediate shelf and never stack 0.2% from T2."""
+    brk = build_long_bracket(
+        close=Decimal("0.004183"),
+        ema50_4h=Decimal("0.004000"),
+        poc_30d=Decimal("0.005331"),
+        atr14_4h=Decimal("0.000120"),
+        local_compression_high_4h=Decimal("0.004235"),
+        swing_low_4h=Decimal("0.003680"),
+        high_30d=Decimal("0.006141"),
+        vah_30d=Decimal("0.005343"),  # Only 0.2% above POC — previously caused T1/T2 stacking!
+        val_30d=Decimal("0.004100"),
+        tick_size=Decimal("0.000001"),
+        use_confluence_trigger_v2=True,
+        overhead_shelves=(Decimal("0.004686"), Decimal("0.005331"), Decimal("0.006141")),
+    )
+    # T1 locks directly onto the $0.004686 intermediate shelf, T2 onto POC $0.005331, T3 onto $0.006141!
+    assert brk.t1 == Decimal("0.004686")
+    assert brk.t2 == Decimal("0.005331")
+    assert brk.t3 == Decimal("0.006141")
+    assert brk.t2 - brk.t1 >= Decimal("0.70") * brk.risk_unit
+    assert brk.t3 - brk.t2 >= Decimal("0.70") * brk.risk_unit
+    assert brk.asymmetric_rr >= Decimal("2.00")
+
 

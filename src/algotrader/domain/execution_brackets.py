@@ -30,6 +30,90 @@ def compute_structural_shelf_high_72h(
     return min(highs[-1], max(p96_high, atr_cap))
 
 
+def extract_overhead_shelves_4h(
+    closed_4h: Sequence[Candle],
+    reference_price: Decimal,
+) -> tuple[Decimal, ...]:
+    """Extract confirmed 5-bar fractal swing highs above `reference_price` from the last 30d of 4H bars."""
+    window = closed_4h[-180:] if len(closed_4h) >= 180 else closed_4h
+    if len(window) < 5 or reference_price <= Decimal("0"):
+        return ()
+    pivots: set[Decimal] = set()
+    for i in range(2, len(window) - 2):
+        h = window[i].high
+        if (
+            h > reference_price
+            and h >= window[i - 1].high
+            and h >= window[i - 2].high
+            and h >= window[i + 1].high
+            and h >= window[i + 2].high
+        ):
+            pivots.add(h)
+    return tuple(sorted(pivots))
+
+
+def _build_spaced_long_targets(
+    *,
+    effective_entry: Decimal,
+    breakout_trigger: Decimal,
+    risk_unit: Decimal,
+    atr: Decimal,
+    poc_30d: Decimal,
+    vah_30d: Decimal,
+    high_30d: Decimal,
+    overhead_shelves: Sequence[Decimal],
+    tick_size: Decimal,
+) -> tuple[Decimal, Decimal, Decimal]:
+    """Anchor T1/T2/T3 to real structural overhead shelves with guaranteed inter-tier spacing."""
+    min_gap = max(tick_size * Decimal("5"), Decimal("0.70") * risk_unit, Decimal("1.25") * atr)
+    cands = sorted(
+        {
+            lvl
+            for lvl in (poc_30d, vah_30d, *overhead_shelves, high_30d)
+            if lvl > breakout_trigger
+        }
+    )
+
+    t1_lo = max(
+        effective_entry + Decimal("0.90") * risk_unit,
+        breakout_trigger + max(tick_size, Decimal("0.50") * atr),
+    )
+    t1_hi = max(t1_lo + tick_size, effective_entry + Decimal("1.80") * risk_unit)
+    t1_hits = [c for c in cands if t1_lo <= c <= t1_hi]
+    t1 = normalize_price(
+        t1_hits[0] if t1_hits else max(t1_lo, effective_entry + Decimal("1.35") * risk_unit),
+        tick_size,
+    )
+    if t1 <= effective_entry:
+        t1 = normalize_price(effective_entry + max(tick_size, Decimal("1.00") * risk_unit), tick_size)
+
+    t2_lo = max(t1 + min_gap, effective_entry + Decimal("2.05") * risk_unit)
+    t2_hi = max(t2_lo + min_gap, effective_entry + Decimal("3.20") * risk_unit)
+    t2_hits = [c for c in cands if t2_lo <= c <= t2_hi]
+    t2 = normalize_price(
+        t2_hits[0] if t2_hits else max(t2_lo, effective_entry + Decimal("2.40") * risk_unit),
+        tick_size,
+    )
+    if t2 < t1 + min_gap:
+        t2 = normalize_price(t1 + min_gap, tick_size)
+    if t2 <= t1:
+        t2 = normalize_price(t1 + max(tick_size, min_gap), tick_size)
+
+    t3_lo = max(t2 + min_gap, effective_entry + Decimal("3.40") * risk_unit)
+    t3_hi = max(t3_lo + min_gap, effective_entry + Decimal("5.00") * risk_unit)
+    t3_hits = [c for c in cands if t3_lo <= c <= t3_hi]
+    t3 = normalize_price(
+        t3_hits[-1] if t3_hits else max(t3_lo, effective_entry + Decimal("3.80") * risk_unit),
+        tick_size,
+    )
+    if t3 < t2 + min_gap:
+        t3 = normalize_price(t2 + min_gap, tick_size)
+    if t3 <= t2:
+        t3 = normalize_price(t2 + max(tick_size, min_gap), tick_size)
+
+    return t1, t2, t3
+
+
 class InvalidExecutionBracket(ValueError):
     """The structural plan cannot produce positive, ordered execution prices."""
 
@@ -80,6 +164,7 @@ def build_long_bracket(
     resistance_absorption_score: Decimal | None = None,
     handle_low_4h: Decimal | None = None,
     use_confluence_trigger_v2: bool = False,
+    overhead_shelves: Sequence[Decimal] = (),
 ) -> ExecutionBracket:
     """Build 5-Level Execution Bracket for LONG candidate enforcing Universal Invariants 1, 2, and 3."""
     atr = max(atr14_4h, EPSILON)
@@ -239,7 +324,19 @@ def build_long_bracket(
         risk_unit = max(effective_entry - effective_stop, min_breakout_risk)
         risk_unit = max(risk_unit, EPSILON)
 
-        if close < poc_30d:
+        if use_confluence_trigger_v2:
+            t1, t2, t3 = _build_spaced_long_targets(
+                effective_entry=effective_entry,
+                breakout_trigger=breakout_trigger,
+                risk_unit=risk_unit,
+                atr=atr,
+                poc_30d=poc_30d,
+                vah_30d=vah_30d,
+                high_30d=high_30d,
+                overhead_shelves=overhead_shelves,
+                tick_size=tick_size,
+            )
+        elif close < poc_30d:
             if (poc_30d - effective_entry) < Decimal("1.00") * risk_unit:
                 t1 = max(
                     normalize_price(vah_30d, tick_size),
@@ -300,7 +397,19 @@ def build_long_bracket(
         risk_unit = max(effective_entry - effective_stop, min_retest_risk)
         risk_unit = max(risk_unit, EPSILON)
 
-        if close < poc_30d:
+        if use_confluence_trigger_v2:
+            t1, t2, t3 = _build_spaced_long_targets(
+                effective_entry=effective_entry,
+                breakout_trigger=breakout_trigger,
+                risk_unit=risk_unit,
+                atr=atr,
+                poc_30d=poc_30d,
+                vah_30d=vah_30d,
+                high_30d=high_30d,
+                overhead_shelves=overhead_shelves,
+                tick_size=tick_size,
+            )
+        elif close < poc_30d:
             if (poc_30d - effective_entry) < Decimal("1.00") * risk_unit:
                 t1 = max(
                     normalize_price(vah_30d, tick_size),

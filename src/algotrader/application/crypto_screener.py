@@ -56,6 +56,7 @@ from algotrader.domain.execution_brackets import (
     build_long_bracket,
     build_short_bracket,
     compute_structural_shelf_high_72h,
+    extract_overhead_shelves_4h,
     valid_execution_prices,
 )
 from algotrader.domain.indicators import (
@@ -2165,6 +2166,11 @@ class CryptoOpportunityScreener:
             if self._settings.kinetic_ignition_v33_enabled
             else local_swing_high_4h
         )
+        overhead_shelves = (
+            extract_overhead_shelves_4h(closed_4h, close)
+            if self._settings.kinetic_ignition_v33_enabled
+            else ()
+        )
         try:
             bracket = build_long_bracket(
                 close=close,
@@ -2180,6 +2186,7 @@ class CryptoOpportunityScreener:
                 resistance_absorption_score=Decimal(str(absorption_score)),
                 handle_low_4h=handle_low_4h,
                 use_confluence_trigger_v2=self._settings.kinetic_ignition_v33_enabled,
+                overhead_shelves=overhead_shelves,
             )
         except InvalidExecutionBracket as exc:
             self._note(inst.id.symbol, "accumulation_rejection", "invalid_execution_bracket", detail=str(exc))
