@@ -5,7 +5,7 @@ import { bookEventQuote, bookQuote } from "./lib/radarInsights";
 import { useEffect, useState, useMemo, useCallback, useRef, Suspense } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import type { Opportunity, SidebarWatchlistEpisode } from "./components/CandidateSidebar";
+import type { Opportunity, SidebarWatchlistEpisode, UniverseToken } from "./components/CandidateSidebar";
 import type { Candle, CandleInterval } from "./components/TradingChart";
 import { Zap, RefreshCw, AlertCircle } from "lucide-react";
 import baselineCandles from "@/public/baseline_candles.json";
@@ -295,6 +295,7 @@ function RadarPageContent() {
 
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [autoWatchlist, setAutoWatchlist] = useState<SidebarWatchlistEpisode[]>([]);
+  const [universeTokens, setUniverseTokens] = useState<UniverseToken[]>([]);
   const [activeOpportunity, setActiveOpportunity] =
     useState<Opportunity | null>(null);
   const [storedInspectedView, setInspectedView] = useState<InspectedSymbolView | null>(null);
@@ -559,18 +560,92 @@ function RadarPageContent() {
       .catch(() => {});
   }, []);
 
+  const inspectRequestIdRef = useRef(0);
+
+  const handleInspectUniverseSymbol = useCallback(
+    async (symbol: string) => {
+      const cleanTarget = symbol.toUpperCase();
+      const requestId = ++inspectRequestIdRef.current;
+
+      const existingOpp = opportunities.find(
+        (o) => o.symbol.toUpperCase() === cleanTarget,
+      );
+      if (existingOpp) {
+        handleSelectOpportunity(existingOpp);
+        return;
+      }
+
+      const existingWatchlist = autoWatchlist.find(
+        (ep) => ep.symbol.toUpperCase() === cleanTarget,
+      );
+      if (existingWatchlist) {
+        handleSelectWatchlistEpisode(existingWatchlist);
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/chart/${encodeURIComponent(cleanTarget)}`).catch(() => null);
+        if (!res || !res.ok || inspectRequestIdRef.current !== requestId) return;
+        const chartData = (await res.json()) as ChartApiResponse;
+        if (inspectRequestIdRef.current !== requestId) return;
+        const chartCandles =
+          chartData.candles && chartData.candles.length > 0 ? chartData.candles : [];
+
+        if (chartData.record_kind === "published_radar_candidate" && chartData.opportunity) {
+          const oppWithCandles: Opportunity = {
+            ...chartData.opportunity,
+            candles: chartCandles,
+          };
+          setInspectedView(null);
+          setActiveOpportunity(oppWithCandles);
+        } else {
+          const scopeTicket = accountScope.current.capture();
+          const personalWv = await resolveUserWatchlistView(
+            cleanTarget,
+            accountScope.current,
+            chartData.inspection?.current_price ?? chartData.watchlist_view?.current_price ?? null,
+            chartData.inspection?.tick_size ?? chartData.watchlist_view?.tick_size,
+          );
+          if (
+            inspectRequestIdRef.current !== requestId ||
+            !accountScope.current.isCurrent(scopeTicket)
+          ) {
+            return;
+          }
+          const effectiveWv = personalWv ?? chartData.watchlist_view ?? null;
+          setInspectedView({
+            record_kind: effectiveWv ? "watchlist_view" : "chart_inspection",
+            symbol: cleanTarget,
+            candles: chartCandles,
+            current_price: effectiveWv?.current_price ?? chartData.inspection?.current_price ?? null,
+            tick_size: effectiveWv?.tick_size ?? chartData.inspection?.tick_size,
+            note: chartData.inspection?.note,
+            watchlist_view: effectiveWv,
+          });
+        }
+        if (chartCandles.length > 0) {
+          setActiveCandle(chartCandles[chartCandles.length - 1]);
+        }
+      } catch (err) {
+        console.warn("Error loading universe symbol chart:", err);
+      }
+    },
+    [opportunities, autoWatchlist, handleSelectOpportunity, handleSelectWatchlistEpisode],
+  );
+
   const handleLiveTick = useCallback(
     (tick: { price: number }) => {
-      if (!activeOpportunity) return;
+      const activeSym = inspectedView?.symbol ?? activeOpportunity?.symbol;
+      if (!activeSym) return;
       setLivePrices((prev) => {
-        if (prev[activeOpportunity.symbol] === tick.price) return prev;
+        if (prev[activeSym] === tick.price) return prev;
         return {
           ...prev,
-          [activeOpportunity.symbol]: tick.price,
+          [activeSym]: tick.price,
         };
       });
     },
-    [activeOpportunity],
+    [inspectedView, activeOpportunity],
   );
 
   const fetchScreener = useCallback(async (isLiveRefresh: boolean = false, scope: "core" | "full" = "core") => {
@@ -1021,9 +1096,20 @@ function RadarPageContent() {
         }
       } catch {}
     };
+    const fetchUniverse = async () => {
+      try {
+        const res = await fetch("/api/screener/universe", { cache: "no-store" }).catch(() => null);
+        if (!res || !res.ok) return;
+        const payload = (await res.json()) as { tokens?: UniverseToken[] };
+        if (Array.isArray(payload.tokens)) {
+          setUniverseTokens(payload.tokens);
+        }
+      } catch {}
+    };
     const timer = setTimeout(() => {
       void fetchScreener(false);
       void fetchAutoWatchlist();
+      void fetchUniverse();
     }, 0);
     const interval = setInterval(() => {
       if (!awaitingScanCompletionRef.current && !fetchInFlightRef.current) {
@@ -1986,9 +2072,11 @@ function RadarPageContent() {
             <CandidateSidebar
               opportunities={opportunities}
               watchlistEpisodes={autoWatchlist}
-              activeSymbol={activeOpportunity ? activeOpportunity.symbol : ""}
+              universeTokens={universeTokens}
+              activeSymbol={inspectedView ? inspectedView.symbol : activeOpportunity ? activeOpportunity.symbol : ""}
               onSelect={handleSelectOpportunity}
               onSelectWatchlist={handleSelectWatchlistEpisode}
+              onInspectSymbol={handleInspectUniverseSymbol}
               livePrices={livePrices}
               priceChanges24h={priceChanges24h}
             />

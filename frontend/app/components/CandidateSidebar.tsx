@@ -3,7 +3,7 @@
 import type { RadarQuote, RadarSignal } from "../lib/radarInsights";
 
 import { useState, useMemo, useCallback, memo } from "react";
-import { Search, ShieldCheck } from "lucide-react";
+import { Search, ShieldCheck, X } from "lucide-react";
 import type { Candle } from "./TradingChart";
 import type { PlanDiagnostics } from "./PlanDiagnosticsPanel";
 
@@ -673,12 +673,21 @@ export interface SidebarWatchlistEpisode {
   worst_mae_pct: number;
 }
 
+export interface UniverseToken {
+  symbol: string;
+  base_asset: string;
+  quote_asset: string;
+  tick_size: string;
+}
+
 export interface CandidateSidebarProps {
   opportunities: Opportunity[];
   watchlistEpisodes?: SidebarWatchlistEpisode[];
+  universeTokens?: UniverseToken[];
   activeSymbol: string;
   onSelect: (opp: Opportunity) => void;
   onSelectWatchlist?: (ep: SidebarWatchlistEpisode) => void;
+  onInspectSymbol?: (symbol: string) => void;
   livePrices?: Record<string, number>;
   priceChanges24h?: Record<string, number>;
 }
@@ -686,14 +695,19 @@ export interface CandidateSidebarProps {
 function CandidateSidebar({
   opportunities,
   watchlistEpisodes = [],
+  universeTokens = [],
   activeSymbol,
   onSelect,
   onSelectWatchlist,
+  onInspectSymbol,
   livePrices,
   priceChanges24h,
 }: CandidateSidebarProps) {
   const [search, setSearch] = useState("");
   const [manualFilter, setManualFilter] = useState<"ALL" | "LONGS" | "SHORTS" | "WATCHLIST" | null>(null);
+
+  const normalizedQuery = search.trim().toLowerCase();
+  const isSearching = normalizedQuery.length > 0;
 
   // Strict client-side disjointness guard: never duplicate live 5/5 Radar symbols inside Watchlist
   const disjointWatchlist = useMemo(() => {
@@ -725,27 +739,74 @@ function CandidateSidebar({
 
   // Memoize filtered candidates list (strict 5/5 Radar)
   const filteredOpps = useMemo(() => {
-    if (filter === "WATCHLIST") return [];
-    const query = search.trim().toLowerCase();
+    if (!isSearching && filter === "WATCHLIST") return [];
     return opportunities.filter((opp) => {
-      if (query && !opp.symbol.toLowerCase().includes(query)) {
-        return false;
+      if (normalizedQuery) {
+        const sym = opp.symbol.toLowerCase();
+        const base = (opp.base_asset || "").toLowerCase();
+        if (!sym.includes(normalizedQuery) && !base.includes(normalizedQuery)) {
+          return false;
+        }
+        return true;
       }
       const isShort = opp.direction?.toLowerCase() === "short";
       if (filter === "LONGS") return !isShort;
       if (filter === "SHORTS") return isShort;
       return true;
     });
-  }, [opportunities, search, filter]);
+  }, [opportunities, normalizedQuery, isSearching, filter]);
 
   // Memoize filtered 48h Watchlist list (soft-evicted high-potential setups)
   const filteredWatchlist = useMemo(() => {
-    if (filter !== "WATCHLIST") return [];
-    const query = search.trim().toLowerCase();
+    if (!isSearching && filter !== "WATCHLIST") return [];
     return disjointWatchlist.filter((ep) =>
-      query ? ep.symbol.toLowerCase().includes(query) : true,
+      normalizedQuery ? ep.symbol.toLowerCase().includes(normalizedQuery) : true,
     );
-  }, [disjointWatchlist, search, filter]);
+  }, [disjointWatchlist, normalizedQuery, isSearching, filter]);
+
+  // Global search across the precise Binance USD-M Futures token universe (excluding Radar/Watchlist duplicates)
+  const filteredUniverse = useMemo(() => {
+    if (!isSearching || universeTokens.length === 0) return [];
+    const seen = new Set<string>();
+    for (const opp of opportunities) seen.add(opp.symbol.toUpperCase());
+    for (const ep of disjointWatchlist) seen.add(ep.symbol.toUpperCase());
+
+    const matches: { token: UniverseToken; rank: number }[] = [];
+    for (const token of universeTokens) {
+      const symUpper = token.symbol.toUpperCase();
+      if (seen.has(symUpper)) continue;
+      const sym = symUpper.toLowerCase();
+      const base = token.base_asset.toLowerCase();
+      if (base === normalizedQuery || sym === normalizedQuery) {
+        matches.push({ token, rank: 0 });
+      } else if (base.startsWith(normalizedQuery) || sym.startsWith(normalizedQuery)) {
+        matches.push({ token, rank: 1 });
+      } else if (sym.includes(normalizedQuery) || base.includes(normalizedQuery)) {
+        matches.push({ token, rank: 2 });
+      }
+    }
+    matches.sort((a, b) => a.rank - b.rank || a.token.symbol.localeCompare(b.token.symbol));
+    return matches.slice(0, 30).map((m) => m.token);
+  }, [isSearching, normalizedQuery, universeTokens, opportunities, disjointWatchlist]);
+
+  const handleSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Escape") {
+        setSearch("");
+        return;
+      }
+      if (e.key === "Enter" && isSearching) {
+        if (filteredOpps.length > 0) {
+          onSelect(filteredOpps[0]);
+        } else if (filteredWatchlist.length > 0 && onSelectWatchlist) {
+          onSelectWatchlist(filteredWatchlist[0]);
+        } else if (filteredUniverse.length > 0 && onInspectSymbol) {
+          onInspectSymbol(filteredUniverse[0].symbol);
+        }
+      }
+    },
+    [isSearching, filteredOpps, filteredWatchlist, filteredUniverse, onSelect, onSelectWatchlist, onInspectSymbol],
+  );
 
   return (
     <aside
@@ -773,12 +834,17 @@ function CandidateSidebar({
             padding: "8px 12px",
           }}
         >
-          <Search size={15} style={{ color: "var(--text-muted)" }} />
+          <Search size={15} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
           <input
             type="text"
-            placeholder="Search symbols (e.g. ONT, DIST)..."
+            placeholder={
+              universeTokens.length > 0
+                ? `Search ${universeTokens.length} universe tokens (e.g. BTC, SOL)...`
+                : "Search universe tokens (e.g. BTC, SOL)..."
+            }
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
             style={{
               background: "transparent",
               border: "none",
@@ -789,6 +855,24 @@ function CandidateSidebar({
               outline: "none",
             }}
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
 
         {/* Filter Pills */}
@@ -859,7 +943,232 @@ function CandidateSidebar({
 
       {/* Candidate List */}
       <div className="candidate-list-container" style={{ flex: 1, overflowY: "auto", padding: "10px" }}>
-        {filter === "WATCHLIST" ? (
+        {isSearching ? (
+          filteredOpps.length === 0 && filteredWatchlist.length === 0 && filteredUniverse.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "36px 14px", color: "var(--text-muted)", fontSize: "12px" }}>
+              No tokens matching &ldquo;{search.trim()}&rdquo; in universe.
+            </div>
+          ) : (
+            <>
+              {filteredOpps.length > 0 && (
+                <div style={{ marginBottom: "10px" }}>
+                  <div
+                    style={{
+                      fontSize: "10px",
+                      fontWeight: 800,
+                      letterSpacing: "0.06em",
+                      color: "var(--accent-emerald)",
+                      marginBottom: "6px",
+                      padding: "0 2px",
+                    }}
+                  >
+                    RADAR ({filteredOpps.length})
+                  </div>
+                  {filteredOpps.map((opp) => (
+                    <CandidateCard
+                      key={opp.symbol}
+                      opp={opp}
+                      isActive={opp.symbol.toUpperCase() === activeSymbol.toUpperCase()}
+                      onSelect={onSelect}
+                      price={livePrices?.[opp.symbol]}
+                      priceChange24h={priceChanges24h?.[opp.symbol]}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {filteredWatchlist.length > 0 && (
+                <div style={{ marginBottom: "10px" }}>
+                  <div
+                    style={{
+                      fontSize: "10px",
+                      fontWeight: 800,
+                      letterSpacing: "0.06em",
+                      color: "#facc15",
+                      marginBottom: "6px",
+                      padding: "0 2px",
+                    }}
+                  >
+                    WATCHLIST ({filteredWatchlist.length})
+                  </div>
+                  {filteredWatchlist.map((ep) => {
+                    const isShort = ep.direction?.toLowerCase() === "short";
+                    const isPreIgnition = ep.radar_status_label === "PRE-IGNITION COIL";
+                    const isSelected = ep.symbol.toUpperCase() === activeSymbol.toUpperCase();
+                    const livePx = livePrices?.[ep.symbol] ?? ep.last_price;
+                    const liveRet =
+                      ep.signal_price > 0
+                        ? (isShort ? -1 : 1) * ((livePx - ep.signal_price) / ep.signal_price) * 100
+                        : ep.current_return_pct;
+                    const effectiveMfe = Math.max(ep.peak_mfe_pct, liveRet);
+
+                    return (
+                      <div
+                        key={ep.episode_id}
+                        onClick={() => onSelectWatchlist?.(ep)}
+                        style={{
+                          padding: "11px 12px",
+                          borderRadius: "10px",
+                          marginBottom: "8px",
+                          cursor: "pointer",
+                          background: isSelected
+                            ? "rgba(250, 204, 21, 0.11)"
+                            : "rgba(255, 255, 255, 0.025)",
+                          border: `1px solid ${
+                            isSelected
+                              ? "rgba(250, 204, 21, 0.55)"
+                              : "rgba(250, 204, 21, 0.2)"
+                          }`,
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "6px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                            <span style={{ fontWeight: 800, fontSize: "13px", color: "#ffffff" }}>
+                              {ep.symbol}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: "9px",
+                                fontWeight: 800,
+                                padding: "1px 5px",
+                                borderRadius: "4px",
+                                color: isShort ? "#f87171" : "#10b981",
+                                background: isShort
+                                  ? "rgba(248, 113, 113, 0.14)"
+                                  : "rgba(16, 185, 129, 0.14)",
+                              }}
+                            >
+                              {ep.direction.toUpperCase()}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: "9px",
+                                fontWeight: 800,
+                                padding: "1px 5px",
+                                borderRadius: "4px",
+                                color: isPreIgnition ? "#38bdf8" : "#facc15",
+                                background: isPreIgnition
+                                  ? "rgba(56, 189, 248, 0.14)"
+                                  : "rgba(250, 204, 21, 0.14)",
+                                border: `1px solid ${isPreIgnition ? "rgba(56, 189, 248, 0.35)" : "rgba(250, 204, 21, 0.35)"}`,
+                              }}
+                            >
+                              {isPreIgnition ? "5/5 COIL" : `${ep.gates_passed}/${ep.gates_total} WATCH`}
+                            </span>
+                          </div>
+                          <span
+                            style={{
+                              fontFamily: "var(--font-mono)",
+                              fontSize: "12px",
+                              fontWeight: 800,
+                              color: liveRet >= 0 ? "#10b981" : "#f87171",
+                            }}
+                          >
+                            {liveRet >= 0 ? "+" : ""}
+                            {liveRet.toFixed(2)}%
+                          </span>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginTop: "5px",
+                            fontSize: "11px",
+                            fontFamily: "var(--font-mono)",
+                          }}
+                        >
+                          <span style={{ color: "#e2e8f0", fontWeight: 700 }}>
+                            ${formatCandidatePrice(livePx, ep.tick_size)}
+                          </span>
+                          <span style={{ color: "#10b981", fontSize: "10px", fontWeight: 700 }}>
+                            MFE {effectiveMfe >= 0 ? "+" : ""}
+                            {effectiveMfe.toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {filteredUniverse.length > 0 && (
+                <div>
+                  <div
+                    style={{
+                      fontSize: "10px",
+                      fontWeight: 800,
+                      letterSpacing: "0.06em",
+                      color: "var(--text-muted)",
+                      marginBottom: "6px",
+                      padding: "0 2px",
+                    }}
+                  >
+                    UNIVERSE ({filteredUniverse.length})
+                  </div>
+                  {filteredUniverse.map((token) => {
+                    const isSelected = token.symbol.toUpperCase() === activeSymbol.toUpperCase();
+                    return (
+                      <div
+                        key={token.symbol}
+                        onClick={() => onInspectSymbol?.(token.symbol)}
+                        style={{
+                          padding: "9px 12px",
+                          borderRadius: "8px",
+                          marginBottom: "6px",
+                          cursor: "pointer",
+                          background: isSelected
+                            ? "rgba(96, 165, 250, 0.12)"
+                            : "rgba(255, 255, 255, 0.025)",
+                          border: `1px solid ${
+                            isSelected
+                              ? "rgba(96, 165, 250, 0.5)"
+                              : "var(--border-subtle)"
+                          }`,
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "8px",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                          <span style={{ fontWeight: 700, fontSize: "12.5px", color: "#ffffff" }}>
+                            {token.symbol}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: "9px",
+                              fontWeight: 700,
+                              padding: "1px 5px",
+                              borderRadius: "4px",
+                              color: "#94a3b8",
+                              background: "rgba(148, 163, 184, 0.12)",
+                            }}
+                          >
+                            PERP
+                          </span>
+                        </div>
+                        <span
+                          style={{
+                            fontSize: "10px",
+                            fontFamily: "var(--font-mono)",
+                            color: "#60a5fa",
+                            fontWeight: 600,
+                          }}
+                        >
+                          Inspect chart
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )
+        ) : filter === "WATCHLIST" ? (
           filteredWatchlist.length === 0 ? (
             <div style={{ textAlign: "center", padding: "36px 14px", color: "var(--text-muted)", fontSize: "11.5px", lineHeight: 1.5 }}>
               No staged setups in the 48h Pre-Breakout Watchlist right now.
@@ -869,23 +1178,6 @@ function CandidateSidebar({
             </div>
           ) : (
             <>
-              {opportunities.length === 0 && (
-                <div
-                  style={{
-                    marginBottom: "8px",
-                    padding: "8px 10px",
-                    borderRadius: "8px",
-                    background: "rgba(250, 204, 21, 0.08)",
-                    border: "1px solid rgba(250, 204, 21, 0.28)",
-                    color: "#fde68a",
-                    fontSize: "10.5px",
-                    fontFamily: "var(--font-mono)",
-                    lineHeight: 1.4,
-                  }}
-                >
-                  0 active 5/5 breakouts · Showing staged Pre-Breakout Watchlist coils
-                </div>
-              )}
               {filteredWatchlist.map((ep) => {
               const isShort = ep.direction?.toLowerCase() === "short";
               const isPreIgnition = ep.radar_status_label === "PRE-IGNITION COIL";

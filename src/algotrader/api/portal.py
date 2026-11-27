@@ -62,6 +62,7 @@ _episode_roster: list[dict[str, Any]] = []
 _episode_policy_version: str | None = None
 _episode_macro_narrative: str | None = None
 _cached_instruments: Any = None
+_instruments_lock = asyncio.Lock()
 _watchlist_service = WatchlistService()
 _auto_watchlist_service: AutoWatchlistService | None = None
 _auto_watchlist_backfilled: bool = False
@@ -1389,6 +1390,68 @@ async def get_cron_status() -> dict[str, Any]:
         "next_run": next_run.isoformat(),
         "seconds_remaining": int(delay),
         "total_universe_scanned": _screener_cache.get("total_scanned", 0),
+    }
+
+
+@portal_router.get("/screener/universe")
+async def get_screener_universe() -> dict[str, Any]:
+    """Returns the canonical Binance USD-M Futures crypto token universe for global search."""
+    global _cached_instruments
+    runtime = await get_portal_runtime()
+    futures = runtime.futures_market
+    settings = runtime.settings
+
+    if _cached_instruments is None:
+        async with _instruments_lock:
+            if _cached_instruments is None:
+                try:
+                    fetched = await asyncio.wait_for(futures.instruments(), timeout=5.0)
+                    if fetched:
+                        _cached_instruments = fetched
+                except Exception:
+                    pass
+
+    instruments_snapshot = _cached_instruments or []
+
+    toxic_symbols = {
+        "PAXG", "XAU", "XAG", "XAUT", "XAUTUSDT", "COPPER", "SPY", "QQQ", "WLFI",
+        "USDT", "USDC", "FDUSD", "TUSD", "USDP", "DAI", "EUR",
+        "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "DAIUSDT",
+    }
+    excluded = set(settings.excluded_base_assets) | toxic_symbols
+
+    # Canonical single-pair-per-base-asset deduplication (prefer USDT over USDC)
+    by_base: dict[str, Any] = {}
+    for inst in instruments_snapshot:
+        if not inst.trading:
+            continue
+        if inst.quote_asset not in ("USDT", "USDC"):
+            continue
+        if not inst.base_asset.isascii():
+            continue
+        if inst.base_asset in excluded or inst.id.symbol in toxic_symbols:
+            continue
+        existing = by_base.get(inst.base_asset)
+        if existing is None or (existing.quote_asset != "USDT" and inst.quote_asset == "USDT"):
+            by_base[inst.base_asset] = inst
+
+    tokens = sorted(
+        (
+            {
+                "symbol": inst.id.symbol,
+                "base_asset": inst.base_asset,
+                "quote_asset": inst.quote_asset,
+                "tick_size": str(inst.price_tick),
+            }
+            for inst in by_base.values()
+        ),
+        key=lambda item: item["symbol"],
+    )
+    return {
+        "venue": futures.venue.value,
+        "market_kind": "futures",
+        "count": len(tokens),
+        "tokens": tokens,
     }
 
 

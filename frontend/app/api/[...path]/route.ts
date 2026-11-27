@@ -4,7 +4,7 @@ import { proxyToBackend } from "../_lib/backendProxy";
 // Public reads also pass the shared transport boundary; never use a blanket external rewrite.
 const PUBLIC_READ_PATHS = new Set([
   "macro", "macro/overextension", "watchlist/audit", "watchlist/auto",
-  "screener/short-watch", "screener/cron/status",
+  "screener/short-watch", "screener/cron/status", "screener/universe",
 ]);
 
 export async function GET(
