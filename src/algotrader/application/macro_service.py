@@ -52,7 +52,45 @@ class MacroIntelligenceService:
         self._sentiment_provider = sentiment_provider or MacroSentimentProvider()
         self._cached_report: MarketOverextensionReport | None = None
         self._cache_time: datetime | None = None
+        self._cached_active_perps: set[str] | None = None
+        self._active_perps_time: datetime | None = None
         self._lock = asyncio.Lock()
+
+    async def _get_active_crypto_perps(self) -> set[str] | None:
+        """Returns active TRADING PERPETUAL USDT crypto symbols, cached for 15 minutes."""
+        now = datetime.now(UTC)
+        if (
+            self._cached_active_perps
+            and self._active_perps_time
+            and (now - self._active_perps_time).total_seconds() < 900.0
+        ):
+            return self._cached_active_perps
+
+        excluded_bases = {
+            "PAXG", "XAU", "XAG", "XAUT", "COPPER", "SPY", "QQQ", "WLFI",
+            "USDT", "USDC", "FDUSD", "TUSD", "USDP", "DAI", "EUR",
+        }
+        try:
+            info = await self._fetch_url_json("https://fapi.binance.com/fapi/v1/exchangeInfo", timeout=5.0)
+            symbols = info.get("symbols", []) if isinstance(info, dict) else []
+            active = {
+                str(s["symbol"])
+                for s in symbols
+                if isinstance(s, dict)
+                and s.get("status") == "TRADING"
+                and s.get("contractType") == "PERPETUAL"
+                and s.get("quoteAsset") == "USDT"
+                and isinstance(s.get("baseAsset"), str)
+                and s["baseAsset"].isascii()
+                and s["baseAsset"] not in excluded_bases
+            }
+            if active:
+                self._cached_active_perps = active
+                self._active_perps_time = now
+                return active
+        except Exception as exc:
+            log.warning("macro_exchange_info_fetch_failed", error=str(exc))
+        return self._cached_active_perps
 
     async def get_overextension_report(self, force_refresh: bool = False) -> MarketOverextensionReport:
         now = datetime.now(UTC)
@@ -89,6 +127,7 @@ class MacroIntelligenceService:
         eth_4h_task = self._fetch_url_json("https://fapi.binance.com/fapi/v1/klines?symbol=ETHUSDT&interval=4h&limit=30")
         premiums_task = self._fetch_url_json("https://fapi.binance.com/fapi/v1/premiumIndex")
         tickers_task = self._fetch_url_json("https://fapi.binance.com/fapi/v1/ticker/24hr")
+        active_perps_task = self._get_active_crypto_perps()
         macro_ctx_task = self._sentiment_provider.get_context()
 
         (
@@ -98,6 +137,7 @@ class MacroIntelligenceService:
             eth_4h_res,
             premiums_res,
             tickers_res,
+            active_perps_res,
             macro_ctx_res,
         ) = await asyncio.gather(
             btc_1d_task,
@@ -106,9 +146,16 @@ class MacroIntelligenceService:
             eth_4h_task,
             premiums_task,
             tickers_task,
+            active_perps_task,
             macro_ctx_task,
             return_exceptions=True,
         )
+
+        active_perps: set[str] | None = (
+            active_perps_res if isinstance(active_perps_res, set) and active_perps_res else None
+        )
+        tickers_list = tickers_res if isinstance(tickers_res, list) else []
+        liquid_crypto_perps = self._filter_liquid_crypto_symbols(tickers_list, active_perps)
 
         # 1. Parse Benchmark Excursions
         btc_excursion = self._parse_benchmark(
@@ -126,12 +173,14 @@ class MacroIntelligenceService:
 
         # 2. Parse Derivatives Leverage & Funding Heatmap
         derivatives_heat = self._parse_derivatives_heat(
-            premiums_res if isinstance(premiums_res, list) else []
+            premiums_res if isinstance(premiums_res, list) else [],
+            allowed_symbols=liquid_crypto_perps,
         )
 
         # 3. Parse Market Breadth Saturation
         market_breadth = self._parse_market_breadth(
-            tickers_res if isinstance(tickers_res, list) else []
+            tickers_list,
+            allowed_symbols=liquid_crypto_perps,
         )
 
         # 4. Parse Liquidity & Macro Divergence
@@ -376,7 +425,36 @@ class MacroIntelligenceService:
             status=status,
         )
 
-    def _parse_derivatives_heat(self, premiums: list[dict[str, Any]]) -> DerivativesLeverageHeat:
+    @staticmethod
+    def _filter_liquid_crypto_symbols(
+        tickers: list[dict[str, Any]],
+        active_perps: set[str] | None,
+        min_quote_volume_24h: float = 500_000.0,
+    ) -> set[str] | None:
+        if not tickers:
+            return active_perps
+        liquid: set[str] = set()
+        for t in tickers:
+            sym = t.get("symbol", "")
+            if not isinstance(sym, str) or not sym.endswith("USDT"):
+                continue
+            if active_perps is not None and sym not in active_perps:
+                continue
+            qv_raw = t.get("quoteVolume")
+            if qv_raw is not None:
+                try:
+                    if float(qv_raw) < min_quote_volume_24h:
+                        continue
+                except (ValueError, TypeError):
+                    continue
+            liquid.add(sym)
+        return liquid or active_perps
+
+    def _parse_derivatives_heat(
+        self,
+        premiums: list[dict[str, Any]],
+        allowed_symbols: set[str] | None = None,
+    ) -> DerivativesLeverageHeat:
         if not premiums:
             return DerivativesLeverageHeat(
                 avg_funding_8h=0.0001,
@@ -391,6 +469,8 @@ class MacroIntelligenceService:
         for p in premiums:
             sym = p.get("symbol", "")
             if not sym.endswith("USDT"):
+                continue
+            if allowed_symbols is not None and sym not in allowed_symbols:
                 continue
             fr_raw = p.get("lastFundingRate")
             if fr_raw is None:
@@ -456,7 +536,11 @@ class MacroIntelligenceService:
             top_discount_symbols=top_discount,
         )
 
-    def _parse_market_breadth(self, tickers: list[dict[str, Any]]) -> MarketBreadthSaturation:
+    def _parse_market_breadth(
+        self,
+        tickers: list[dict[str, Any]],
+        allowed_symbols: set[str] | None = None,
+    ) -> MarketBreadthSaturation:
         if not tickers:
             return MarketBreadthSaturation(
                 total_pairs_analyzed=300,
@@ -471,6 +555,8 @@ class MacroIntelligenceService:
         for t in tickers:
             sym = t.get("symbol", "")
             if not sym.endswith("USDT"):
+                continue
+            if allowed_symbols is not None and sym not in allowed_symbols:
                 continue
             chg_raw = t.get("priceChangePercent")
             if chg_raw is None:

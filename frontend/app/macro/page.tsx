@@ -424,7 +424,7 @@ const DerivativesHeatCard = memo(function DerivativesHeatCard({
             borderRadius: "6px",
           }}
         >
-          {heat.funding_regime.replace("_", " ")}
+          {heat.funding_regime.replaceAll("_", " ")}
         </span>
       </div>
 
@@ -439,24 +439,51 @@ const DerivativesHeatCard = memo(function DerivativesHeatCard({
 
       <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "14px", lineHeight: "1.45" }}>
         Average 8h rate: <strong style={{ color: "#ffffff", fontFamily: "var(--font-mono)" }}>{(heat.avg_funding_8h * 100).toFixed(4)}%</strong>.{" "}
-        {heat.crowded_long_ratio}% of contracts trade above 15 bps/8h (&gt;16% APR). Elevated funding forces long squeezes.
+        {heat.crowded_long_ratio}% of liquid crypto perps trade above 15 bps/8h (&gt;16% APR).
       </p>
 
-      {/* Top Heated / Crowded contracts */}
-      <div style={{ marginTop: "auto" }}>
-        <div style={{ fontSize: "11px", fontWeight: 700, color: "#f49d0d", marginBottom: "6px", textTransform: "uppercase" }}>
-          Extreme Leverage Outliers (Top Heated)
+      {/* Top 5 Heated vs Top 5 Discount liquid crypto perpetuals */}
+      <div
+        style={{
+          marginTop: "auto",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+          gap: "12px",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: "11px", fontWeight: 700, color: "#f49d0d", marginBottom: "6px", textTransform: "uppercase" }}>
+            Top 5 Heated (Crowded Longs)
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "11px", fontFamily: "var(--font-mono)" }}>
+            {heat.top_heated_symbols.slice(0, 5).map((s) => (
+              <div key={s.symbol} style={{ display: "flex", justifyContent: "space-between", gap: "6px", padding: "4px 8px", background: "rgba(255,255,255,0.02)", borderRadius: "4px" }}>
+                <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{s.symbol}</span>
+                <span style={{ color: "#ef4444", fontWeight: 800 }}>
+                  {s.annualized_apr_pct >= 0 ? "+" : ""}{s.annualized_apr_pct.toFixed(0)}% APR ({s.funding_rate_8h_pct.toFixed(3)}%)
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "11px", fontFamily: "var(--font-mono)" }}>
-          {heat.top_heated_symbols.slice(0, 3).map((s) => (
-            <div key={s.symbol} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", background: "rgba(255,255,255,0.02)", borderRadius: "4px" }}>
-              <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{s.symbol}</span>
-              <span style={{ color: "#ef4444", fontWeight: 800 }}>
-                +{s.annualized_apr_pct.toFixed(0)}% APR ({s.funding_rate_8h_pct.toFixed(3)}%/8h)
-              </span>
+
+        {heat.top_discount_symbols.length > 0 && (
+          <div>
+            <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--accent-emerald)", marginBottom: "6px", textTransform: "uppercase" }}>
+              Top 5 Discount (Short Squeeze)
             </div>
-          ))}
-        </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "11px", fontFamily: "var(--font-mono)" }}>
+              {heat.top_discount_symbols.slice(0, 5).map((s) => (
+                <div key={s.symbol} style={{ display: "flex", justifyContent: "space-between", gap: "6px", padding: "4px 8px", background: "rgba(255,255,255,0.02)", borderRadius: "4px" }}>
+                  <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{s.symbol}</span>
+                  <span style={{ color: "var(--accent-emerald)", fontWeight: 800 }}>
+                    {s.annualized_apr_pct >= 0 ? "+" : ""}{s.annualized_apr_pct.toFixed(0)}% APR ({s.funding_rate_8h_pct.toFixed(3)}%)
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -489,7 +516,7 @@ const MarketBreadthCard = memo(function MarketBreadthCard({
             borderRadius: "6px",
           }}
         >
-          {breadth.breadth_regime.replace("_", " ")}
+          {breadth.breadth_regime.replaceAll("_", " ")}
         </span>
       </div>
 
