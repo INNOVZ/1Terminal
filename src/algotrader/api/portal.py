@@ -577,13 +577,27 @@ async def _do_crypto_screen_locked(
 
         if opportunities:
             # Runtime applies the shared publication policy and desk ranking.
-            top_picks = [
+            # ALFA v3.7 (P0-2): Keep ON_RADAR and WATCHLIST_COIL in disjoint [:16] lanes so
+            # passive Watchlist coils never crowd out live ON_RADAR breakouts before routing.
+            verified_opps = [
                 opp
                 for opp in opportunities
                 if len(opp.checklist) == 5 and all(item[1] is True for item in opp.checklist)
+            ]
+            radar_picks = [
+                opp
+                for opp in verified_opps
+                if getattr(opp, "publication_lane", "ON_RADAR") != "WATCHLIST_COIL"
             ][:16]
+            coil_picks = [
+                opp
+                for opp in verified_opps
+                if getattr(opp, "publication_lane", "ON_RADAR") == "WATCHLIST_COIL"
+            ][:16]
+            top_picks = radar_picks + coil_picks
 
-            # Pre-fetch 1H candles for top opportunities concurrently (paced with semaphore)
+            # Pre-fetch 1H candles for top opportunities concurrently (ALFA v3.7 P0-4: reuse Stage-1 candles first!)
+            stage1_1h = getattr(run, "stage1_candles_1h", None) or {}
             candle_sem = asyncio.Semaphore(10)
 
             async def _fetch_pick_candles(opp: Any) -> dict[str, Any]:
@@ -591,6 +605,21 @@ async def _do_crypto_screen_locked(
                 if opp_dict.get("candles"):
                     return opp_dict
                 sym = opp.instrument.id.symbol
+                cached_1h = stage1_1h.get(sym)
+                if cached_1h:
+                    opp_dict["candles"] = [
+                        {
+                            "time": int(c.closed_at.timestamp()),
+                            "open": float(c.open),
+                            "high": float(c.high),
+                            "low": float(c.low),
+                            "close": float(c.close),
+                            "volume": float(c.volume),
+                        }
+                        for c in cached_1h[-250:]
+                        if c.closed
+                    ]
+                    return opp_dict
                 inst = inst_map.get(sym)
                 candles_payload = []
                 if inst:
@@ -752,6 +781,7 @@ async def _do_crypto_screen_locked(
                 }
                 for candidate in cached_prior
             )
+        stage0_quotes = getattr(run, "stage0_quotes", None) or None
         publication_quotes: dict[str, Quote] = {}
         raw_retained_prior = await reconcile_radar_cohort(
             prior_opportunities=prior_opps,
@@ -763,6 +793,7 @@ async def _do_crypto_screen_locked(
             additional_instruments=[inst_map[o["symbol"]] for o in deduped_opps
                                     if o.get("symbol") in inst_map],
             quote_sink=publication_quotes,
+            preloaded_quotes=stage0_quotes,
         )
         retained_prior: list[dict[str, Any]] = []
         for p in raw_retained_prior:
@@ -930,7 +961,8 @@ async def _do_crypto_screen_locked(
         _consecutive_scan_failures = 0
 
         # Automatically enroll verified 5/5 episodes into the 48h Auto-Watchlist & update outcomes
-        with contextlib.suppress(Exception):
+        # ALFA v3.7 (P0-4 + P1-2 + P2-1): Reuse Stage-0 quotes + Stage-1 1H/4H candles and log errors explicitly.
+        try:
             auto_watch = _get_auto_watchlist_service(runtime)
             for opp_item in final_opps:
                 opp_item.setdefault("screening_policy_version", active_policy_ver)
@@ -964,9 +996,14 @@ async def _do_crypto_screen_locked(
                         force_refresh=True,
                         internal_scheduler=True,
                         now=now,
+                        preloaded_quotes=stage0_quotes,
+                        preloaded_candles_1h=getattr(run, "stage1_candles_1h", None) or None,
+                        preloaded_candles_4h=getattr(run, "stage1_candles_4h", None) or None,
                     ),
                     timeout=10.0,
                 )
+        except Exception:
+            logging.getLogger(__name__).exception("Auto-watchlist post-scan sync/refresh failed")
 
         # Persist latest live scan to disk atomically off the main event loop thread
         try:
@@ -1226,6 +1263,12 @@ async def _screener_cron_loop(interval_hours: int = 1) -> None:
             else:
                 await _do_crypto_screen(mode="all", min_score=50.0, max_symbols=320)
             try:
+                # ALFA v3.7 (P0-4): Stagger Top-Gainer Short Watch into the next fresh UTC Binance
+                # weight minute so it never collides with the :01-:02 320-symbol sweep window.
+                now_sw = datetime.now(UTC)
+                if now_sw.minute <= 2:
+                    stagger_s = max(2.0, 61.0 - (now_sw.timestamp() % 60.0))
+                    await asyncio.sleep(stagger_s)
                 await _run_short_watch_cycle()
             except Exception:
                 logging.getLogger(__name__).exception("Top-gainer short-watch cycle failed")
@@ -1241,15 +1284,46 @@ async def _merge_scout_promotions(
     promoted_at: datetime,
     scan_id: str,
 ) -> None:
-    """Merge 5/5 quarter-hour kinetic promotions into live Radar cache without clobbering retained cards."""
+    """Merge 5/5 quarter-hour kinetic promotions into live Radar cache preserving episode & base invariants."""
     global _screener_cache, _cache_timestamp, _episode_roster
     if not promoted or not _screener_cache:
         return
     existing = list(_screener_cache.get("opportunities") or [])
-    seen_syms = {str(p.get("symbol", "")).upper() for p in promoted}
-    merged = list(promoted) + [
-        o for o in existing if str(o.get("symbol", "")).upper() not in seen_syms
-    ]
+
+    def _base_key(item: dict[str, Any]) -> str:
+        return str(
+            item.get("base_asset")
+            or str(item.get("symbol", "")).removesuffix("USDT").removesuffix("USDC")
+        ).upper()
+
+    existing_by_base = {_base_key(o): o for o in existing if _base_key(o)}
+    accepted: list[dict[str, Any]] = []
+    accepted_bases: set[str] = set()
+    scout_events: list[dict[str, Any]] = []
+    for p in promoted:
+        base = _base_key(p)
+        if not base or base in accepted_bases:
+            continue
+        prev = existing_by_base.get(base)
+        # ALFA v3.7 (P1-4): Preserve frozen bracket/episode continuity when same thesis is already live.
+        if prev is not None and same_radar_episode(prev, p):
+            continue
+        accepted_bases.add(base)
+        accepted.append(p)
+        scout_events.append(
+            {
+                "symbol": p.get("symbol"),
+                "at": promoted_at.isoformat(),
+                "state": "FRESH_COIL",
+                "retained": True,
+                "reason": "scout_kinetic_promotion",
+                "first_seen_at": p.get("first_seen_at") or promoted_at.isoformat(),
+                "candidate": {k: v for k, v in p.items() if k != "candles"},
+            }
+        )
+    if not accepted:
+        return
+    merged = accepted + [o for o in existing if _base_key(o) not in accepted_bases]
     merged = merged[:16]
     updated = dict(_screener_cache)
     updated["opportunities"] = merged
@@ -1261,6 +1335,17 @@ async def _merge_scout_promotions(
     _screener_cache = updated
     _cache_timestamp = promoted_at
     _episode_roster = list(merged)
+    with contextlib.suppress(Exception):
+        await asyncio.to_thread(
+            atomic_write_json,
+            Path("data/radar_events") / f"{uuid4()}.json",
+            {
+                "schema": "atlas-radar-events-v2",
+                "scan_id": scan_id,
+                "at": promoted_at.isoformat(),
+                "events": scout_events,
+            },
+        )
     with contextlib.suppress(Exception):
         await asyncio.to_thread(atomic_write_json, Path("data/screener_latest.json"), updated)
 

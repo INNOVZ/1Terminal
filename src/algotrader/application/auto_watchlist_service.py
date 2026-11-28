@@ -35,7 +35,7 @@ from algotrader.domain.auto_watchlist import (
     directional_return_pct,
     evaluate_auto_watch_episode,
 )
-from algotrader.domain.models import Candle, Instrument
+from algotrader.domain.models import Candle, Instrument, Quote
 from algotrader.domain.ports import MarketDataPort
 
 
@@ -93,8 +93,13 @@ class AutoWatchlistService:
 
     @contextlib.contextmanager
     def _get_connection(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        # ALFA v3.7 (P2-1): Enable WAL journal mode and 5s busy_timeout so concurrent API reads
+        # and post-scan writes never collide with transient sqlite3.OperationalError locks.
+        conn = sqlite3.connect(str(self._db_path), timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
         try:
             with conn:
                 yield conn
@@ -1170,8 +1175,11 @@ class AutoWatchlistService:
         force_refresh: bool = False,
         internal_scheduler: bool = False,
         now: datetime | None = None,
+        preloaded_quotes: Mapping[str, Quote] | None = None,
+        preloaded_candles_1h: Mapping[str, Sequence[Candle]] | None = None,
+        preloaded_candles_4h: Mapping[str, Sequence[Candle]] | None = None,
     ) -> list[AutoWatchEpisode]:
-        """Evaluate all ON_RADAR and WATCHLIST episodes against live Binance quotes & 1h klines.
+        """Evaluate all ON_RADAR and WATCHLIST episodes against live Binance quotes & 1h/4h klines.
 
         Respects the 30s singleflight cooldown for external/operator force refreshes;
         only `internal_scheduler=True` (post-scan hook) may bypass cooldown.
@@ -1194,26 +1202,47 @@ class AutoWatchlistService:
             inst_map = {inst.id.symbol: inst for inst in instruments}
             active_symbols = sorted({e.symbol for e in live_eps})
 
-            # 1. Fetch fresh live bid/ask midpoints with explicit observed timestamps
+            # 1. Reuse fresh Stage-0 quotes when available (ALFA v3.7 P0-4 saves 55 weight);
+            # fall back to live bulk quotes ONLY for symbols missing from preloaded_quotes.
             live_quotes: dict[str, tuple[Decimal, datetime]] = {}
-            target_insts = [inst_map[s] for s in active_symbols if s in inst_map]
-            if target_insts:
+            missing_quote_insts: list[Instrument] = []
+            for s in active_symbols:
+                inst = inst_map.get(s)
+                if inst is None:
+                    continue
+                pq = preloaded_quotes.get(s) if preloaded_quotes else None
+                if pq is not None and pq.is_valid_book and pq.is_fresh_at(ref_now, max_age_seconds=300.0):
+                    obs_dt = pq.exchange_observed_at or pq.observed_at
+                    live_quotes[s] = (pq.mid, obs_dt)
+                else:
+                    missing_quote_insts.append(inst)
+            if missing_quote_insts:
                 with contextlib.suppress(Exception):
-                    quotes = await asyncio.wait_for(market_data.quotes(target_insts), timeout=6.0)
+                    quotes = await asyncio.wait_for(market_data.quotes(missing_quote_insts), timeout=6.0)
                     for q in quotes:
                         if q.is_valid_book and q.is_fresh_at(ref_now, max_age_seconds=300.0):
                             obs_dt = q.exchange_observed_at or q.observed_at
                             live_quotes[q.instrument_id.symbol] = (q.mid, obs_dt)
 
-            # 2. Fetch 1h candles covering each symbol's earliest active published_at
+            # 2. Fetch 1h candles covering each symbol's earliest active published_at + true 200-bar 4h candles
+            #    ONLY for active WATCHLIST long non-recovery episodes (ALFA v3.7 P0-4 + P1-2: reuse Stage-1 candles first,
+            #    eliminating 55-bar EMA50 warmup bias while keeping ON_RADAR refresh to 1 candle call/symbol).
             earliest_by_symbol: dict[str, datetime] = {}
+            needs_4h_ema_symbols: set[str] = set()
             for ep in live_eps:
                 prev = earliest_by_symbol.get(ep.symbol)
                 if prev is None or ep.published_at < prev:
                     earliest_by_symbol[ep.symbol] = ep.published_at
+                if (
+                    ep.status is AutoWatchStatus.WATCHLIST
+                    and ep.direction.lower() != "short"
+                    and ep.setup_label != "RECOVERY_RECLAIM_LONG"
+                ):
+                    needs_4h_ema_symbols.add(ep.symbol)
 
             sem = asyncio.Semaphore(8)
             candles_by_symbol: dict[str, Sequence[Candle]] = {}
+            candles_4h_by_symbol: dict[str, Sequence[Candle]] = {}
 
             async def _fetch_candles(sym: str) -> None:
                 inst = inst_map.get(sym)
@@ -1221,15 +1250,30 @@ class AutoWatchlistService:
                     return
                 earliest_pub = earliest_by_symbol.get(sym, ref_now - timedelta(hours=72))
                 age_hours = max(0, int((ref_now - earliest_pub).total_seconds() // 3600))
-                # Fetch >= 220 1H bars (~55 4H bars, weight 2) so live 4H EMA50 Trend Baseline is verified
-                needed_bars = min(500, max(220, age_hours + 6))
-                async with sem:
-                    with contextlib.suppress(Exception):
-                        bars = await asyncio.wait_for(
-                            market_data.candles(inst, "1h", needed_bars),
-                            timeout=6.0,
-                        )
-                        candles_by_symbol[sym] = bars
+                pre_1h = preloaded_candles_1h.get(sym) if preloaded_candles_1h else None
+                pre_4h = preloaded_candles_4h.get(sym) if preloaded_candles_4h else None
+                if pre_1h and len(pre_1h) >= age_hours + 2:
+                    candles_by_symbol[sym] = pre_1h
+                else:
+                    # Keep 1h fetch compact (<= 96 bars = weight 1) when 4h EMA50 uses true 4h candles
+                    needed_1h = min(500, max(72, age_hours + 6))
+                    async with sem:
+                        with contextlib.suppress(Exception):
+                            bars = await asyncio.wait_for(
+                                market_data.candles(inst, "1h", needed_1h),
+                                timeout=6.0,
+                            )
+                            candles_by_symbol[sym] = bars
+                if pre_4h and len(pre_4h) >= 50:
+                    candles_4h_by_symbol[sym] = pre_4h
+                elif sym in needs_4h_ema_symbols:
+                    async with sem:
+                        with contextlib.suppress(Exception):
+                            bars_4h = await asyncio.wait_for(
+                                market_data.candles(inst, "4h", 200),
+                                timeout=6.0,
+                            )
+                            candles_4h_by_symbol[sym] = bars_4h
 
             await asyncio.gather(*(_fetch_candles(s) for s in active_symbols))
 
@@ -1240,6 +1284,7 @@ class AutoWatchlistService:
                     updated = evaluate_auto_watch_episode(
                         ep,
                         candles=candles_by_symbol.get(ep.symbol, ()),
+                        candles_4h=candles_4h_by_symbol.get(ep.symbol, ()),
                         live_price=q_pair[0] if q_pair else None,
                         live_observed_at=q_pair[1] if q_pair else None,
                         now=ref_now,

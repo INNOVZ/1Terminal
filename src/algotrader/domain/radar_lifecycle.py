@@ -442,10 +442,15 @@ def reverify_candidate_gates(
         )
         constructive_breakout_release = (
             not is_short
-            and bbw <= Decimal("0.32")
             and discovery_price is not None
             and discovery_price > Decimal("0")
-            and current_price >= discovery_price * Decimal("1.005")
+            and (
+                (bbw <= Decimal("0.32") and current_price >= discovery_price * Decimal("1.005"))
+                or (
+                    setup_label in ("MOMENTUM_EMERGING_LONG", "BREAKOUT_LONG")
+                    and current_price >= discovery_price * Decimal("0.985")
+                )
+            )
         )
         climax_band_rollover = is_climax_or_utad_short and (
             discovery_price is None or current_price <= discovery_price * Decimal("1.025")
@@ -471,6 +476,7 @@ def reverify_candidate_gates(
 
     # 5. Gate L5/L6: Smart Money & Derivatives Absorption (enforces acute 1h OI, taker flow, and funding crowding)
     oi_7d = _to_dec(metrics.get("oi_change_7d_pct"))
+    oi_4h = _to_dec(metrics.get("oi_change_4h_pct"))
     oi_1h = _to_dec(metrics.get("oi_change_1h_pct"))
     funding_bps = _to_dec(metrics.get("funding_rate_bps"))
     taker_r = _to_dec(metrics.get("taker_buy_sell_ratio"))
@@ -486,7 +492,20 @@ def reverify_candidate_gates(
             )
             else Decimal("-8.0")
         )
-        if oi_7d is not None and oi_7d < oi_7d_floor:
+        # ALFA v3.7 (P0-3): Mirror discovery's fresh contract-quantity OI inflection exemption
+        # so active post-washout leaders (e.g. SENT/SKY/RS_IGN) are never killed at T+1h..T+3h
+        # by stale 7d OI when fresh 4h OI + buyer flow or active profit expansion confirm demand.
+        has_fresh_oi_inflection = bool(
+            (oi_4h is not None and oi_4h >= Decimal("1.0") and taker_r is not None and taker_r >= Decimal("1.08"))
+            or (oi_4h is not None and oi_4h >= Decimal("0.1") and taker_r is not None and taker_r >= Decimal("1.17"))
+            or (
+                in_profit_expansion
+                and taker_r is not None
+                and taker_r >= Decimal("1.00")
+                and (oi_1h is None or oi_1h >= Decimal("-3.5"))
+            )
+        )
+        if oi_7d is not None and oi_7d < oi_7d_floor and not has_fresh_oi_inflection:
             sm_passed = False
         if oi_1h is not None and oi_1h <= Decimal("-5.0"):
             sm_passed = False
@@ -535,9 +554,9 @@ def reverify_candidate_gates(
         and taker_r >= Decimal("1.05")
         and discovery_price is not None
         and discovery_price > Decimal("0")
-        and current_price >= discovery_price * Decimal("0.995")
+        and current_price >= discovery_price * Decimal("0.990")
         and vcr is not None
-        and vcr <= Decimal("2.50")
+        and vcr <= Decimal("5.00")
     )
     climax_short_volume_ok = (
         is_climax_or_utad_short

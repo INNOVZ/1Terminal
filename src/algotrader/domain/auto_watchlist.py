@@ -604,8 +604,13 @@ def classify_radar_eviction(
         if is_recovery_family:
             if oi_4h is not None and oi_4h <= Decimal("-4.0"):
                 return AutoWatchStatus.HARD_INVALIDATED, "oi_4h_collapse", None, checklist
-        elif oi_7d is not None and oi_7d < Decimal("-8.0"):
-            return AutoWatchStatus.HARD_INVALIDATED, "oi_7d_collapse", None, checklist
+        else:
+            has_fresh_oi_inflection = bool(
+                (oi_4h is not None and oi_4h >= Decimal("1.0") and taker is not None and taker >= Decimal("1.08"))
+                or (oi_4h is not None and oi_4h >= Decimal("0.1") and taker is not None and taker >= Decimal("1.17"))
+            )
+            if oi_7d is not None and oi_7d < Decimal("-8.0") and not has_fresh_oi_inflection:
+                return AutoWatchStatus.HARD_INVALIDATED, "oi_7d_collapse", None, checklist
         if funding_bps is not None and funding_bps >= Decimal("15.0"):
             return AutoWatchStatus.HARD_INVALIDATED, "funding_crowded", None, checklist
         if taker is not None and taker < Decimal("0.78"):
@@ -678,8 +683,11 @@ def _check_watchlist_structural_invalidation(
     post_bars: Sequence[Candle],
     effective_price: Decimal,
     breakout_touched: bool,
+    all_closed_4h: Sequence[Candle] = (),
+    now: datetime | None = None,
+    peak_mfe_pct: Decimal | None = None,
 ) -> tuple[str | None, tuple[dict[str, Any], ...]]:
-    """ALFA v3.6 Watchlist live structural guard: evict broken 4H EMA50 bases and failed breakouts."""
+    """ALFA v3.7 Watchlist live structural guard: evict broken 4H EMA50 bases, failed breakouts, and bleeding dead coils."""
     if (
         episode.status is not AutoWatchStatus.WATCHLIST
         or episode.direction.lower() == "short"
@@ -687,8 +695,14 @@ def _check_watchlist_structural_invalidation(
     ):
         return None, episode.checklist
 
-    if episode.setup_label != "RECOVERY_RECLAIM_LONG" and len(all_closed_1h) >= 200:
-        closes_4h = _resample_1h_to_4h_closes(all_closed_1h)
+    # ALFA v3.7 (P1-2): Prefer true 200-bar 4H candles (eliminating 55-bar EMA50 warmup bias);
+    # fall back to 1H->4H UTC resampling only when explicit 4H candles are not supplied.
+    if episode.setup_label != "RECOVERY_RECLAIM_LONG":
+        closes_4h: list[Decimal] = []
+        if len(all_closed_4h) >= 50:
+            closes_4h = [c.close for c in all_closed_4h]
+        elif len(all_closed_1h) >= 200:
+            closes_4h = _resample_1h_to_4h_closes(all_closed_1h)
         if len(closes_4h) >= 50:
             ema50_4h = ema(closes_4h, 50)[-1]
             if (
@@ -726,6 +740,22 @@ def _check_watchlist_structural_invalidation(
         ):
             return "failed_breakout_rejection", episode.checklist
 
+    # ALFA v3.7 (P1-2): Dead-coil bleed invalidation (evicts coils like MAGICUSDT -8.4% with
+    # peak_mfe <= 0% that bleed straight down for >= 6h without ever challenging breakout).
+    if now is not None and episode.signal_price > Decimal("0"):
+        age_hours = (now.astimezone(UTC) - episode.published_at.astimezone(UTC)).total_seconds() / 3600.0
+        cur_ret = directional_return_pct(
+            direction=episode.direction,
+            reference_price=episode.signal_price,
+            price=effective_price,
+        )
+        if (
+            age_hours >= 6.0
+            and cur_ret <= Decimal("-5.5")
+            and (peak_mfe_pct is None or peak_mfe_pct < Decimal("1.0"))
+        ):
+            return "watchlist_dead_coil_drawdown", episode.checklist
+
     return None, episode.checklist
 
 
@@ -736,6 +766,7 @@ def evaluate_auto_watch_episode(
     live_price: Decimal | None,
     now: datetime,
     live_observed_at: datetime | None = None,
+    candles_4h: Sequence[Candle] = (),
 ) -> AutoWatchEpisode:
     """Advance an ON_RADAR or WATCHLIST episode against post-publication candles and live price."""
     if episode.is_resolved:
@@ -757,6 +788,10 @@ def evaluate_auto_watch_episode(
     # Expected first 1h bar open covering publication
     all_closed_1h = sorted(
         (c for c in candles if c.closed and c.high > 0 and c.low > 0 and c.close > 0),
+        key=lambda c: c.opened_at,
+    )
+    all_closed_4h = sorted(
+        (c for c in candles_4h if c.closed and c.high > 0 and c.low > 0 and c.close > 0),
         key=lambda c: c.opened_at,
     )
     pub_hour_floor = episode.published_at.replace(minute=0, second=0, microsecond=0)
@@ -1107,6 +1142,9 @@ def evaluate_auto_watch_episode(
             post_bars=post_bars,
             effective_price=live_price,
             breakout_touched=breakout_touched,
+            all_closed_4h=all_closed_4h,
+            now=ref_now,
+            peak_mfe_pct=peak_mfe,
         )
         if inv_reason is not None:
             return replace(
@@ -1171,6 +1209,9 @@ def evaluate_auto_watch_episode(
             post_bars=post_bars,
             effective_price=last_obs_price,
             breakout_touched=breakout_touched,
+            all_closed_4h=all_closed_4h,
+            now=ref_now,
+            peak_mfe_pct=peak_mfe,
         )
         if inv_reason is not None:
             return replace(

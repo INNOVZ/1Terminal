@@ -49,6 +49,7 @@ async def reconcile_radar_cohort(
     early_recovery_enabled: bool = False,
     additional_instruments: Sequence[Any] = (),
     quote_sink: dict[str, Quote] | None = None,
+    preloaded_quotes: dict[str, Quote] | None = None,
 ) -> list[dict[str, Any]]:
     """Re-audits prior radar setups against live 1H candles and retains active trades until stop or target."""
     ref_now = now or datetime.now(UTC)
@@ -117,8 +118,21 @@ async def reconcile_radar_cohort(
         ]
         wanted = list({inst.id.symbol: inst for inst in [*wanted, *additional_instruments]}.values())
         if wanted:
-            quotes = await asyncio.wait_for(futures.quotes(wanted), timeout=6.0)
-            quotes_by_symbol = {q.instrument_id.symbol: q for q in quotes}
+            fresh_preloaded: dict[str, Quote] = {}
+            if preloaded_quotes:
+                for inst_w in wanted:
+                    pq = preloaded_quotes.get(inst_w.id.symbol)
+                    if (
+                        pq is not None
+                        and pq.is_valid_book
+                        and pq.is_fresh_at(ref_now, max_age_seconds=55.0, max_future_seconds=5.0)
+                    ):
+                        fresh_preloaded[inst_w.id.symbol] = pq
+            missing_wanted = [i for i in wanted if i.id.symbol not in fresh_preloaded]
+            quotes_by_symbol.update(fresh_preloaded)
+            if missing_wanted:
+                quotes = await asyncio.wait_for(futures.quotes(missing_wanted), timeout=6.0)
+                quotes_by_symbol.update({q.instrument_id.symbol: q for q in quotes})
             if quote_sink is not None:
                 quote_sink.update(quotes_by_symbol)
     except Exception:
@@ -267,6 +281,10 @@ async def reconcile_radar_cohort(
                 if getattr(deriv_snap, "open_interest_change_7d", None) is not None:
                     metrics["oi_change_7d_pct"] = (
                         f"{float(deriv_snap.open_interest_change_7d * Decimal('100')):+.2f}%"
+                    )
+                if getattr(deriv_snap, "open_interest_change_4h", None) is not None:
+                    metrics["oi_change_4h_pct"] = (
+                        f"{float(deriv_snap.open_interest_change_4h * Decimal('100')):+.2f}%"
                     )
                 if getattr(deriv_snap, "open_interest_change_1h", None) is not None:
                     metrics["oi_change_1h_pct"] = (

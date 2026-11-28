@@ -74,6 +74,8 @@ def assess_kinetic_readiness(
     opp: CryptoOpportunity,
     closed_1h: Sequence[Candle],
     derivatives: DerivativesSnapshot | None,
+    *,
+    is_btc_cascade: bool = False,
 ) -> KineticAssessment:
     """Classify a verified 5/5 opportunity into `ON_RADAR` (kinetic) vs `WATCHLIST_COIL` (staging)."""
     va6 = compute_va6_ratio(closed_1h)
@@ -189,10 +191,17 @@ def assess_kinetic_readiness(
     # Note: execution_brackets.py guarantees `breakout_trigger > close`, so crypto_screener.py
     # sets `breakout_readiness_status = "RETEST_ONLY_WAIT_FOR_DIP"` on virtually all pre-breakout
     # Longs. Distinguish genuine kinetic / Smart-Money absorption setups from passive grinders:
+    # ALFA v3.7 (P1-3/P1-5): Tighten `dip_coil_igniting` during BTC cascade/bleed and require
+    # non-collapsing 1h OI + constructive 1h taker so OOS losers (TRUST/KERNEL/VIRTUAL) do not leak.
+    min_vel_va6 = Decimal("1.80") if is_btc_cascade else Decimal("1.35")
+    min_vel_tk4 = Decimal("1.15") if is_btc_cascade else Decimal("1.08")
+    min_vel_tk1 = Decimal("1.12") if is_btc_cascade else Decimal("1.04")
     velocity_ignition = (
-        va6 >= Decimal("1.35")
+        va6 >= min_vel_va6
         and tkr_4h is not None
-        and tkr_4h >= Decimal("1.08")
+        and tkr_4h >= min_vel_tk4
+        and (tkr_1h is None or tkr_1h >= min_vel_tk1)
+        and (oi_1h is None or oi_1h >= Decimal("-0.015"))
         and not seller_distributing_1h
         and not bloated_churn_without_breakout
         and not unreachable_submerged_trigger
@@ -234,6 +243,7 @@ def assess_kinetic_readiness(
         )
     )
     funding_val = derivatives.funding_rate if derivatives is not None else opp.funding_rate
+    # ALFA v3.7 (P0-1): Calibrated to exact live Binance contract-quantity OI (`sumOpenInterest`).
     short_squeeze_ignition = (
         opp.setup_label is SetupLabel.SHORT_SQUEEZE_ABSORPTION_LONG
         and va6 >= Decimal("1.50")
@@ -242,9 +252,9 @@ def assess_kinetic_readiness(
         and funding_val is not None
         and funding_val <= Decimal("-0.00005")
         and oi_4h is not None
-        and oi_4h >= Decimal("0.030")
+        and oi_4h >= Decimal("0.010")
         and oi_7d is not None
-        and oi_7d >= Decimal("0.10")
+        and oi_7d >= Decimal("0.05")
         and c_last.close >= ema20_1h
     )
 
@@ -471,15 +481,22 @@ def evaluate_v33_local_base_or_flag(
         else None
     )
     rs6_pp = btc_relative_6h_pp if btc_relative_6h_pp is not None else Decimal("0")
+    min_rs6_req = Decimal("4.5") if is_btc_cascade else Decimal("3.0")
+    rs_ema_ok = (
+        close >= ema50_4h * Decimal("0.995")
+        if is_btc_cascade
+        else (close >= ema50_4h * Decimal("0.985") or (close >= ema20_4h and rs6_pp >= Decimal("3.5")))
+    )
     rs_ignition_ok = (
         Decimal("-0.01") <= ret_24h <= Decimal("0.14")
         and close >= snap_1h.ema20
         and close >= prior_6h_high * Decimal("0.995")
-        and (close >= ema50_4h * Decimal("0.985") or (close >= ema20_4h and rs6_pp >= Decimal("3.5")))
-        and rs6_pp >= Decimal("3.0")
+        and rs_ema_ok
+        and rs6_pp >= min_rs6_req
         and (
-            va6 >= Decimal("1.20")
+            va6 >= Decimal("1.15")
             or (candle_tk1 is not None and candle_tk1 >= Decimal("1.35"))
+            or (candle_tk1 is not None and candle_tk1 >= Decimal("1.22") and rs6_pp >= Decimal("3.5"))
         )
         and cpos >= Decimal("0.50")
         and upper_wick <= Decimal("0.42")
@@ -534,14 +551,34 @@ def evaluate_v33_local_base_or_flag(
         return None
     rs_only = rs_ignition_ok and not (local_reclaim_ok or flag_cont_ok)
     if rs_only:
+        # ALFA v3.7 (P0-1): Calibrated for exact live Binance contract-quantity OI (`sumOpenInterest`),
+        # which is price-neutral and expands +0.2%..+2.8% prior to breakout (unlike USD notional OI).
         flow_ok = bool(
             tkr_4h is not None
-            and tkr_4h >= Decimal("1.10")
             and tkr_1h is not None
-            and tkr_1h >= Decimal("1.08")
             and oi_4h is not None
-            and oi_4h >= Decimal("0.045")
-            and (oi_1h is None or oi_1h >= Decimal("-0.010"))
+            and (oi_1h is None or oi_1h >= Decimal("-0.008"))
+            and (
+                (
+                    oi_4h >= Decimal("0.008")
+                    and tkr_4h >= Decimal("1.10")
+                    and tkr_1h >= Decimal("1.08")
+                )
+                or (
+                    oi_4h >= Decimal("0.002")
+                    and tkr_4h >= Decimal("1.09")
+                    and tkr_1h >= Decimal("1.28")
+                    and (va6 >= Decimal("1.20") or tkr_4h >= Decimal("1.25"))
+                )
+                or (
+                    oi_4h >= Decimal("0.015")
+                    and oi_7d is not None
+                    and oi_7d >= Decimal("0.08")
+                    and tkr_4h >= Decimal("1.10")
+                    and tkr_1h >= Decimal("0.95")
+                    and va6 >= Decimal("2.00")
+                )
+            )
         )
         if (
             not flow_ok
@@ -593,7 +630,14 @@ def evaluate_v33_local_base_or_flag(
         ):
             return None
 
-    brk_trig = ceil_to_increment(max(prior_12h_high if not rs_only else prior_6h_high, close), inst.price_tick)
+    # ALFA v3.7 (P1-5): Keep breakout_trigger strictly above close (+0.3% min) to avoid instant
+    # $0.0001 tick hair-triggers, populate explicit breakout/retest stops, and compute real pillar scores.
+    brk_trig = ceil_to_increment(
+        max(prior_12h_high if not rs_only else prior_6h_high, close * Decimal("1.003")),
+        inst.price_tick,
+    )
+    if brk_trig <= close:
+        brk_trig = ceil_to_increment(close + inst.price_tick, inst.price_tick)
     shelves = extract_overhead_shelves_4h(c4h, close)
     t1, t2, t3 = _build_spaced_long_targets(
         effective_entry=close,
@@ -627,6 +671,12 @@ def evaluate_v33_local_base_or_flag(
         spaced_t1_calibration=True,
     )
     assert tkr_4h is not None
+    p_trend = min(Decimal("98.0"), max(Decimal("68.0"), Decimal("76.0") + rs6_pp * Decimal("1.8"))).quantize(Decimal("0.1"))
+    p_vol = min(Decimal("96.0"), max(Decimal("62.0"), Decimal("65.0") + (va6 - Decimal("1.0")) * Decimal("12.0"))).quantize(Decimal("0.1"))
+    p_mom = min(Decimal("98.0"), max(Decimal("68.0"), Decimal("74.0") + (tkr_4h - Decimal("1.0")) * Decimal("60.0"))).quantize(Decimal("0.1"))
+    p_deriv = min(Decimal("98.0"), max(Decimal("66.0"), Decimal("72.0") + ((oi_4h or Decimal("0")) * Decimal("400.0")))).quantize(Decimal("0.1"))
+    p_alpha = min(Decimal("98.0"), max(Decimal("65.0"), Decimal("72.0") + rs6_pp * Decimal("2.2"))).quantize(Decimal("0.1"))
+    p_struct = min(Decimal("96.0"), max(Decimal("68.0"), Decimal("70.0") + r_t2 * Decimal("8.0"))).quantize(Decimal("0.1"))
     checklist = (
         ("Trend Baseline", True, f"RS-Ignition leader (+{float(rs6_pp):.1f}pp vs BTC) holding EMA structure" if rs_only else "Local 72h base / HTF flag accepted"),
         ("Anti-Chasing Validated", True, f"Controlled extension (24h {float(ret_24h * 100):+.1f}%)"),
@@ -642,12 +692,12 @@ def evaluate_v33_local_base_or_flag(
         setup_label=lbl,
         score=final_score,
         score_breakdown=CryptoScreenerScoreBreakdown(
-            final_score,
-            final_score,
-            final_score,
-            final_score,
-            final_score,
-            final_score,
+            p_trend,
+            p_vol,
+            p_mom,
+            p_deriv,
+            p_alpha,
+            p_struct,
             macro_multiplier.quantize(Decimal("0.01")),
             final_score,
         ),
@@ -656,6 +706,8 @@ def evaluate_v33_local_base_or_flag(
         suggested_entry=close,
         breakout_trigger=brk_trig,
         suggested_stop=stop,
+        retest_stop=stop,
+        breakout_stop=stop,
         suggested_targets=(t1, t2, t3),
         risk_reward_ratio=min(r_t2, Decimal("5.00")).quantize(Decimal("0.01")),
         risk_reward_target_index=2,

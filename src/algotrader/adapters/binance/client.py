@@ -46,6 +46,7 @@ class BinanceHttpClient:
         self._max_futures_data_requests_5m = max(1, int(max_futures_data_requests_5m))
         self._futures_data_timestamps: deque[float] = deque()
         self._futures_data_lock = asyncio.Lock()
+        self._fapi_weight_lock = asyncio.Lock()
         self._used_weight_1m = 0
         self._weight_updated_at = 0.0
         self._http = httpx.AsyncClient(
@@ -95,12 +96,16 @@ class BinanceHttpClient:
         transport_attempt = 0
         while True:
             try:
-                # Wait for the observed /fapi weight window to expire near its ceiling.
-                # (/futures/data/* endpoints use their own 5-minute request quota below and do not emit x-mbx-used-weight-1m.)
+                # ALFA v3.7 (P0-4): Pace at the exact UTC minute rollover under a single lock and reset
+                # `_used_weight_1m` so concurrent coroutines never stall a full 60s and time out retention.
                 if path.startswith("/fapi/") and self._used_weight_1m >= 2150:
-                    remaining = 60.0 - (time.monotonic() - self._weight_updated_at)
-                    if remaining > 0:
-                        await asyncio.sleep(remaining)
+                    async with self._fapi_weight_lock:
+                        if self._used_weight_1m >= 2150:
+                            utc_remaining = 60.5 - (time.time() % 60.0)
+                            if 0.0 < utc_remaining <= 60.5:
+                                await asyncio.sleep(utc_remaining)
+                            self._used_weight_1m = 0
+                            self._weight_updated_at = time.monotonic()
                 if path.startswith("/futures/data/"):
                     await self._acquire_futures_data_slot()
                 response = await self._http.get(path, params=params)

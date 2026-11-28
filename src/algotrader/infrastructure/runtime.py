@@ -15,7 +15,7 @@ from algotrader.adapters.external.macro_provider import MacroSentimentProvider
 from algotrader.application.scan_recording import capture_scan
 from algotrader.config import Settings
 from algotrader.domain.crypto_screener_models import CryptoOpportunity, ScreenerMode
-from algotrader.domain.models import Direction
+from algotrader.domain.models import Candle, Direction, Quote
 from algotrader.domain.scan_observations import ScanReceipt
 from algotrader.infrastructure.scan_archive import LocalScanArchive
 
@@ -28,6 +28,9 @@ class ScreeningRun:
     opportunities: list[CryptoOpportunity]
     counts: dict[str, int]
     receipt: ScanReceipt
+    stage0_quotes: dict[str, Quote] = field(default_factory=dict)
+    stage1_candles_1h: dict[str, tuple[Candle, ...]] = field(default_factory=dict)
+    stage1_candles_4h: dict[str, tuple[Candle, ...]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -77,7 +80,34 @@ class Runtime:
                 self._canary_task = asyncio.create_task(self._continuation_canary(captured.record, effective))
             else:
                 structlog.get_logger(__name__).warning("continuation_canary_skipped_busy")
-        return ScreeningRun(captured.opportunities, dict(captured.record.counts), receipt)
+        stage0_quotes: dict[str, Quote] = {}
+        stage1_candles_1h: dict[str, tuple[Candle, ...]] = {}
+        stage1_candles_4h: dict[str, tuple[Candle, ...]] = {}
+        for call in captured.record.inputs:
+            if call.error is not None or call.result is None:
+                continue
+            if call.method == "quotes" and isinstance(call.result, (list, tuple)):
+                for q in call.result:
+                    if isinstance(q, Quote):
+                        stage0_quotes[q.instrument_id.symbol] = q
+            elif call.method == "candles" and isinstance(call.result, (list, tuple)):
+                inst_arg = call.arguments.get("instrument")
+                interval_arg = call.arguments.get("interval")
+                sym_arg = getattr(getattr(inst_arg, "id", None), "symbol", None)
+                if isinstance(sym_arg, str) and sym_arg:
+                    bars = tuple(c for c in call.result if isinstance(c, Candle))
+                    if interval_arg == "1h" and len(bars) > len(stage1_candles_1h.get(sym_arg, ())):
+                        stage1_candles_1h[sym_arg] = bars
+                    elif interval_arg == "4h" and len(bars) > len(stage1_candles_4h.get(sym_arg, ())):
+                        stage1_candles_4h[sym_arg] = bars
+        return ScreeningRun(
+            captured.opportunities,
+            dict(captured.record.counts),
+            receipt,
+            stage0_quotes=stage0_quotes,
+            stage1_candles_1h=stage1_candles_1h,
+            stage1_candles_4h=stage1_candles_4h,
+        )
 
     async def _continuation_canary(self, record: Any, settings: Settings) -> None:
         from algotrader.application.continuation_canary import evaluate_canary, write_canary

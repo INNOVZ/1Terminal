@@ -162,11 +162,16 @@ def compute_resistance_absorption(
     # 3. "RETEST_ONLY_WAIT_FOR_DIP" (Amber): All other valid candidates
     dist_to_vah = float((Decimal(str(vah_30d)) - Decimal(str(close))) / max(Decimal(str(close)), EPSILON))
 
+    # ALFA v3.7 (P0-1): Calibrated for exact live Binance contract-quantity OI (`sumOpenInterest`),
+    # where net contract expansion is price-neutral (+1.0% 4h contracts + taker >= 1.08, or
+    # non-declining +0.1% 4h contracts with aggressive taker >= 1.17 / share >= 0.54).
     has_fresh_oi_inflection = (
         oi_4h is not None
-        and oi_4h >= 0.025
         and taker_share is not None
-        and taker_share >= 0.52
+        and (
+            (oi_4h >= 0.010 and taker_share >= 0.52)
+            or (oi_4h >= 0.001 and taker_share >= 0.54)
+        )
     )
     is_severe_oi_drain = (
         oi_7d is not None

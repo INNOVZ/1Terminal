@@ -244,7 +244,14 @@ class CryptoOpportunityScreener:
             now_at = self._evaluated_at or datetime.now(UTC)
             if self._settings.kinetic_ignition_v33_enabled:
                 return activity_watch_selection(
-                    selected, liquid, quotes, max_symbols or 350, now_at, max_watch_slots=75
+                    selected,
+                    liquid,
+                    quotes,
+                    max_symbols or 320,
+                    now_at,
+                    max_watch_slots=45,
+                    include_midcap_overflow=True,
+                    max_change_pct=Decimal("14"),
                 )
             return discovery_watch_selection(selected, liquid, quotes, max_symbols or 265, now_at)
         return selected
@@ -560,10 +567,21 @@ class CryptoOpportunityScreener:
         if btc_inst is not None:
             btc_candles_1h = await market.candles(btc_inst, "1h", 240)
 
-        # BTC Velocity Liquidation Cascade check
+        # BTC Velocity Liquidation Cascade & Sustained Bleed check (ALFA v3.7 P1-3)
         btc_ret_1h = _return_over(btc_candles_1h, 1) if len(btc_candles_1h) >= 2 else ZERO
         btc_ret_4h = _return_over(btc_candles_1h, 4) if len(btc_candles_1h) >= 5 else ZERO
-        is_btc_cascade = btc_ret_1h <= Decimal("-0.025") or btc_ret_4h <= Decimal("-0.045")
+        btc_ret_12h = _return_over(btc_candles_1h, 12) if len(btc_candles_1h) >= 13 else ZERO
+        btc_ret_24h = _return_over(btc_candles_1h, 24) if len(btc_candles_1h) >= 25 else ZERO
+        btc_below_ema200_1h = False
+        if len(btc_candles_1h) >= 200:
+            btc_ema200_1h = ema([c.close for c in btc_candles_1h], 200)[-1]
+            btc_below_ema200_1h = btc_candles_1h[-1].close < btc_ema200_1h * Decimal("0.975")
+        is_btc_cascade = (
+            btc_ret_1h <= Decimal("-0.025")
+            or btc_ret_4h <= Decimal("-0.045")
+            or btc_ret_24h <= Decimal("-0.050")
+            or (btc_ret_12h <= Decimal("-0.035") and btc_below_ema200_1h)
+        )
 
         # 4. Stage 1: Vectorized In-Memory Screening (Zero External Derivatives Latency)
         semaphore = asyncio.Semaphore(15)
@@ -1037,7 +1055,12 @@ class CryptoOpportunityScreener:
 
         longs = [o for o in opportunities if o.direction is Direction.LONG]
         shorts = [o for o in opportunities if o.direction is Direction.SHORT]
-        longs.sort(key=_conviction, reverse=True)
+        # ALFA v3.7 (P0-2): Prioritize active ON_RADAR breakouts ahead of passive WATCHLIST_COIL
+        # staging setups so high-scoring passive coils can never starve live ON_RADAR signals.
+        longs.sort(
+            key=lambda o: (1 if o.publication_lane == "ON_RADAR" else 0, _conviction(o)),
+            reverse=True,
+        )
         shorts.sort(key=_conviction, reverse=True)
 
         # Final base-asset deduplication: retain the single highest conviction pair per token
@@ -1060,6 +1083,10 @@ class CryptoOpportunityScreener:
             if id(opp) not in deduped_ids:
                 self._note(opp.instrument.id.symbol, "curation", "candidate_deduplicated")
 
+        # Partition ON_RADAR longs vs WATCHLIST_COIL longs into disjoint lanes (P0-2)
+        radar_longs = [o for o in deduped_longs if o.publication_lane != "WATCHLIST_COIL"]
+        watchlist_longs = [o for o in deduped_longs if o.publication_lane == "WATCHLIST_COIL"]
+
         # Regime-aware desk allocation caps governed by COI
         if effective_coi is not None and effective_coi >= COI_OVEREXTENDED_THRESHOLD:
             # Overextended Regime (COI >= 75): favour shorts (e.g., max 8 Longs, max 8 Shorts)
@@ -1075,20 +1102,32 @@ class CryptoOpportunityScreener:
             desk_max_longs = 12
 
         if target_direction is None:
-            # Curated Institutional Top Picks with Regime-aware allocation
+            # Curated Institutional Top Picks with Regime-aware allocation:
+            # ON_RADAR longs + shorts occupy the live radar cap; WATCHLIST_COIL setups are
+            # appended separately (up to 16) so they never displace ON_RADAR breakouts.
             max_shorts = min(desk_max_shorts, len(deduped_shorts))
-            max_longs = min(min(desk_max_longs, effective_top_n - max_shorts), len(deduped_longs))
-            all_opps = deduped_longs[:max_longs] + deduped_shorts[:max_shorts]
-            all_opps.sort(key=_conviction, reverse=True)
-            final_opps = all_opps[:effective_top_n]
+            max_radar_longs = min(min(desk_max_longs, effective_top_n - max_shorts), len(radar_longs))
+            live_radar = radar_longs[:max_radar_longs] + deduped_shorts[:max_shorts]
+            live_radar.sort(key=_conviction, reverse=True)
+            live_radar = live_radar[:effective_top_n]
+            if self._settings.kinetic_ignition_v33_enabled:
+                final_opps = live_radar + watchlist_longs[:16]
+            else:
+                rem_slots = max(0, min(desk_max_longs, effective_top_n - max_shorts) - len(radar_longs[:max_radar_longs]))
+                final_opps = (live_radar + watchlist_longs[:rem_slots])[:effective_top_n]
             final_ids = {id(opp) for opp in final_opps}
             for opp in (*deduped_longs, *deduped_shorts):
                 self._note(opp.instrument.id.symbol, "curation", "published" if id(opp) in final_ids else "desk_cap")
             self.scan_counts["returned"] = len(final_opps)
             return final_opps
 
-        final_opps = deduped_longs if target_direction is Direction.LONG else deduped_shorts
-        final_opps = final_opps[:effective_top_n]
+        if target_direction is Direction.LONG:
+            if self._settings.kinetic_ignition_v33_enabled:
+                final_opps = radar_longs[:effective_top_n] + watchlist_longs[:16]
+            else:
+                final_opps = deduped_longs[:effective_top_n]
+        else:
+            final_opps = deduped_shorts[:effective_top_n]
         final_ids = {id(opp) for opp in final_opps}
         for opp in (*deduped_longs, *deduped_shorts):
             self._note(opp.instrument.id.symbol, "curation", "published" if id(opp) in final_ids else "desk_cap")
@@ -1644,8 +1683,24 @@ class CryptoOpportunityScreener:
             log.warning("candidate_dropped_due_to_degraded_stage2_telemetry", symbol=inst.id.symbol)
             return []
 
-        # Fix 2: Hard veto on finalized Stage 2 candidates if derivatives or 7d OI is missing ("N/A")
+        # Fix 2: Hard veto on finalized Stage 2 candidates if derivatives or 7d OI is missing ("N/A"),
+        # plus ALFA v3.7 (P1-1) universal Stage-2 orderbook depth floor (>= $25k each side) to reject thin-book traps.
         if explicit_derivatives is not None:
+            if (
+                self._settings.kinetic_ignition_v33_enabled
+                and (
+                    explicit_derivatives.bid_depth_notional < Decimal("25000")
+                    or explicit_derivatives.ask_depth_notional < Decimal("25000")
+                )
+            ):
+                self._note(
+                    inst.id.symbol,
+                    "stage2",
+                    "thin_orderbook_depth_rejected",
+                    bid_depth=float(explicit_derivatives.bid_depth_notional),
+                    ask_depth=float(explicit_derivatives.ask_depth_notional),
+                )
+                return []
             if dist_opp is not None and dist_opp.oi_change_7d is None and dist_opp.setup_label is not SetupLabel.BREAKDOWN_RETEST_SHORT:
                 dist_opp = None
             if accum_opp is not None and accum_opp.setup_label in (
@@ -1688,7 +1743,9 @@ class CryptoOpportunityScreener:
             and accum_opp is not None
             and derivatives is not None
         ):
-            kin = assess_kinetic_readiness(accum_opp, closed_1h, derivatives)
+            kin = assess_kinetic_readiness(
+                accum_opp, closed_1h, derivatives, is_btc_cascade=is_btc_cascade
+            )
             accum_opp = replace(
                 accum_opp,
                 publication_lane=kin.target_lane,

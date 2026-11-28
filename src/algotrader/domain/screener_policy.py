@@ -95,13 +95,32 @@ def publication_rejection_reasons(
         taker_4h = getattr(opportunity, "taker_ratio_4h", None)
         if taker_4h is None:
             taker_4h = getattr(opportunity, "taker_buy_ratio_4h", None)
+        taker_1h = getattr(opportunity, "taker_ratio_1h", None)
         is_aggressive_spot_led_emergence = (
-            opportunity.setup_label is SetupLabel.MOMENTUM_EMERGING_LONG
-            and taker_4h is not None
-            and Decimal(str(taker_4h)) >= Decimal("1.20")
-            and oi_1h is not None
+            oi_1h is not None
             and Decimal(str(oi_1h)) >= Decimal("-0.010")
             and (funding is None or Decimal(str(funding)) < Decimal("0.00015"))
+            and (
+                (
+                    opportunity.setup_label is SetupLabel.MOMENTUM_EMERGING_LONG
+                    and taker_4h is not None
+                    and (
+                        Decimal(str(taker_4h)) >= Decimal("1.20")
+                        or (
+                            Decimal(str(taker_4h)) >= Decimal("1.09")
+                            and taker_1h is not None
+                            and Decimal(str(taker_1h)) >= Decimal("1.28")
+                        )
+                    )
+                )
+                or (
+                    opportunity.setup_label
+                    in (SetupLabel.COIL_SPRING_LONG, SetupLabel.RANGE_BOTTOM_ACCUMULATION_LONG)
+                    and taker_4h is not None
+                    and Decimal(str(taker_4h)) >= Decimal("1.18")
+                    and (taker_1h is None or Decimal(str(taker_1h)) >= Decimal("1.12"))
+                )
+            )
         )
         if oi_7d is not None and Decimal(str(oi_7d)) < Decimal("-0.010"):
             if not is_early_recovery_v1 and not is_aggressive_spot_led_emergence:

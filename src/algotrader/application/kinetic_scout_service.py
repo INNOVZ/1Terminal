@@ -30,6 +30,7 @@ from algotrader.domain.crypto_screener_models import ScreenerMode
 from algotrader.domain.discovery_selection import scout_features, scout_selection
 from algotrader.domain.models import Candle, Direction, Instrument, Quote, Venue
 from algotrader.domain.ports import DerivativesDataPort, MarketDataPort
+from algotrader.domain.radar_insights import record_radar_publication
 
 SCOUT_MAX_SYMBOLS = 48
 MAX_IGNITION_ENRICHMENTS = 6
@@ -270,7 +271,38 @@ class KineticScoutService:
                 d["radar_origin"] = "fresh"
                 d["origin_scan_id"] = scan_id
                 d["first_seen_at"] = ref_now.isoformat()
+                d["discovery_price"] = d.get("current_price")
+                d["radar_status"] = "FRESH_COIL"
                 d["radar_status_label"] = "KINETIC BREAKOUT"
+                d["gates_passed"] = 5
+                d["gates_total"] = 5
+                d["failed_gates"] = []
+                # ALFA v3.7 (P1-4): Record publication metadata + pre-fetch 1H chart candles so
+                # scout promotions never show legacy-episode warnings or empty charts in the UI.
+                record_radar_publication(
+                    d,
+                    quotes_by_sym.get(opp.instrument.id.symbol),
+                    ref_now,
+                    scan_id,
+                )
+                if not d.get("candles"):
+                    with contextlib.suppress(Exception):
+                        raw_1h = await asyncio.wait_for(
+                            self._market.candles(opp.instrument, "1h", 250),
+                            timeout=3.0,
+                        )
+                        d["candles"] = [
+                            {
+                                "time": int(c.closed_at.timestamp()),
+                                "open": float(c.open),
+                                "high": float(c.high),
+                                "low": float(c.low),
+                                "close": float(c.close),
+                                "volume": float(c.volume),
+                            }
+                            for c in raw_1h
+                            if c.closed
+                        ]
                 promoted_dicts.append(d)
 
             if promoted_dicts:

@@ -23,7 +23,14 @@ def liquid_quote(quote: Quote, at: datetime, *, max_age_seconds: int = 120) -> b
     )
 
 
-def activity_scores(instruments: Sequence[Instrument], quotes: Mapping[str, Quote], at: datetime, *, max_age_seconds: int = 120) -> dict[str, Decimal]:
+def activity_scores(
+    instruments: Sequence[Instrument],
+    quotes: Mapping[str, Quote],
+    at: datetime,
+    *,
+    max_age_seconds: int = 120,
+    max_change_pct: Decimal = Decimal("9"),
+) -> dict[str, Decimal]:
     require_aware(at)
     features = {}
     for instrument in instruments:
@@ -33,7 +40,7 @@ def activity_scores(instruments: Sequence[Instrument], quotes: Mapping[str, Quot
         high, low, change = quote.high_24h, quote.low_24h, quote.price_change_pct_24h
         if (high is None or low is None or change is None
                 or not all(v.is_finite() for v in (high, low, change))
-                or not 0 < low <= quote.last <= high or high <= low or change > 9):
+                or not 0 < low <= quote.last <= high or high <= low or change > max_change_pct):
             continue
         features[instrument.id.symbol] = ((quote.last - low) / (high - low), change)
     # Midranks handle ties consistently without injecting turnover as a hidden weight.
@@ -57,15 +64,19 @@ def activity_watch_selection(
     selected: list[Instrument], liquid: list[Instrument], quotes: Mapping[str, Quote],
     budget: int, at: datetime, *, rotation_at: datetime | None = None,
     max_watch_slots: int = 20,
+    include_midcap_overflow: bool = False,
+    max_change_pct: Decimal = Decimal("9"),
 ) -> list[Instrument]:
     rotation = rotation_at or at
     ids = {i.id for i in selected}
     pool = [i for i in liquid if i.id not in ids and i.id.symbol in quotes
             and liquid_quote(quotes[i.id.symbol], at, max_age_seconds=600)
-            and quotes[i.id.symbol].quote_volume_24h < 1500000]
+            and (include_midcap_overflow or quotes[i.id.symbol].quote_volume_24h < 1500000)]
     slot_cap = max(1, int(max_watch_slots))
     remaining = min(slot_cap, max(0, budget - len(selected)))
-    scores = activity_scores(pool, quotes, at, max_age_seconds=600)
+    scores = activity_scores(
+        pool, quotes, at, max_age_seconds=600, max_change_pct=max_change_pct
+    )
     ranked = sorted((i for i in pool if i.id.symbol in scores),
                     key=lambda i: (-scores[i.id.symbol], rotation_key(i.id.symbol, rotation)))
     priority_cap = max(12, int(round(slot_cap * 0.6))) if slot_cap > 20 else 12
