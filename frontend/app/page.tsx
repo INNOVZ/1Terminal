@@ -442,7 +442,11 @@ function RadarPageContent() {
   );
   const handleCandleChange = useCallback((c: Candle) => setActiveCandle(c), []);
 
+  const selectedSymbolRef = useRef<string>("");
+  const appliedSymbolParamRef = useRef<string | null>(null);
+
   const handleSelectOpportunity = useCallback((opp: Opportunity) => {
+    selectedSymbolRef.current = opp.symbol.toUpperCase();
     const existingCandles =
       opp.candles && opp.candles.length > 0
         ? opp.candles
@@ -457,7 +461,12 @@ function RadarPageContent() {
       void fetch(`/api/chart/${opp.symbol}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((chartData) => {
-          if (chartData && Array.isArray(chartData.candles) && chartData.candles.length > 0) {
+          if (
+            selectedSymbolRef.current === opp.symbol.toUpperCase() &&
+            chartData &&
+            Array.isArray(chartData.candles) &&
+            chartData.candles.length > 0
+          ) {
             setActiveOpportunity((prev) => {
               if (prev && prev.symbol === opp.symbol) {
                 return { ...prev, candles: chartData.candles };
@@ -472,6 +481,7 @@ function RadarPageContent() {
   }, []);
 
   const handleSelectWatchlistEpisode = useCallback((ep: SidebarWatchlistEpisode) => {
+    selectedSymbolRef.current = ep.symbol.toUpperCase();
     const targets = [ep.target_1, ep.target_2, ep.target_3].filter(
       (v): v is number => v !== null && Number.isFinite(v) && v > 0,
     );
@@ -547,7 +557,12 @@ function RadarPageContent() {
     void fetch(`/api/chart/${encodeURIComponent(ep.symbol)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((chartData) => {
-        if (chartData && Array.isArray(chartData.candles) && chartData.candles.length > 0) {
+        if (
+          selectedSymbolRef.current === ep.symbol.toUpperCase() &&
+          chartData &&
+          Array.isArray(chartData.candles) &&
+          chartData.candles.length > 0
+        ) {
           setActiveOpportunity((prev) => {
             if (prev && prev.symbol === ep.symbol) {
               return { ...prev, candles: chartData.candles };
@@ -778,9 +793,11 @@ function RadarPageContent() {
       setOpportunities(dedupedEnriched);
       setAdaptedLevelsMap({});
 
-      // Preserve active token or activate targeted candidate
+      // Preserve active token (including manually selected Watchlist charts) or activate targeted candidate
       setActiveOpportunity((prev) => {
-        if (matchedTarget) {
+        if (matchedTarget && appliedSymbolParamRef.current !== matchedTarget.symbol.toUpperCase()) {
+          appliedSymbolParamRef.current = matchedTarget.symbol.toUpperCase();
+          selectedSymbolRef.current = matchedTarget.symbol.toUpperCase();
           if (matchedTarget.candles && matchedTarget.candles.length > 0) {
             setActiveCandle(
               matchedTarget.candles[matchedTarget.candles.length - 1],
@@ -801,11 +818,17 @@ function RadarPageContent() {
             }
             return matched;
           }
+          if (prev.radar_status === "WATCHLIST_48H") {
+            return prev;
+          }
         }
-        if (enriched[0]?.candles && enriched[0].candles.length > 0) {
-          setActiveCandle(
-            enriched[0].candles[enriched[0].candles.length - 1],
-          );
+        if (enriched[0]) {
+          selectedSymbolRef.current = enriched[0].symbol.toUpperCase();
+          if (enriched[0].candles && enriched[0].candles.length > 0) {
+            setActiveCandle(
+              enriched[0].candles[enriched[0].candles.length - 1],
+            );
+          }
         }
         return enriched[0];
       });
@@ -1131,16 +1154,24 @@ function RadarPageContent() {
     };
   }, [fetchScreener]);
 
-  // Dynamically react if URL symbol changes or candidate was directly linked
+  // Dynamically react ONLY when URL symbol param itself changes (never fight manual sidebar clicks)
   useEffect(() => {
-    if (!symbolParam) return;
+    if (!symbolParam) {
+      appliedSymbolParamRef.current = null;
+      return;
+    }
     const cleanTarget = symbolParam.toUpperCase();
-    if (activeOpportunity?.symbol.toUpperCase() === cleanTarget) return;
+    if (appliedSymbolParamRef.current === cleanTarget) return;
+    if (activeOpportunity?.symbol.toUpperCase() === cleanTarget) {
+      appliedSymbolParamRef.current = cleanTarget;
+      return;
+    }
 
     const existing = opportunities.find(
       (o) => o.symbol.toUpperCase() === cleanTarget,
     );
     if (existing) {
+      appliedSymbolParamRef.current = cleanTarget;
       const selectTimer = setTimeout(() => {
         handleSelectOpportunity(existing);
       }, 0);
@@ -1152,6 +1183,8 @@ function RadarPageContent() {
       try {
         const res = await fetch(`/api/chart/${cleanTarget}`).catch(() => null);
         if (res && res.ok && isMounted) {
+          appliedSymbolParamRef.current = cleanTarget;
+          selectedSymbolRef.current = cleanTarget;
           const chartData = (await res.json()) as ChartApiResponse;
           const chartCandles =
             chartData.candles && chartData.candles.length > 0
