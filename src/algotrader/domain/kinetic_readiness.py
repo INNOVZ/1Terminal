@@ -19,8 +19,13 @@ from algotrader.domain.crypto_screener_models import (
     CryptoScreenerScoreBreakdown,
     SetupLabel,
 )
+from algotrader.domain.execution_brackets import (
+    _build_spaced_long_targets,
+    extract_overhead_shelves_4h,
+)
 from algotrader.domain.indicators import (
     IndicatorSnapshot,
+    atr,
     bollinger_bands,
     confirmed_macd_divergences,
     confirmed_rsi_divergences,
@@ -312,6 +317,11 @@ def is_actionable_watchlist_coil(
             va6 = Decimal(kin_reason.split("va6=")[1].split(")")[0].split(",")[0])
         except Exception:
             va6 = Decimal("1.0")
+    # ALFA v3.6 (Bug #6a): A coin that printed an explosive turnover spike (va6 >= 2.20x) yet
+    # STILL failed ON_RADAR kinetic ignition (e.g. MAGICUSDT va6=7.25x) is a high-volume
+    # distribution/rejection spike, NOT a pre-ignition 5/5 coil.
+    if va6 >= Decimal("2.20"):
+        return False
     return not (vcr is not None and vcr > Decimal("1.32") and va6 < Decimal("1.35"))
 
 
@@ -351,6 +361,7 @@ def evaluate_v33_local_base_or_flag(
     is_discovery_tier: bool,
     evaluated_at: datetime,
     on_stage1_ready: Callable[[str], None] | None = None,
+    btc_relative_6h_pp: Decimal | None = None,
 ) -> CryptoOpportunity | None:
     """Evaluate bounded ALFA v3.3 local-72h base ignition & controlled first-wave HTF flag.
 
@@ -450,27 +461,59 @@ def evaluate_v33_local_base_or_flag(
         and quote.quote_volume_24h >= Decimal("5000000")
         and quote.spread_bps <= Decimal("25")
     )
-    if not (local_reclaim_ok or flag_cont_ok):
+    # ALFA v3.6 (Bug #4b): Relative-Strength Kinetic Base-Breakout (`RS_IGN`) track closing
+    # the No-Man's-Land black hole for post-correction leaders (e.g. BTW, CFG, SKY, IDOL, MANTRA)
+    # that hold above 1H EMA20 & 4H EMA50/EMA20 with >= +3.0pp 6h RS vs BTC and strong buyer flow.
+    c_last_sell_qv = c_last.quote_volume - c_last.taker_buy_quote_volume
+    candle_tk1 = (
+        (c_last.taker_buy_quote_volume / c_last_sell_qv)
+        if c_last.taker_buy_quote_volume > Decimal("0") and c_last_sell_qv > Decimal("0")
+        else None
+    )
+    rs6_pp = btc_relative_6h_pp if btc_relative_6h_pp is not None else Decimal("0")
+    rs_ignition_ok = (
+        Decimal("-0.01") <= ret_24h <= Decimal("0.14")
+        and close >= snap_1h.ema20
+        and close >= prior_6h_high * Decimal("0.995")
+        and (close >= ema50_4h * Decimal("0.985") or (close >= ema20_4h and rs6_pp >= Decimal("3.5")))
+        and rs6_pp >= Decimal("3.0")
+        and (
+            va6 >= Decimal("1.20")
+            or (candle_tk1 is not None and candle_tk1 >= Decimal("1.35"))
+        )
+        and cpos >= Decimal("0.50")
+        and upper_wick <= Decimal("0.42")
+        and quote.quote_volume_24h >= Decimal("1000000")
+        and quote.spread_bps <= Decimal("28")
+    )
+    if not (local_reclaim_ok or flag_cont_ok or rs_ignition_ok):
         return None
 
+    atr14_4h = atr(c4h, 14)[-1] if len(c4h) >= 15 else snap_1h.atr14 * Decimal("2")
     anchor_low = (
         low_6h
-        if flag_cont_ok
+        if (flag_cont_ok or rs_ignition_ok)
         else (prior_12h_low if close > prior_12h_high else low_6h)
     )
-    stop = min(anchor_low, close - Decimal("1.5") * snap_1h.atr14)
+    if rs_ignition_ok and not (local_reclaim_ok or flag_cont_ok):
+        min_rs_risk = min(close * Decimal("0.085"), max(Decimal("1.25") * atr14_4h, close * Decimal("0.035")))
+        max_rs_risk = min(close * Decimal("0.095"), max(Decimal("2.50") * atr14_4h, close * Decimal("0.085")))
+        stop = max(min(anchor_low - Decimal("0.25") * atr14_4h, close - min_rs_risk), close - max_rs_risk)
+    else:
+        stop = min(anchor_low, close - Decimal("1.5") * snap_1h.atr14)
     risk = close - stop
-    if risk <= Decimal("0") or risk / close > Decimal("0.075"):
+    max_risk_cap = Decimal("0.095") if (rs_ignition_ok and not (local_reclaim_ok or flag_cont_ok)) else Decimal("0.075")
+    if risk <= Decimal("0") or risk / close > max_risk_cap:
         return None
     high_30d = max(c.high for c in (c4h[-180:] if len(c4h) >= 180 else c4h))
-    if (max(vp.vah_price, high_30d) - close) / risk < Decimal("1.40"):
+    if not rs_ignition_ok and (max(vp.vah_price, high_30d) - close) / risk < Decimal("1.40"):
         return None
     ceilings = [
         lvl
         for lvl in (ema50_4h,)
         if lvl >= close + Decimal("1.0") * snap_1h.atr14
     ]
-    if ceilings and va6 < Decimal("1.80") and (min(ceilings) - close) / risk < Decimal("1.35"):
+    if not rs_ignition_ok and ceilings and va6 < Decimal("1.80") and (min(ceilings) - close) / risk < Decimal("1.35"):
         return None
 
     if derivatives is None:
@@ -489,54 +532,85 @@ def evaluate_v33_local_base_or_flag(
         return None
     if tkr_1h is not None and tkr_1h < Decimal("0.96"):
         return None
-    flow_ok = (
-        tkr_4h is not None
-        and (
-            (
-                tkr_4h >= Decimal("1.08")
-                and (
-                    (oi_1h is not None and oi_1h > Decimal("0"))
-                    or (oi_4h is not None and oi_4h >= Decimal("0.005"))
-                    or tkr_4h >= Decimal("1.25")
+    rs_only = rs_ignition_ok and not (local_reclaim_ok or flag_cont_ok)
+    if rs_only:
+        flow_ok = bool(
+            tkr_4h is not None
+            and tkr_4h >= Decimal("1.10")
+            and tkr_1h is not None
+            and tkr_1h >= Decimal("1.08")
+            and oi_4h is not None
+            and oi_4h >= Decimal("0.045")
+            and (oi_1h is None or oi_1h >= Decimal("-0.010"))
+        )
+        if (
+            not flow_ok
+            or derivatives.bid_depth_notional < Decimal("40000")
+            or derivatives.ask_depth_notional < Decimal("40000")
+        ):
+            return None
+    else:
+        flow_ok = (
+            tkr_4h is not None
+            and (
+                (
+                    tkr_4h >= Decimal("1.08")
+                    and (
+                        (oi_1h is not None and oi_1h > Decimal("0"))
+                        or (oi_4h is not None and oi_4h >= Decimal("0.005"))
+                        or tkr_4h >= Decimal("1.25")
+                    )
+                )
+                or (
+                    tkr_4h >= Decimal("1.07")
+                    and va6 >= Decimal("2.20")
+                    and oi_4h is not None
+                    and oi_4h >= Decimal("0.005")
+                )
+                or (
+                    tkr_4h >= Decimal("1.06")
+                    and tkr_1h is not None
+                    and tkr_1h >= Decimal("1.12")
+                    and oi_4h is not None
+                    and oi_4h >= Decimal("0.015")
+                    and oi_1h is not None
+                    and oi_1h > Decimal("0")
+                )
+                or (
+                    tkr_4h >= Decimal("1.02")
+                    and oi_4h is not None
+                    and oi_4h >= Decimal("0.025")
+                    and oi_1h is not None
+                    and oi_1h >= Decimal("0.010")
                 )
             )
-            or (
-                tkr_4h >= Decimal("1.07")
-                and va6 >= Decimal("2.20")
-                and oi_4h is not None
-                and oi_4h >= Decimal("0.005")
-            )
-            or (
-                tkr_4h >= Decimal("1.06")
-                and tkr_1h is not None
-                and tkr_1h >= Decimal("1.12")
-                and oi_4h is not None
-                and oi_4h >= Decimal("0.015")
-                and oi_1h is not None
-                and oi_1h > Decimal("0")
-            )
-            or (
-                tkr_4h >= Decimal("1.02")
-                and oi_4h is not None
-                and oi_4h >= Decimal("0.025")
-                and oi_1h is not None
-                and oi_1h >= Decimal("0.010")
-            )
         )
-    )
-    if (
-        not flow_ok
-        or (oi_7d is not None and oi_7d < Decimal("-0.12"))
-        or derivatives.bid_depth_notional < Decimal("40000")
-        or derivatives.ask_depth_notional < Decimal("40000")
-    ):
-        return None
+        if (
+            not flow_ok
+            or (oi_7d is not None and oi_7d < Decimal("-0.12"))
+            or derivatives.bid_depth_notional < Decimal("40000")
+            or derivatives.ask_depth_notional < Decimal("40000")
+        ):
+            return None
 
-    t1 = close + Decimal("2.0") * risk
-    t2 = close + Decimal("3.0") * risk
-    t3 = close + Decimal("4.2") * risk
+    brk_trig = ceil_to_increment(max(prior_12h_high if not rs_only else prior_6h_high, close), inst.price_tick)
+    shelves = extract_overhead_shelves_4h(c4h, close)
+    t1, t2, t3 = _build_spaced_long_targets(
+        effective_entry=close,
+        breakout_trigger=brk_trig,
+        risk_unit=risk,
+        atr=atr14_4h,
+        poc_30d=vp.poc_price,
+        vah_30d=vp.vah_price,
+        high_30d=high_30d,
+        overhead_shelves=shelves,
+        tick_size=inst.price_tick,
+    )
+    r_t1 = ((t1 - close) / risk).quantize(Decimal("0.01"))
+    r_t2 = ((t2 - close) / risk).quantize(Decimal("0.01"))
+    r_t3 = ((t3 - close) / risk).quantize(Decimal("0.01"))
     lbl = SetupLabel.BREAKOUT_LONG if flag_cont_ok else SetupLabel.MOMENTUM_EMERGING_LONG
-    raw_score = Decimal("84.0")
+    raw_score = Decimal("85.0") if rs_only else Decimal("84.0")
     final_score = min(Decimal("100.0"), (raw_score * macro_multiplier).quantize(Decimal("0.1")))
     chk_ver = ChecklistVerification(True, True, True, True, True)
     p_win, conv = compute_p_win_and_conviction(
@@ -546,15 +620,19 @@ def evaluate_v33_local_base_or_flag(
         checklist_passed=5,
     )
     ev_r = compute_3tier_ev_r(
-        p_win=p_win, r_t1=Decimal("2.0"), r_t2=Decimal("3.0"), r_t3=Decimal("4.2")
+        p_win=p_win,
+        r_t1=r_t1,
+        r_t2=r_t2,
+        r_t3=r_t3,
+        spaced_t1_calibration=True,
     )
     assert tkr_4h is not None
     checklist = (
-        ("Trend Baseline", True, "Local 72h base / HTF flag accepted"),
+        ("Trend Baseline", True, f"RS-Ignition leader (+{float(rs6_pp):.1f}pp vs BTC) holding EMA structure" if rs_only else "Local 72h base / HTF flag accepted"),
         ("Anti-Chasing Validated", True, f"Controlled extension (24h {float(ret_24h * 100):+.1f}%)"),
-        ("Value Acceptance", True, "Overhead clearance >= 1.60R"),
+        ("Value Acceptance", True, "Spaced structural overhead shelves verified" if rs_only else "Overhead clearance >= 1.60R"),
         ("Volatility Compression", True, f"VA6 {float(va6):.2f}x kinetic expansion"),
-        ("Smart Money Absorption", True, f"Taker 4H {float(tkr_4h):.2f}, fresh OI inflow"),
+        ("Smart Money Absorption", True, f"Taker 4H {float(tkr_4h):.2f}, 4H OI {float((oi_4h or Decimal('0')) * 100):+.1f}%"),
     )
     return CryptoOpportunity(
         evaluated_at=evaluated_at,
@@ -576,10 +654,10 @@ def evaluate_v33_local_base_or_flag(
         current_price=close,
         atr14=snap_1h.atr14,
         suggested_entry=close,
-        breakout_trigger=ceil_to_increment(max(prior_12h_high, close), inst.price_tick),
+        breakout_trigger=brk_trig,
         suggested_stop=stop,
         suggested_targets=(t1, t2, t3),
-        risk_reward_ratio=Decimal("2.5"),
+        risk_reward_ratio=min(r_t2, Decimal("5.00")).quantize(Decimal("0.01")),
         risk_reward_target_index=2,
         btc_beta=beta.quantize(Decimal("0.01")),
         residual_return_24h=residual_24h.quantize(Decimal("0.0001")),
@@ -608,6 +686,6 @@ def evaluate_v33_local_base_or_flag(
         breakout_readiness_status="BREAKOUT_CONFIRMED",
         is_discovery_tier=is_discovery_tier,
         publication_lane="ON_RADAR",
-        kinetic_reason=f"v33_kinetic_path(va6={va6})",
+        kinetic_reason=f"v36_rs_ignition(rs6={float(rs6_pp):+.1f}pp,va6={va6})" if rs_only else f"v33_kinetic_path(va6={va6})",
     )
 

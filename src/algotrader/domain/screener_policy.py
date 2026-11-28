@@ -71,7 +71,7 @@ def publication_rejection_reasons(
     grade = getattr(opportunity.grade, "value", opportunity.grade)
     if grade == OpportunityGrade.BELOW_THRESHOLD.value:
         reasons.append("grade_below_threshold")
-    if opportunity.score < score_floor or effective_score < score_floor:
+    if opportunity.score < score_floor:
         reasons.append("score_floor")
     if opportunity.conviction is not None and opportunity.conviction < conviction_floor:
         reasons.append("conviction_floor")

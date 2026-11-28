@@ -1221,7 +1221,8 @@ class AutoWatchlistService:
                     return
                 earliest_pub = earliest_by_symbol.get(sym, ref_now - timedelta(hours=72))
                 age_hours = max(0, int((ref_now - earliest_pub).total_seconds() // 3600))
-                needed_bars = min(500, max(72, age_hours + 6))
+                # Fetch >= 220 1H bars (~55 4H bars, weight 2) so live 4H EMA50 Trend Baseline is verified
+                needed_bars = min(500, max(220, age_hours + 6))
                 async with sem:
                     with contextlib.suppress(Exception):
                         bars = await asyncio.wait_for(

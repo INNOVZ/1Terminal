@@ -802,18 +802,25 @@ def compute_3tier_ev_r(
     r_t1: Decimal,
     r_t2: Decimal,
     r_t3: Decimal,
+    spaced_t1_calibration: bool = False,
 ) -> Decimal:
     """3-Tier Conditional Mathematical Expectancy (EV_R).
 
     Position weights: w1 = 0.50 (T1), w2 = 0.30 (T2), w3 = 0.20 (T3).
     Conditional transitions: p_t1 = p_win, p_t2_given_t1 = 0.58, p_t3_given_t2 = 0.42.
-    ev_r = (p_t1 * w1 * r_t1) + (p_t1 * p_t2_given_t1 * w2 * r_t2) + (p_t1 * p_t2_given_t1 * p_t3_given_t2 * w3 * r_t3) - ((1.0 - p_t1) * 1.0)
+    When `spaced_t1_calibration=True` (ALFA v3.6 realistic structural T1 ladder where T1 sits at
+    ~1.0R-1.5R instead of 2.5R+), adjust `p_t1` by +0.06 (capped at 0.78) to reflect higher T1
+    reach probability so realistic structural T1 targets are not falsely penalized below 0.25R.
     """
     w1 = Decimal("0.50")
     w2 = Decimal("0.30")
     w3 = Decimal("0.20")
 
-    p_t1 = p_win
+    p_t1 = (
+        min(Decimal("0.78"), p_win + Decimal("0.06"))
+        if spaced_t1_calibration
+        else p_win
+    )
     p_t2_given_t1 = Decimal("0.58")
     p_t3_given_t2 = Decimal("0.42")
 

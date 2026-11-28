@@ -34,6 +34,7 @@ from enum import StrEnum
 from typing import Any
 
 from algotrader.domain.gate_contract import is_soft_only_checklist_failure
+from algotrader.domain.indicators import ema
 from algotrader.domain.models import Candle
 
 AUTO_WATCH_WINDOW_HOURS = 48
@@ -655,6 +656,79 @@ def _is_valid_live_quote(
     return -5.0 <= age <= 300.0
 
 
+def _resample_1h_to_4h_closes(closed_1h: Sequence[Candle]) -> list[Decimal]:
+    """Aggregate contiguous complete 4-hour UTC buckets from closed 1H candles into 4H closes."""
+    buckets: dict[datetime, list[Candle]] = {}
+    for c in closed_1h:
+        ts = c.opened_at.astimezone(UTC)
+        key = ts.replace(hour=(ts.hour // 4) * 4, minute=0, second=0, microsecond=0)
+        buckets.setdefault(key, []).append(c)
+    closes_4h: list[Decimal] = []
+    for bucket_start in sorted(buckets):
+        grp = sorted(buckets[bucket_start], key=lambda x: x.opened_at)
+        if len(grp) == 4:
+            closes_4h.append(grp[-1].close)
+    return closes_4h
+
+
+def _check_watchlist_structural_invalidation(
+    episode: AutoWatchEpisode,
+    *,
+    all_closed_1h: Sequence[Candle],
+    post_bars: Sequence[Candle],
+    effective_price: Decimal,
+    breakout_touched: bool,
+) -> tuple[str | None, tuple[dict[str, Any], ...]]:
+    """ALFA v3.6 Watchlist live structural guard: evict broken 4H EMA50 bases and failed breakouts."""
+    if (
+        episode.status is not AutoWatchStatus.WATCHLIST
+        or episode.direction.lower() == "short"
+        or effective_price <= Decimal("0")
+    ):
+        return None, episode.checklist
+
+    if episode.setup_label != "RECOVERY_RECLAIM_LONG" and len(all_closed_1h) >= 200:
+        closes_4h = _resample_1h_to_4h_closes(all_closed_1h)
+        if len(closes_4h) >= 50:
+            ema50_4h = ema(closes_4h, 50)[-1]
+            if (
+                ema50_4h > Decimal("0")
+                and closes_4h[-1] < ema50_4h * Decimal("0.985")
+                and effective_price < ema50_4h * Decimal("0.985")
+            ):
+                updated_chk = tuple(
+                    (
+                        {
+                            **item,
+                            "passed": False,
+                            "status": "failed",
+                            "detail": f"Lost 4H EMA50 (${float(ema50_4h):.4f}) — Watchlist invalidated",
+                        }
+                        if item.get("title") == "Trend Baseline"
+                        else item
+                    )
+                    for item in episode.checklist
+                )
+                return "watchlist_trend_baseline_lost", updated_chk
+
+    if (
+        episode.graduation_count == 0
+        and episode.trigger_price is not None
+        and episode.trigger_price > Decimal("0")
+        and post_bars
+    ):
+        peak_high = max(b.high for b in post_bars)
+        tested_breakout = breakout_touched or (peak_high >= episode.trigger_price * Decimal("0.992"))
+        if (
+            tested_breakout
+            and effective_price <= peak_high * Decimal("0.955")
+            and effective_price <= episode.signal_price * Decimal("0.970")
+        ):
+            return "failed_breakout_rejection", episode.checklist
+
+    return None, episode.checklist
+
+
 def evaluate_auto_watch_episode(
     episode: AutoWatchEpisode,
     *,
@@ -681,6 +755,10 @@ def evaluate_auto_watch_episode(
     last_obs_price = episode.last_observed_price
 
     # Expected first 1h bar open covering publication
+    all_closed_1h = sorted(
+        (c for c in candles if c.closed and c.high > 0 and c.low > 0 and c.close > 0),
+        key=lambda c: c.opened_at,
+    )
     pub_hour_floor = episode.published_at.replace(minute=0, second=0, microsecond=0)
     pub_floor = episode.published_at - timedelta(seconds=59)
     post_bars = sorted(
@@ -1023,6 +1101,41 @@ def evaluate_auto_watch_episode(
                 resolution_reason="live_target_1_reached",
             )
 
+        inv_reason, inv_chk = _check_watchlist_structural_invalidation(
+            episode,
+            all_closed_1h=all_closed_1h,
+            post_bars=post_bars,
+            effective_price=live_price,
+            breakout_touched=breakout_touched,
+        )
+        if inv_reason is not None:
+            return replace(
+                episode,
+                status=AutoWatchStatus.HARD_INVALIDATED,
+                radar_status_label="HARD INVALIDATED",
+                eviction_reason=inv_reason,
+                checklist=inv_chk,
+                last_price=live_price,
+                last_observed_price=live_price,
+                last_checked_at=ref_now,
+                current_return_pct=live_ret,
+                peak_mfe_pct=peak_mfe,
+                peak_mfe_at=peak_mfe_at,
+                worst_mae_pct=worst_mae,
+                worst_mae_at=worst_mae_at,
+                retest_touched=retest_touched,
+                breakout_touched=breakout_touched,
+                has_observations=True,
+                coverage_complete=certified,
+                coverage_gaps=gaps,
+                endpoint_observed_at=obs_at,
+                measurement_status="measured" if certified else "uncertified_gap",
+                resolved_at=obs_at,
+                resolved_price=live_price,
+                resolved_return_pct=live_ret,
+                resolution_reason=inv_reason,
+            )
+
         return replace(
             episode,
             last_price=live_price,
@@ -1051,6 +1164,41 @@ def evaluate_auto_watch_episode(
         if has_obs and last_obs_price is not None and last_obs_price > 0
         else None
     )
+    if has_obs and last_obs_price is not None and last_obs_price > 0:
+        inv_reason, inv_chk = _check_watchlist_structural_invalidation(
+            episode,
+            all_closed_1h=all_closed_1h,
+            post_bars=post_bars,
+            effective_price=last_obs_price,
+            breakout_touched=breakout_touched,
+        )
+        if inv_reason is not None:
+            return replace(
+                episode,
+                status=AutoWatchStatus.HARD_INVALIDATED,
+                radar_status_label="HARD INVALIDATED",
+                eviction_reason=inv_reason,
+                checklist=inv_chk,
+                last_price=last_obs_price,
+                last_observed_price=last_obs_price,
+                last_checked_at=ref_now,
+                current_return_pct=cur_ret,
+                peak_mfe_pct=peak_mfe,
+                peak_mfe_at=peak_mfe_at,
+                worst_mae_pct=worst_mae,
+                worst_mae_at=worst_mae_at,
+                retest_touched=retest_touched,
+                breakout_touched=breakout_touched,
+                has_observations=True,
+                coverage_complete=bool(post_bars) and gaps == 0,
+                coverage_gaps=gaps,
+                endpoint_observed_at=last_bar_closed_at,
+                measurement_status="measured" if (bool(post_bars) and gaps == 0) else "uncertified_gap",
+                resolved_at=last_bar_closed_at or ref_now,
+                resolved_price=last_obs_price,
+                resolved_return_pct=cur_ret,
+                resolution_reason=inv_reason,
+            )
     return replace(
         episode,
         last_price=last_obs_price if last_obs_price is not None else episode.signal_price,

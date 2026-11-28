@@ -162,7 +162,17 @@ def compute_resistance_absorption(
     # 3. "RETEST_ONLY_WAIT_FOR_DIP" (Amber): All other valid candidates
     dist_to_vah = float((Decimal(str(vah_30d)) - Decimal(str(close))) / max(Decimal(str(close)), EPSILON))
 
-    is_severe_oi_drain = oi_7d is not None and (oi_7d < -0.08 or (oi_7d < -0.03 and oi_4h is not None and oi_4h < -0.01))
+    has_fresh_oi_inflection = (
+        oi_4h is not None
+        and oi_4h >= 0.025
+        and taker_share is not None
+        and taker_share >= 0.52
+    )
+    is_severe_oi_drain = (
+        oi_7d is not None
+        and not has_fresh_oi_inflection
+        and (oi_7d < -0.08 or (oi_7d < -0.03 and oi_4h is not None and oi_4h < -0.01))
+    )
     is_tape_dump_at_vah = (cvd_z <= -1.0 and dist_to_vah <= 0.03)
 
     if is_severe_oi_drain or is_tape_dump_at_vah or score < 35.0:

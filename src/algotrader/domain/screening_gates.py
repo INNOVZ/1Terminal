@@ -521,8 +521,23 @@ def evaluate_long_gates(
         else:
             flow_confirmed = universal_oi_ok
     else:
-        # Stage 1 in-memory pre-derivatives: volume dryup, mature coil, or surge required
-        flow_confirmed = stealth_coil_qualified or (inputs.rvol_4h >= Decimal("1.15")) or (inputs.vcr_4h <= Decimal("0.90"))
+        # Stage 1 in-memory pre-derivatives: volume dryup, mature coil, surge, or active 1H/4H buyer ignition
+        active_buyer_ignition_s1 = (
+            inputs.discovery_v2
+            and inputs.taker_buy_ratio_4h is not None
+            and inputs.taker_buy_ratio_4h >= Decimal("1.12")
+            and (
+                inputs.has_kinetic_ignition
+                or inputs.vvi_ignition
+                or inputs.rvol_4h >= Decimal("0.90")
+            )
+        )
+        flow_confirmed = (
+            stealth_coil_qualified
+            or (inputs.rvol_4h >= Decimal("1.15"))
+            or (inputs.vcr_4h <= Decimal("0.90"))
+            or active_buyer_ignition_s1
+        )
 
     # 2. Mandatory Kinetic Ignition Trigger & Stealth Coil Qualification
     # Compressed long candidates can qualify via:
@@ -558,12 +573,19 @@ def evaluate_long_gates(
     )
 
     if not has_oi_metrics:
-        # Pre-derivatives Stage 1 structural pass: allow base supply dry-up, mature coil, or volume surge
+        # Pre-derivatives Stage 1 structural pass: allow base supply dry-up, mature coil, volume surge, or buyer ignition
+        active_buyer_s1 = (
+            inputs.discovery_v2
+            and inputs.taker_buy_ratio_4h is not None
+            and inputs.taker_buy_ratio_4h >= Decimal("1.12")
+            and (inputs.has_kinetic_ignition or inputs.vvi_ignition or inputs.rvol_4h >= Decimal("0.90"))
+        )
         ignition_confirmed = (
             has_ignition
             or stealth_coil_qualified
             or (inputs.vcr_4h <= Decimal("0.90"))
             or (inputs.rvol_4h >= Decimal("1.15"))
+            or active_buyer_s1
         )
     elif is_compressed_setup:
         ignition_confirmed = has_ignition or stealth_coil_qualified

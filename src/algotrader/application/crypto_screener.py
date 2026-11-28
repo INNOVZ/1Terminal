@@ -244,7 +244,7 @@ class CryptoOpportunityScreener:
             now_at = self._evaluated_at or datetime.now(UTC)
             if self._settings.kinetic_ignition_v33_enabled:
                 return activity_watch_selection(
-                    selected, liquid, quotes, max_symbols or 320, now_at, max_watch_slots=45
+                    selected, liquid, quotes, max_symbols or 350, now_at, max_watch_slots=75
                 )
             return discovery_watch_selection(selected, liquid, quotes, max_symbols or 265, now_at)
         return selected
@@ -1318,9 +1318,12 @@ class CryptoOpportunityScreener:
         beta, correlation, residual_24h, residual_6h, residual_7d = self._calc_residual_alpha(
             closed_1h, btc_candles
         )
+        btc_relative_6h_pp: Decimal | None = None
         if self._feature_contract == "discovery_v2":
             closed_btc = sorted((c for c in btc_candles if c.closed), key=lambda c: c.closed_at)
             temporal = discovery_temporal_features(closed_1h, closed_btc)
+            if temporal.get("available") is True and temporal.get("btc_relative_6h_pp") is not None:
+                btc_relative_6h_pp = Decimal(str(temporal["btc_relative_6h_pp"]))
             if explicit_derivatives is None:
                 if temporal.get("emerging") is True:
                     self._emerging_symbols.add(inst.id.symbol)
@@ -1530,6 +1533,7 @@ class CryptoOpportunityScreener:
                 is_discovery_tier=is_discovery_tier,
                 evaluated_at=self._evaluated_at or datetime.now(UTC),
                 on_stage1_ready=self._stage1_ready_symbols.add,
+                btc_relative_6h_pp=btc_relative_6h_pp,
             )
 
         # Stage 2: Deep Derivatives Enrichment ONLY for Shortlisted Candidates
@@ -1616,6 +1620,7 @@ class CryptoOpportunityScreener:
                     is_discovery_tier=is_discovery_tier,
                     evaluated_at=self._evaluated_at or datetime.now(UTC),
                     on_stage1_ready=None,
+                    btc_relative_6h_pp=btc_relative_6h_pp,
                 )
             if is_viable_short:
                 dist_opp = self._score_distribution_setup(
@@ -2158,6 +2163,13 @@ class CryptoOpportunityScreener:
 
         # Strict Quality Guard: Reject candidates with heavy rejection risk / tape selling walls
         if breakout_status == "HIGH_REJECTION_RISK" or absorption_score < 35.0:
+            self._note(
+                inst.id.symbol,
+                "accumulation_rejection",
+                "resistance_absorption_rejected",
+                status=breakout_status,
+                absorption_score=absorption_score,
+            )
             return None
 
         # 5-Level Execution Bracket (Normalized with tick_size and Execution Mode Split)
@@ -2316,6 +2328,7 @@ class CryptoOpportunityScreener:
             r_t1=bracket.r_t1,
             r_t2=bracket.r_t2,
             r_t3=bracket.r_t3,
+            spaced_t1_calibration=self._settings.kinetic_ignition_v33_enabled,
         )
         grade = classify_opportunity_grade(
             ev_r=ev_r,
